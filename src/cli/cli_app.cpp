@@ -69,6 +69,36 @@ bool resolve_inpaint_config(const CliOptions& opts, InpaintConfig& out) {
     return true;
 }
 
+// Parse a "x,y,w,h" rect string. Returns nullopt for an empty OR malformed string;
+// the caller distinguishes the two (empty = flag absent, malformed = user error).
+std::optional<cv::Rect> parse_rect(const std::string& s) {
+    if (s.empty()) return std::nullopt;
+    int x, y, w, h;
+    char sep1, sep2, sep3;
+    std::istringstream ss(s);
+    if (ss >> x >> sep1 >> y >> sep2 >> w >> sep3 >> h &&
+        sep1 == ',' && sep2 == ',' && sep3 == ',' &&
+        x >= 0 && y >= 0 && w > 0 && h > 0) {
+        return cv::Rect(x, y, w, h);
+    }
+    return std::nullopt;
+}
+
+// Build the still-image geometry override from CLI opts. Returns false (with a logged
+// error) when --rect was given but malformed.
+bool resolve_still_geometry_override(const CliOptions& opts, StillGeometryOverride& out) {
+    if (!opts.still_rect_str.empty()) {
+        out.rect = parse_rect(opts.still_rect_str);
+        if (!out.rect) {
+            spdlog::error("Invalid --rect format. Expected: x,y,w,h (e.g. --rect 760,1063,36,36)");
+            return false;
+        }
+    }
+    if (!opts.still_geo_preset.empty()) out.preset = opts.still_geo_preset;
+    out.no_auto_geometry = opts.still_no_auto_geometry;
+    return true;
+}
+
 static int process_detect(const CliOptions& opts) {
     cv::Mat image = cv::imread(opts.input_path, cv::IMREAD_COLOR);
     if (image.empty()) {
@@ -82,10 +112,23 @@ static int process_detect(const CliOptions& opts) {
     // Default (no flag): report both V2 (current) and V1 (legacy).
     {
         WatermarkEngine engine;
+        const WatermarkSize sz = get_watermark_size(image.cols, image.rows);
+
+        StillGeometryOverride gov;
+        if (!resolve_still_geometry_override(opts, gov)) return 1;
+        // Resolve the hybrid auto-geometry ONCE for the V2 profile (the search only
+        // runs for V2 small). The V1 report uses no forced position.
+        std::optional<WatermarkPosition> resolved_geo;
+        if (!opts.still_legacy) {
+            resolved_geo = engine.resolve_still_geometry(image, WatermarkVariant::V2, sz, gov);
+        }
+
         auto report = [&](WatermarkVariant v) {
-            WatermarkSize sz = get_watermark_size(image.cols, image.rows);
-            bool snap = (v == WatermarkVariant::V2 && sz == WatermarkSize::Small);
-            auto result = engine.detect_watermark(image, std::nullopt, std::nullopt,
+            const std::optional<WatermarkPosition> fp =
+                (v == WatermarkVariant::V2) ? resolved_geo : std::nullopt;
+            const bool snap = fp.has_value() ||
+                (v == WatermarkVariant::V2 && sz == WatermarkSize::Small);
+            auto result = engine.detect_watermark(image, std::nullopt, fp,
                                                   nullptr, v, snap);
             const char* tag = (v == WatermarkVariant::V1) ? "[VISIBLE V1]" : "[VISIBLE V2]";
             if (result.detected) {
@@ -152,17 +195,46 @@ static int process_single_image(const CliOptions& opts) {
 
         auto [force_variant, try_fallback] = resolve_still_variant(opts);
 
+        // Resolve the still geometry overrides + hybrid auto-search ONCE, for the V2
+        // profile (the search only runs for V2 small). The V2 primary attempt uses
+        // the result as a forced position; the V1 fallback does not. --force skips
+        // detection entirely, so it is excluded here.
+        std::optional<WatermarkPosition> resolved_geo;
+        if (!opts.force) {
+            StillGeometryOverride gov;
+            if (!resolve_still_geometry_override(opts, gov)) return 1;
+            const WatermarkSize sz =
+                force_size.value_or(get_watermark_size(image.cols, image.rows));
+            resolved_geo = engine.resolve_still_geometry(
+                image, WatermarkVariant::V2, sz, gov);
+        }
+
+        // An explicit --rect/--geo-preset means "remove at this position" even when
+        // the detector's confidence is too low to confirm (a faint mark the search
+        // localized but could not pass the gate). Without an override, require a real
+        // detection.
+        const bool explicit_override =
+            !opts.still_rect_str.empty() || !opts.still_geo_preset.empty();
+
         // Detect→remove for one variant; true if a watermark was found and removed.
-        auto try_remove = [&](WatermarkVariant v) -> bool {
-            bool snap = (v == WatermarkVariant::V2 &&
-                         force_size.value_or(get_watermark_size(image.cols, image.rows))
-                             == WatermarkSize::Small);
-            auto detection = engine.detect_watermark(image, force_size, std::nullopt,
+        auto try_remove = [&](WatermarkVariant v,
+                              std::optional<WatermarkPosition> force_pos) -> bool {
+            bool snap = force_pos.has_value() ||
+                (v == WatermarkVariant::V2 &&
+                 force_size.value_or(get_watermark_size(image.cols, image.rows))
+                     == WatermarkSize::Small);
+            auto detection = engine.detect_watermark(image, force_size, force_pos,
                                                      nullptr, v, snap);
-            if (!detection.detected) return false;
-            spdlog::info("Visible watermark detected ({:.1f}%, {}), removing...",
-                         detection.confidence * 100.0f,
-                         v == WatermarkVariant::V1 ? "V1" : "V2");
+            if (!detection.detected) {
+                if (!(explicit_override && force_pos.has_value())) return false;
+                spdlog::info("Removing at overridden position "
+                             "(confidence {:.1f}% below the detection gate)",
+                             detection.confidence * 100.0f);
+            } else {
+                spdlog::info("Visible watermark detected ({:.1f}%, {}), removing...",
+                             detection.confidence * 100.0f,
+                             v == WatermarkVariant::V1 ? "V1" : "V2");
+            }
             const cv::Mat& alpha = engine.get_still_alpha(detection.size, v);
             InpaintConfig icfg;
             bool do_cleanup = resolve_inpaint_config(opts, icfg);
@@ -183,10 +255,11 @@ static int process_single_image(const CliOptions& opts) {
             did_work = true;
         } else {
             WatermarkVariant primary = force_variant.value_or(WatermarkVariant::V2);
-            bool removed = try_remove(primary);
+            bool removed = try_remove(
+                primary, (primary == WatermarkVariant::V2) ? resolved_geo : std::nullopt);
             if (!removed && try_fallback && primary == WatermarkVariant::V2) {
                 spdlog::info("V2 profile not detected — retrying with legacy V1");
-                removed = try_remove(WatermarkVariant::V1);
+                removed = try_remove(WatermarkVariant::V1, std::nullopt);
             }
             if (removed) {
                 did_work = true;
@@ -304,14 +377,8 @@ static int process_video(const CliOptions& opts) {
 
     // Parse --rect x,y,w,h manual override (any video profile)
     if (!opts.notebooklm_rect_str.empty()) {
-        int x, y, w, h;
-        char sep1, sep2, sep3;
-        std::istringstream ss(opts.notebooklm_rect_str);
-        if (ss >> x >> sep1 >> y >> sep2 >> w >> sep3 >> h &&
-            sep1 == ',' && sep2 == ',' && sep3 == ',' &&
-            x >= 0 && y >= 0 && w > 0 && h > 0) {
-            config.rect = cv::Rect(x, y, w, h);
-        } else {
+        config.rect = parse_rect(opts.notebooklm_rect_str);
+        if (!config.rect) {
             spdlog::error("Invalid --rect format. Expected: x,y,w,h (e.g. --rect 1145,689,121,17)");
             return 1;
         }
@@ -391,6 +458,16 @@ int run_cli(int argc, char* argv[]) {
         cmd->add_flag("-v,--verbose", opts.verbose, "Verbose output");
     };
 
+    // Still-image geometry flags shared by remove / visible / detect.
+    auto add_still_geometry = [&](CLI::App* cmd) {
+        cmd->add_option("--rect", opts.still_rect_str,
+                        "Manual watermark rect x,y,w,h (overrides auto-detect)");
+        cmd->add_option("--geo-preset", opts.still_geo_preset,
+                        "Named geometry preset, e.g. gemini36-portrait");
+        cmd->add_flag("--no-auto-geometry", opts.still_no_auto_geometry,
+                      "Disable the content-based geometry search; use the model position");
+    };
+
     // --- remove (default) ---
     auto* remove_cmd = app.add_subcommand("remove", "Auto-detect and remove watermarks");
     remove_cmd->add_option("input", opts.input_path, "Input image or directory")
@@ -430,6 +507,7 @@ int run_cli(int argc, char* argv[]) {
 #endif
     remove_cmd->add_flag("-r,--recursive", opts.recursive, "Process directories recursively");
     remove_cmd->add_option("-o,--output", opts.output_path, "Output path (required for files; batch defaults to cleaned/)");
+    add_still_geometry(remove_cmd);
     add_common(remove_cmd);
 
     // --- detect ---
@@ -442,6 +520,7 @@ int run_cli(int argc, char* argv[]) {
                          "Report only the legacy Gemini (pre-3.5) V1 profile");
     detect_cmd->add_flag("--no-legacy", opts.still_no_legacy,
                          "Report only the current (Gemini 3.5+) V2 profile");
+    add_still_geometry(detect_cmd);
     add_common(detect_cmd);
 
     // --- visible ---
@@ -475,6 +554,7 @@ int run_cli(int argc, char* argv[]) {
         ->check(CLI::Range(1, 25));
 #endif
     visible_cmd->add_option("-o,--output", opts.output_path, "Output path (required)");
+    add_still_geometry(visible_cmd);
     add_common(visible_cmd);
 
     // --- synthid ---

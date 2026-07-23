@@ -82,6 +82,54 @@ Both operate in the frequency domain via `FftContext` (FFTW3 wrapper with plan c
 - Audio passthrough via fresh input context with timestamp rescaling
 - Audio streams created before MP4 header write (valid moov atom)
 
+### Still-image Watermark Geometry (auto-detect, Gemini 3.6+)
+
+Gemini 3.6 Flash moved the small 36px diamond to a margin the position model
+(`v2_small_config_from_dims`) no longer predicts (model 84 vs real ~100 at
+896x1200; the ~16px gap beats the ±3px snap, so even a clear mark read "not
+detected"). Still images now content-detect the position like the video path
+(shipped 1.12.0), adapted for the single-image reality. New pure unit
+`src/detection/still_geometry.{hpp,cpp}` (OpenCV-only, no FFmpeg, links in the
+test exe like `geometry_detector`).
+
+- **Why anchored, not a blind corner scan:** video's blind scan works because it
+  aggregates ~12 frames (the static mark wins over transient content). A single
+  busy still has no such advantage: a faint mark (~0.48 NCC) is beaten by corner
+  content (~0.51-0.54) in a blind scan. So the search is **anchored** on the
+  model-predicted top-left first (±`kStillAnchorPad`=40 px, where the model is
+  usually within ~20 px), then **widened** to the bottom-right corner
+  (`max(0,W-320) x max(0,H-320)`) only if the anchored hit is not trusted.
+- **Trust gate** (reuses `decide_auto_geometry`): a hit that **snaps** to a
+  calibrated preset (`snap_still_to_known`, center L1 <= 40 within the size +
+  short-side-tier gate) is trusted at `kStillMinConfidence` (0.45); a raw off-table
+  hit must clear `kStillHighConfidence` (0.60) or it falls back to the model.
+- **Scope:** the search runs only for `V2 && Small` (the one variant with a known
+  model error and a content-matchable 36px diamond). V1 and V2-large keep today's
+  exact model, byte-identical. `WatermarkEngine::resolve_still_geometry` is called
+  **once** at the CLI layer (not inside `detect_watermark`, which runs per variant
+  attempt) and feeds the result through the existing `force_position` arg.
+- **Calibrated preset table** `kStillPresets[]` (first entry `gemini36-portrait`,
+  896x1200 -> margin 100) pins exact measured geometries and lets a faint mark be
+  trusted via the snap gate once its position is recognized. The model is the
+  fallback for uncalibrated resolutions.
+- **Precedence:** `--rect` > `--geo-preset` > auto-detect > model. New flags on
+  `remove`/`visible`/`detect`: `--rect x,y,w,h` (shared `parse_rect` helper, also
+  used by video), `--geo-preset <name>`, `--no-auto-geometry`. An explicit
+  `--rect`/`--geo-preset` **forces removal at that position** even when the
+  detector's confidence is below the 0.35 gate (a faint mark the search localized
+  but could not confirm). `--force` still uses the model position (unchanged).
+- **Polarity caveat:** `locate_still_watermark_hybrid` is polarity-invariant
+  (`max(|mx|,|mn|)`), but `NccDetector`'s stage-1 spatial NCC is max-only, so a
+  dark-on-bright mark the geometry search localizes can still be rejected by the
+  downstream fusion. Bright marks (the common case) confirm; inverted marks fall
+  back to `--rect`/`--geo-preset`.
+- **Snap generalization:** `enable_snap` was `V2 && Small` only; it is now
+  `force_position.has_value() || (V2 && Small)`, updated at the two CLI sites
+  (`process_single_image`'s `try_remove`, `process_detect`'s `report`) and mirrored
+  in the batch path. `remove_watermark` (`--force`) is unchanged (no force_position).
+- **Follow-up:** recalibrate `v2_small_config_from_dims` (or grow the preset table)
+  once more 3.6 resolutions are measured, so the model fallback is accurate too.
+
 ### Video Watermark Geometry (auto-detect, default for `VideoVariant::Auto`)
 
 `VideoVariant::Auto` no longer guesses by resolution only; it content-detects the

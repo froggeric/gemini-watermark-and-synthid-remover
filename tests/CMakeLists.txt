@@ -10,6 +10,7 @@ set(TEST_SOURCES
     unit/inpaint_test.cpp
     unit/notebooklm_gates_test.cpp
     unit/geometry_detector_test.cpp
+    unit/still_geometry_test.cpp
     integration/visible_pipeline_test.cpp
 )
 
@@ -26,6 +27,7 @@ set(LIB_SOURCES
     ${CMAKE_SOURCE_DIR}/src/synthid/codebook_builder.cpp
     ${CMAKE_SOURCE_DIR}/src/video/notebooklm_gates.cpp  # VideoReader-free (pure OpenCV); safe for the test link
     ${CMAKE_SOURCE_DIR}/src/video/geometry_detector.cpp  # VideoReader-free (pure OpenCV); safe for the test link
+    ${CMAKE_SOURCE_DIR}/src/detection/still_geometry.cpp  # VideoReader-free (pure OpenCV); safe for the test link
     # NOTE: src/video/scene_detector.cpp is intentionally excluded — it pulls in
     # VideoReader (FFmpeg), which the test target does not link. No test
     # references SceneDetector today; re-add it (with the FFMPEG link) if a
@@ -50,10 +52,13 @@ target_link_libraries(wmr_tests PRIVATE
     FFTW3::fftw3f
 )
 
-# Register tests with CTest
+# Register tests with CTest. Run from the source root so the integration tests find
+# test-images/ relative to CWD (catch_discover_tests otherwise runs from
+# build/tests/, where neither test-images/ nor ../test-images/ resolves and every
+# fixture-backed case silently SKIPs).
 include(CTest)
 include(Catch)
-catch_discover_tests(wmr_tests)
+catch_discover_tests(wmr_tests WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 # AI denoise (FDnCNN via NCNN/Vulkan) — mirrors the main CMakeLists block.
 # target_sources is used because wmr_tests was already created above; mutating

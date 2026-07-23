@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-07-23
+
+### Still images: automatic watermark geometry (Gemini 3.6 Flash)
+
+Gemini 3.6 Flash places its small 36px diamond watermark bottom-right as before,
+but at a margin the position model no longer predicts. For an 896x1200 image the
+model predicts margin 84; the real Gemini 3.6 margin is ~100. The ~16px gap exceeds
+the old ±3px refinement, so even a clearly visible mark was reported "not detected"
+(a positional bug, not a faintness one). Still images now content-detect the
+position like the video path (shipped 1.12.0), adapted for the single-image reality.
+
+- The search is **anchored** on the model-predicted position first (±40px, where the
+  model is usually within ~20px), then **widened** to the bottom-right corner if the
+  anchored hit is not trusted. A blind full-corner scan is unsafe on a single busy
+  still (no temporal consistency to separate a faint mark from corner content).
+- Regression guard: a snapped (on-table) hit is trusted at the 0.45 floor; a raw
+  off-table hit must clear 0.60 before it overrides the model. V1 and V2-large keep
+  today's exact model (the search runs only for V2 small).
+- New flags on `remove` / `visible` / `detect`: `--rect x,y,w,h` (manual override),
+  `--geo-preset <name>` (named geometry), `--no-auto-geometry` (use the model). An
+  explicit `--rect`/`--geo-preset` forces removal at that position even when the
+  detector's confidence is too low to confirm a faint mark. Precedence:
+  `--rect` > `--geo-preset` > auto-detect > model.
+- First calibrated preset: `gemini36-portrait` (896x1200, margin 100). The table
+  grows as more resolutions are measured; the model stays the fallback.
+- Pure OpenCV logic in a new `still_geometry` unit, unit-tested without FFmpeg.
+- Note: the geometry search is polarity-invariant but the downstream NCC fusion is
+  max-only, so a dark-on-bright mark it localizes can still be rejected; use
+  `--rect`/`--geo-preset` then.
+
 ## [1.12.0] - 2026-07-14
 
 ### Video: automatic watermark geometry detection

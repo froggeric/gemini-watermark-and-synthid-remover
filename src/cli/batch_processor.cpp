@@ -60,13 +60,36 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
 
         auto [force_variant, try_fallback] = resolve_still_variant(opts);
 
-        auto try_remove = [&](WatermarkVariant v) -> bool {
-            bool snap = (v == WatermarkVariant::V2 &&
-                         force_size.value_or(get_watermark_size(image.cols, image.rows))
-                             == WatermarkSize::Small);
-            auto detection = engine.detect_watermark(image, force_size, std::nullopt,
+        // Resolve the still geometry overrides + hybrid auto-search ONCE per image
+        // (V2 small only). Mirrors process_single_image so batch and single-image
+        // modes handle Gemini 3.6 identically.
+        std::optional<WatermarkPosition> resolved_geo;
+        if (!opts.force) {
+            StillGeometryOverride gov;
+            resolve_still_geometry_override(opts, gov);  // already validated in batch_process
+            const WatermarkSize sz =
+                force_size.value_or(get_watermark_size(image.cols, image.rows));
+            resolved_geo = engine.resolve_still_geometry(
+                image, WatermarkVariant::V2, sz, gov);
+        }
+
+        // An explicit --rect/--geo-preset forces removal at that position even when
+        // the detector's confidence is too low to confirm (faint mark). Mirrors the
+        // single-image path.
+        const bool explicit_override =
+            !opts.still_rect_str.empty() || !opts.still_geo_preset.empty();
+
+        auto try_remove = [&](WatermarkVariant v,
+                              std::optional<WatermarkPosition> force_pos) -> bool {
+            bool snap = force_pos.has_value() ||
+                (v == WatermarkVariant::V2 &&
+                 force_size.value_or(get_watermark_size(image.cols, image.rows))
+                     == WatermarkSize::Small);
+            auto detection = engine.detect_watermark(image, force_size, force_pos,
                                                      nullptr, v, snap);
-            if (!detection.detected) return false;
+            if (!detection.detected && !(explicit_override && force_pos.has_value())) {
+                return false;
+            }
             const cv::Mat& alpha = engine.get_still_alpha(detection.size, v);
             InpaintConfig icfg;
             bool do_cleanup = resolve_inpaint_config(opts, icfg);
@@ -82,8 +105,10 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
             engine.remove_watermark(image, force_size, force_variant);
         } else {
             WatermarkVariant primary = force_variant.value_or(WatermarkVariant::V2);
-            if (!try_remove(primary) && try_fallback && primary == WatermarkVariant::V2) {
-                try_remove(WatermarkVariant::V1);
+            if (!try_remove(primary,
+                            (primary == WatermarkVariant::V2) ? resolved_geo : std::nullopt) &&
+                try_fallback && primary == WatermarkVariant::V2) {
+                try_remove(WatermarkVariant::V1, std::nullopt);
             }
         }
     }
@@ -154,6 +179,15 @@ BatchResult batch_process(const CliOptions& opts, const ProgressCallback& progre
     if (files.empty()) {
         spdlog::warn("No image files found in: {}", opts.input_path);
         return result;
+    }
+
+    // Validate the still geometry override once (--rect), so a malformed value fails
+    // the whole batch with a single error rather than one per file.
+    if (opts.mode == CliMode::AutoRemove || opts.mode == CliMode::VisibleOnly) {
+        StillGeometryOverride gov;
+        if (!resolve_still_geometry_override(opts, gov)) {
+            return result;  // error already logged
+        }
     }
 
     spdlog::info("Processing {} images...", result.total);

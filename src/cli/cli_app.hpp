@@ -6,6 +6,7 @@
 
 #include "core/types.hpp"
 #include "core/inpaint.hpp"
+#include "detection/still_geometry.hpp"  // StillGeometryOverride
 
 namespace wmr {
 
@@ -41,6 +42,9 @@ struct CliOptions {
     std::string notebooklm_method = "auto"; // video: --notebooklm-method {auto|ns|migan}
     bool still_legacy = false;         // still images: pin legacy V1 (Gemini pre-3.5)
     bool still_no_legacy = false;      // still images: pin current V2, disable V2→V1 fallback
+    std::string still_rect_str;        // still images: --rect "x,y,w,h" manual override
+    std::string still_geo_preset;      // still images: --geo-preset <name>
+    bool still_no_auto_geometry = false; // still images: --no-auto-geometry
     std::string video_variant_str;
     bool no_auto_geometry = false;   // video: --no-auto-geometry (skip content-based geometry search)
     bool scenes = false;
@@ -73,6 +77,14 @@ resolve_still_variant(const CliOptions& opts);
 // image and batch paths). Returns false when the user chose "--denoise off"
 // (the caller then skips cleanup, reverse-blending only).
 bool resolve_inpaint_config(const CliOptions& opts, InpaintConfig& out);
+
+// Parse a "x,y,w,h" rect string. Returns nullopt for an empty OR malformed string;
+// the caller distinguishes the two (empty = no flag, malformed = error).
+std::optional<cv::Rect> parse_rect(const std::string& s);
+
+// Build the still-image geometry override from CLI opts. Returns false (with a
+// logged error) when --rect was given but malformed.
+bool resolve_still_geometry_override(const CliOptions& opts, StillGeometryOverride& out);
 
 int run_cli(int argc, char* argv[]);
 

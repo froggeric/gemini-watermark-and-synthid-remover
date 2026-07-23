@@ -197,6 +197,40 @@ DetectionResult WatermarkEngine::detect_watermark(
     return detector_->detect(image, size, pos_cfg, alpha, enable_snap);
 }
 
+std::optional<WatermarkPosition> WatermarkEngine::resolve_still_geometry(
+    const cv::Mat& image, WatermarkVariant variant, WatermarkSize size,
+    const StillGeometryOverride& override) const
+{
+    // An explicit --rect override is meaningful for any variant (manual position).
+    if (override.rect) {
+        return rect_to_still_position(*override.rect, image.cols, image.rows);
+    }
+    // The content search only covers the V2 small path (the one variant with a known
+    // model error and a content-matchable 36px diamond). V1/V2-large keep the model.
+    if (variant != WatermarkVariant::V2 || size != WatermarkSize::Small || !has_v2_) {
+        return std::nullopt;
+    }
+
+    const WatermarkPosition model_pos = get_watermark_config(image.cols, image.rows, variant);
+    const cv::Mat& alpha = get_v2_diamond_alpha_36();  // CV_32FC1 [0,1]
+    if (alpha.empty()) return std::nullopt;
+
+    cv::Mat gray;
+    if (image.channels() >= 3) cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+    else                        gray = image.clone();
+    cv::Mat alpha8u;
+    alpha.convertTo(alpha8u, CV_8U, 255.0);
+
+    // wmr::-qualified so it resolves to the free function in still_geometry.cpp, not
+    // this member (different arity; qualified lookup skips class members anyway).
+    const StillResolvedGeometry r = wmr::resolve_still_geometry(
+        gray, alpha8u, model_pos, image.cols, image.rows, override);
+    spdlog::debug("Still geometry: source={}, score={:.2f}, margin=({},{})",
+                  r.source, r.score, r.pos.margin_right, r.pos.margin_bottom);
+    if (r.source == "model") return std::nullopt;  // let detect_watermark derive it
+    return r.pos;
+}
+
 void WatermarkEngine::remove_watermark(cv::Mat& image,
                                         std::optional<WatermarkSize> force_size,
                                         std::optional<WatermarkVariant> force_variant) {

@@ -61,6 +61,12 @@ Batch a folder: `wmr remove folder/ -o cleaned/ --recursive`.
 
 > **Which command?** Image → `remove` · Gemini/Veo video → `video` · NotebookLM video → `video --notebooklm` · Invisible (SynthID) → `synthid` · Just locate → `detect`
 
+> **Gemini 3.6 Flash images:** the visible diamond's position is auto-detected, so
+> `wmr remove` just works. If a mark is too faint to confirm (blends with a light
+> background), force its position: `wmr remove img.png --geo-preset gemini36-portrait -o clean.png`
+> (named presets per resolution) or `wmr remove img.png --rect x,y,w,h -o clean.png`
+> (exact box). Use `wmr detect img.png -v` to read the detected geometry.
+
 Supported inputs: PNG / JPEG / WebP images; MP4 and other FFmpeg-supported video.
 
 ## Usage reference
@@ -81,8 +87,11 @@ Supported inputs: PNG / JPEG / WebP images; MP4 and other FFmpeg-supported video
 | `-o, --output` | most | Output path (required for files; batch defaults to `cleaned/`) |
 | `-f, --force` | remove, visible, synthid, video | Skip detection, assume a watermark is present |
 | `--force-small` / `--force-large` | remove, visible | Force 48×48 / 96×96 Gemini logo size |
-| `--legacy` | remove | Pin legacy Gemini (pre-3.5) V1 still-image profile |
-| `--no-legacy` | remove | Pin current (Gemini 3.5+) V2 profile; disable auto-fallback |
+| `--legacy` | remove, visible, detect | Pin legacy Gemini (pre-3.5) V1 still-image profile |
+| `--no-legacy` | remove, visible, detect | Pin current (Gemini 3.5+) V2 profile; disable auto-fallback |
+| `--rect x,y,w,h` | remove, visible, detect | Force the watermark box (overrides auto-geometry); removal happens there even on a faint mark |
+| `--geo-preset <name>` | remove, visible, detect | Named geometry, e.g. `gemini36-portrait` (896×1200) |
+| `--no-auto-geometry` | remove, visible, detect | Skip the content-based position search; use the model |
 | `--legacy` | video | Use the Veo legacy text profile |
 | `-r, --recursive` | remove | Process directories recursively |
 | `-v, --verbose` / `-V, --version` | all | Verbosity / version |

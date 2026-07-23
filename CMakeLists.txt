@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(wmr VERSION 1.12.0 LANGUAGES CXX)
+project(wmr VERSION 1.13.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,6 +27,7 @@ set(SOURCES
     src/video/notebooklm_detector.cpp
     src/video/notebooklm_gates.cpp
     src/video/geometry_detector.cpp
+    src/detection/still_geometry.cpp
 )
 
 # Executable

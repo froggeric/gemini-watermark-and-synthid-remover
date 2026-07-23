@@ -6,6 +6,7 @@
 
 #include "core/types.hpp"
 #include "core/inpaint.hpp"
+#include "detection/still_geometry.hpp"  // StillGeometryOverride + resolve_still_geometry
 #include "embedded_assets.hpp"
 #ifdef WMR_AI_DENOISE
 #include "core/ai_denoise.hpp"
@@ -77,6 +78,19 @@ public:
         return detect_watermark(image, force_size, force_position, custom_alpha,
                                 WatermarkVariant::V1, /*enable_snap=*/false);
     }
+
+    // Resolve the still-image watermark position via the hybrid auto-geometry search
+    // (Gemini 3.5+/3.6 small diamond), honoring --rect / --geo-preset overrides. Runs
+    // the content search only for V2 small; other variants return nullopt (use the
+    // model) unless an explicit --rect override is given. Returns nullopt when the
+    // result is the model position, so detect_watermark derives it itself (and the
+    // V2->V1 fallback path is unaffected). Call this ONCE per image, before the
+    // variant loop, and feed the result as detect_watermark's force_position.
+    std::optional<WatermarkPosition> resolve_still_geometry(
+        const cv::Mat& image,
+        WatermarkVariant variant,
+        WatermarkSize size,
+        const StillGeometryOverride& override) const;
 
     void inpaint_residual(cv::Mat& image,
                           const cv::Rect& region,

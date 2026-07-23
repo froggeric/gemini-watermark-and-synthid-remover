@@ -4,6 +4,7 @@
 #include "core/watermark_engine.hpp"
 #include "core/types.hpp"
 #include "core/blend_modes.hpp"
+#include "detection/still_geometry.hpp"
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <filesystem>
@@ -11,8 +12,11 @@
 using namespace wmr;
 using Catch::Matchers::WithinAbs;
 
-static const char* kTestImage = "test-images/2400x1792-gemini.png";
-static const char* kAltTestImage = "../test-images/2400x1792-gemini.png";
+// NOTE: the real baseline file is 2400x1792-test1-gemini.png (Gemini 3.1 Pro, V1).
+// An earlier revision pointed at test-images/2400x1792-gemini.png, which does not
+// exist, so these two [integration] cases always SKIP. Fixed to the real filename.
+static const char* kTestImage = "test-images/2400x1792-test1-gemini.png";
+static const char* kAltTestImage = "../test-images/2400x1792-test1-gemini.png";
 
 static cv::Mat load_test_image() {
     if (std::filesystem::exists(kTestImage)) {
@@ -21,6 +25,16 @@ static cv::Mat load_test_image() {
     if (std::filesystem::exists(kAltTestImage)) {
         return cv::imread(kAltTestImage, cv::IMREAD_COLOR);
     }
+    return {};
+}
+
+// Load a fixture by exact filename, probing CWD-is-project-root then tests/. Returns
+// an empty Mat when absent so the caller can SKIP (the suite must not fail without it).
+static cv::Mat load_fixture(const char* name) {
+    std::string p1 = std::string("test-images/") + name;
+    std::string p2 = std::string("../test-images/") + name;
+    if (std::filesystem::exists(p1)) return cv::imread(p1, cv::IMREAD_COLOR);
+    if (std::filesystem::exists(p2)) return cv::imread(p2, cv::IMREAD_COLOR);
     return {};
 }
 
@@ -202,4 +216,71 @@ TEST_CASE("V1 legacy path still works via default detect", "[v2]") {
     auto det = engine.detect_watermark(watermarked);
     REQUIRE(det.detected);
     REQUIRE(det.region.width == 48);
+}
+
+// ---------------------------------------------------------------------------
+// Still-image auto-geometry (Gemini 3.6 Flash). The model predicts margin 84 for
+// 896x1200; the real mark is at ~100. The hybrid search must recover it on a clear
+// image (test4), leave V1 untouched (test1), and let a preset force the geometry on
+// a faint image (test3).
+// ---------------------------------------------------------------------------
+TEST_CASE("Gemini 3.6 (896x1200) auto-geometry finds the true position", "[integration][v2]") {
+    cv::Mat image = load_fixture("896x1200-test4-gemini36.png");
+    if (image.empty()) SKIP("test4 fixture not available");
+
+    WatermarkEngine engine;
+    StillGeometryOverride ov;  // no override -> hybrid auto search
+    auto pos = engine.resolve_still_geometry(image, WatermarkVariant::V2,
+                                             WatermarkSize::Small, ov);
+    REQUIRE(pos.has_value());
+    CHECK(pos->logo_size == 36);
+    CHECK(pos->margin_right >= 90);   // ~100, NOT the model's 84
+    CHECK(pos->margin_right <= 112);
+    CHECK(pos->margin_bottom >= 90);
+    CHECK(pos->margin_bottom <= 112);
+
+    auto det = engine.detect_watermark(image, WatermarkSize::Small, pos, nullptr,
+                                       WatermarkVariant::V2, /*enable_snap=*/true);
+    CAPTURE(det.spatial_score, det.gradient_score, det.variance_score, det.confidence);
+    REQUIRE(det.detected);
+    // Near the measured TL (760,1063).
+    CHECK(std::abs(det.region.x - 760) <= 12);
+    CHECK(std::abs(det.region.y - 1063) <= 12);
+}
+
+TEST_CASE("Gemini 3.1 Pro (2400x1792) still detects as V1 (non-regression)", "[integration]") {
+    cv::Mat image = load_fixture("2400x1792-test1-gemini.png");
+    if (image.empty()) SKIP("test1 fixture not available");
+
+    WatermarkEngine engine;
+    // The auto search is scoped to V2 small; V1 large is untouched (returns nullopt).
+    StillGeometryOverride ov;
+    CHECK_FALSE(engine.resolve_still_geometry(image, WatermarkVariant::V1,
+                                              WatermarkSize::Large, ov).has_value());
+    auto det = engine.detect_watermark(image, std::nullopt, std::nullopt, nullptr,
+                                       WatermarkVariant::V1, /*enable_snap=*/false);
+    REQUIRE(det.detected);
+}
+
+TEST_CASE("Gemini 3.6 faint (896x1200) geometry preset forces the true position",
+          "[integration][v2]") {
+    cv::Mat image = load_fixture("896x1200-test3-gemini36.png");
+    if (image.empty()) SKIP("test3 fixture not available");
+
+    WatermarkEngine engine;
+    StillGeometryOverride ov;
+    ov.preset = std::string("gemini36-portrait");   // calibrated 896x1200 -> margin 100
+    auto pos = engine.resolve_still_geometry(image, WatermarkVariant::V2,
+                                             WatermarkSize::Small, ov);
+    REQUIRE(pos.has_value());
+    CHECK(pos->margin_right == 100);
+    CHECK(pos->margin_bottom == 100);
+
+    // A --rect override forces the exact measured rect regardless of variant.
+    StillGeometryOverride ov2;
+    ov2.rect = cv::Rect(760, 1063, 36, 36);
+    auto pos2 = engine.resolve_still_geometry(image, WatermarkVariant::V1,
+                                              WatermarkSize::Small, ov2);
+    REQUIRE(pos2.has_value());
+    CHECK(pos2->margin_right == 896 - (760 + 36));
 }
