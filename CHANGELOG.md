@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-07-23
+
+### Fixed: Gemini 3.6 small watermark is 48px, not 36px
+
+1.13.0 shipped the still auto-geometry search but removed with the wrong mask:
+Gemini 3.6 Flash's small diamond is **48px** (the same asset the video path uses for
+small watermarks), not the 36px Gemini 3.5 still alpha. On a uniform background the
+36px alpha under-covered the 48px mark, leaving a faint diamond ghost. Measured on
+`test4`: the 48px alpha matches the mark at NCC 0.997 (vs 0.685 for 36px) and the
+reverse-blend residual drops ~74%; after the fix the cleaned patch is statistically
+identical to the surrounding background.
+
+- The search now tries **both** 36px (Gemini 3.5) and 48px (Gemini 3.6) diamond
+  templates and uses whichever fits, so removal runs with the matched-size alpha.
+- A manual override (`--rect` / `--geo-preset`) also uses the correct size: a 48px box
+  or the `gemini36-portrait` preset drives the 48px alpha (the previous default-36px
+  was the bug for forced removal too).
+- The calibrated preset `gemini36-portrait` is now 48px @ margin (94,96) for 896x1200.
+
+### Fixed: `--geo-preset` now lists and validates the presets
+
+`--geo-preset` uses an IsMember validator, so the help text shows the valid names
+(`gemini36-portrait`) and an unknown name is rejected with the list, instead of being
+silently ignored. `detect` reports the matched region size (e.g. 48x48), so the
+resolved geometry is visible, not just the V1/V2 profile.
+
 ## [1.13.0] - 2026-07-23
 
 ### Still images: automatic watermark geometry (Gemini 3.6 Flash)

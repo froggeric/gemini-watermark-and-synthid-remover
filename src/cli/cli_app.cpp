@@ -16,7 +16,9 @@
 #include <fmt/format.h>
 #include <filesystem>
 #include <iostream>
+#include <iterator>
 #include <sstream>
+#include <vector>
 
 #ifndef APP_VERSION
 #define APP_VERSION "1.1.0"
@@ -117,19 +119,19 @@ static int process_detect(const CliOptions& opts) {
         StillGeometryOverride gov;
         if (!resolve_still_geometry_override(opts, gov)) return 1;
         // Resolve the hybrid auto-geometry ONCE for the V2 profile (the search only
-        // runs for V2 small). The V1 report uses no forced position.
-        std::optional<WatermarkPosition> resolved_geo;
+        // runs for V2 small). The V1 report uses no forced position / override alpha.
+        WatermarkEngine::StillResolveResult resolved;
         if (!opts.still_legacy) {
-            resolved_geo = engine.resolve_still_geometry(image, WatermarkVariant::V2, sz, gov);
+            resolved = engine.resolve_still_geometry(image, WatermarkVariant::V2, sz, gov);
         }
 
         auto report = [&](WatermarkVariant v) {
-            const std::optional<WatermarkPosition> fp =
-                (v == WatermarkVariant::V2) ? resolved_geo : std::nullopt;
-            const bool snap = fp.has_value() ||
-                (v == WatermarkVariant::V2 && sz == WatermarkSize::Small);
+            const bool is_v2 = (v == WatermarkVariant::V2);
+            const std::optional<WatermarkPosition> fp = is_v2 ? resolved.pos : std::nullopt;
+            const cv::Mat* alpha_ov = is_v2 ? resolved.alpha : nullptr;
+            const bool snap = fp.has_value() || (is_v2 && sz == WatermarkSize::Small);
             auto result = engine.detect_watermark(image, std::nullopt, fp,
-                                                  nullptr, v, snap);
+                                                  alpha_ov, v, snap);
             const char* tag = (v == WatermarkVariant::V1) ? "[VISIBLE V1]" : "[VISIBLE V2]";
             if (result.detected) {
                 spdlog::info("{} DETECTED (confidence: {:.1f}%)", tag,
@@ -196,16 +198,16 @@ static int process_single_image(const CliOptions& opts) {
         auto [force_variant, try_fallback] = resolve_still_variant(opts);
 
         // Resolve the still geometry overrides + hybrid auto-search ONCE, for the V2
-        // profile (the search only runs for V2 small). The V2 primary attempt uses
-        // the result as a forced position; the V1 fallback does not. --force skips
-        // detection entirely, so it is excluded here.
-        std::optional<WatermarkPosition> resolved_geo;
+        // profile (the search only runs for V2 small). The V2 primary attempt uses the
+        // resolved position + the matched-size alpha (36 or 48); the V1 fallback uses
+        // neither. --force skips detection entirely, so it is excluded here.
+        WatermarkEngine::StillResolveResult resolved;
         if (!opts.force) {
             StillGeometryOverride gov;
             if (!resolve_still_geometry_override(opts, gov)) return 1;
             const WatermarkSize sz =
                 force_size.value_or(get_watermark_size(image.cols, image.rows));
-            resolved_geo = engine.resolve_still_geometry(
+            resolved = engine.resolve_still_geometry(
                 image, WatermarkVariant::V2, sz, gov);
         }
 
@@ -218,13 +220,14 @@ static int process_single_image(const CliOptions& opts) {
 
         // Detect→remove for one variant; true if a watermark was found and removed.
         auto try_remove = [&](WatermarkVariant v,
-                              std::optional<WatermarkPosition> force_pos) -> bool {
+                              std::optional<WatermarkPosition> force_pos,
+                              const cv::Mat* alpha_override) -> bool {
             bool snap = force_pos.has_value() ||
                 (v == WatermarkVariant::V2 &&
                  force_size.value_or(get_watermark_size(image.cols, image.rows))
                      == WatermarkSize::Small);
             auto detection = engine.detect_watermark(image, force_size, force_pos,
-                                                     nullptr, v, snap);
+                                                     alpha_override, v, snap);
             if (!detection.detected) {
                 if (!(explicit_override && force_pos.has_value())) return false;
                 spdlog::info("Removing at overridden position "
@@ -235,7 +238,8 @@ static int process_single_image(const CliOptions& opts) {
                              detection.confidence * 100.0f,
                              v == WatermarkVariant::V1 ? "V1" : "V2");
             }
-            const cv::Mat& alpha = engine.get_still_alpha(detection.size, v);
+            const cv::Mat& alpha = alpha_override ? *alpha_override
+                                                  : engine.get_still_alpha(detection.size, v);
             InpaintConfig icfg;
             bool do_cleanup = resolve_inpaint_config(opts, icfg);
             if (do_cleanup) {
@@ -255,11 +259,12 @@ static int process_single_image(const CliOptions& opts) {
             did_work = true;
         } else {
             WatermarkVariant primary = force_variant.value_or(WatermarkVariant::V2);
-            bool removed = try_remove(
-                primary, (primary == WatermarkVariant::V2) ? resolved_geo : std::nullopt);
+            const bool is_v2 = (primary == WatermarkVariant::V2);
+            bool removed = try_remove(primary, is_v2 ? resolved.pos : std::nullopt,
+                                      is_v2 ? resolved.alpha : nullptr);
             if (!removed && try_fallback && primary == WatermarkVariant::V2) {
                 spdlog::info("V2 profile not detected — retrying with legacy V1");
-                removed = try_remove(WatermarkVariant::V1, std::nullopt);
+                removed = try_remove(WatermarkVariant::V1, std::nullopt, nullptr);
             }
             if (removed) {
                 did_work = true;
@@ -459,11 +464,14 @@ int run_cli(int argc, char* argv[]) {
     };
 
     // Still-image geometry flags shared by remove / visible / detect.
+    const std::vector<std::string> preset_names(
+        std::begin(kStillPresetNames), std::end(kStillPresetNames));
     auto add_still_geometry = [&](CLI::App* cmd) {
         cmd->add_option("--rect", opts.still_rect_str,
                         "Manual watermark rect x,y,w,h (overrides auto-detect)");
         cmd->add_option("--geo-preset", opts.still_geo_preset,
-                        "Named geometry preset, e.g. gemini36-portrait");
+                        "Named geometry preset (calibrated Gemini 3.6 sizes)")
+            ->check(CLI::IsMember(preset_names));
         cmd->add_flag("--no-auto-geometry", opts.still_no_auto_geometry,
                       "Disable the content-based geometry search; use the model position");
     };

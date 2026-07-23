@@ -36,8 +36,9 @@ inline constexpr float kStillHighConfidence = 0.60f;
 inline constexpr int kStillAnchorPad = 40;
 
 struct StillGeometryHit {
-    cv::Rect rect;        // detected bbox in full-frame coords (size == template size)
+    cv::Rect rect;        // detected bbox in full-frame coords (size == winning template size)
     float score = 0.0f;   // polarity-invariant |TM_CCOEFF_NORMED| in [0,1]
+    int template_index = -1;  // index into the caller-supplied templates vector
 };
 
 // A calibrated known watermark geometry for a resolution tier. The continuous model
@@ -53,10 +54,16 @@ struct StillPreset {
     int logo_size;
 };
 
-// The calibrated table. First entry: Gemini 3.6 Flash portrait ~1k (896x1200),
-// measured at margin ~100 (the model predicts 84 here). Grow as more fixtures arrive.
+// The calibrated table. Gemini 3.6 Flash portrait ~1k (896x1200): the small diamond
+// is 48px (NOT 36px like Gemini 3.5 stills), at margin ~(94,96). Grow as more
+// fixtures arrive; the model stays the fallback for uncalibrated resolutions.
 inline constexpr StillPreset kStillPresets[] = {
-    { "gemini36-portrait", 800, 1000, 100, 100, 36 },
+    { "gemini36-portrait", 800, 1000, 94, 96, 48 },
+};
+
+// The valid preset names, for CLI help / validation (kept in sync with kStillPresets).
+inline constexpr const char* kStillPresetNames[] = {
+    "gemini36-portrait",
 };
 
 struct StillGeometryOverride {
@@ -69,6 +76,7 @@ struct StillResolvedGeometry {
     WatermarkPosition pos;
     std::string source;   // "rect" | "preset" | "auto/snapped" | "auto/raw" | "model"
     float score = 0.0f;
+    int template_index = -1;  // which template matched (auto path); -1 otherwise
 };
 
 // Look up a named preset (exact name match). For --geo-preset.
@@ -89,26 +97,30 @@ WatermarkPosition rect_to_still_position(const cv::Rect& rect, int W, int H,
 // case where the model is approximately right. If that hit is not trusted (neither a
 // preset snap nor a high enough raw score), (2) widen to the bottom-right corner
 // window (max(0,W-320) x max(0,H-320)) and gate the raw result. Returns nullopt when
-// nothing clears the bar (caller falls back to the model). `alpha_template_8u` is the
-// single 36px V2 diamond, CV_8UC1.
+// nothing clears the bar (caller falls back to the model). `alpha_templates_8u` is the
+// set of candidate diamond sizes (e.g. {36px Gemini 3.5, 48px Gemini 3.6}); the winner
+// is reported via StillGeometryHit::template_index so the caller uses the matched-size
+// alpha for removal. CV_8UC1.
 //
 // NOTE: this match is polarity-invariant (max(|mx|,|mn|)), but NccDetector's stage-1
 // spatial NCC is MAX-only, so a dark-on-bright mark localized here can still be
 // rejected by the downstream fusion. Bright marks (the common case) confirm fine.
 std::optional<StillGeometryHit> locate_still_watermark_hybrid(
     const cv::Mat& gray_frame,
-    const cv::Mat& alpha_template_8u,
+    const std::vector<cv::Mat>& alpha_templates_8u,
     cv::Point model_anchor,
     int W, int H,
     float min_confidence = kStillMinConfidence,
     float high_confidence = kStillHighConfidence);
 
 // Pure precedence chokepoint: --rect > --geo-preset > hybrid auto-detect > model.
-// Takes the already-loaded alpha template + the model position; the engine wraps it
-// to supply the alpha + grayscale + model anchor.
+// Takes the candidate alpha templates + the model position; the engine wraps it to
+// supply the templates + grayscale + model anchor. The resolved pos.logo_size is the
+// actual mark width (rect width, preset logo_size, or matched template size) so the
+// caller picks the right-size removal alpha.
 StillResolvedGeometry resolve_still_geometry(
     const cv::Mat& gray_frame,
-    const cv::Mat& alpha_template_8u,
+    const std::vector<cv::Mat>& alpha_templates_8u,
     const WatermarkPosition& model_pos,
     int W, int H,
     const StillGeometryOverride& override);

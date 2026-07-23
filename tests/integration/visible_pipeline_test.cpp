@@ -219,33 +219,34 @@ TEST_CASE("V1 legacy path still works via default detect", "[v2]") {
 }
 
 // ---------------------------------------------------------------------------
-// Still-image auto-geometry (Gemini 3.6 Flash). The model predicts margin 84 for
-// 896x1200; the real mark is at ~100. The hybrid search must recover it on a clear
-// image (test4), leave V1 untouched (test1), and let a preset force the geometry on
-// a faint image (test3).
+// Still-image auto-geometry (Gemini 3.6 Flash). Gemini 3.6's small diamond is 48px
+// (NOT 36px like 3.5 stills) at margin ~(94,96); the model predicts 36px@84. The
+// multi-template search must recover the 48px mark on a clear image (test4), leave
+// V1 untouched (test1), and let a preset force the geometry on a faint image (test3).
 // ---------------------------------------------------------------------------
-TEST_CASE("Gemini 3.6 (896x1200) auto-geometry finds the true position", "[integration][v2]") {
+TEST_CASE("Gemini 3.6 (896x1200) auto-geometry finds the 48px mark", "[integration][v2]") {
     cv::Mat image = load_fixture("896x1200-test4-gemini36.png");
     if (image.empty()) SKIP("test4 fixture not available");
 
     WatermarkEngine engine;
     StillGeometryOverride ov;  // no override -> hybrid auto search
-    auto pos = engine.resolve_still_geometry(image, WatermarkVariant::V2,
+    auto res = engine.resolve_still_geometry(image, WatermarkVariant::V2,
                                              WatermarkSize::Small, ov);
-    REQUIRE(pos.has_value());
-    CHECK(pos->logo_size == 36);
-    CHECK(pos->margin_right >= 90);   // ~100, NOT the model's 84
-    CHECK(pos->margin_right <= 112);
-    CHECK(pos->margin_bottom >= 90);
-    CHECK(pos->margin_bottom <= 112);
+    REQUIRE(res.pos.has_value());
+    CHECK(res.pos->logo_size == 48);                  // 3.6 is 48px, not 36
+    CHECK(res.pos->margin_right >= 86);               // ~94, NOT the model's 84
+    CHECK(res.pos->margin_right <= 102);
+    REQUIRE(res.alpha != nullptr);
+    CHECK(res.alpha->cols == 48);                     // matched-size removal alpha
 
-    auto det = engine.detect_watermark(image, WatermarkSize::Small, pos, nullptr,
+    auto det = engine.detect_watermark(image, WatermarkSize::Small, res.pos, res.alpha,
                                        WatermarkVariant::V2, /*enable_snap=*/true);
     CAPTURE(det.spatial_score, det.gradient_score, det.variance_score, det.confidence);
     REQUIRE(det.detected);
-    // Near the measured TL (760,1063).
-    CHECK(std::abs(det.region.x - 760) <= 12);
-    CHECK(std::abs(det.region.y - 1063) <= 12);
+    CHECK(det.region.width == 48);
+    // Near the measured TL (754,1056).
+    CHECK(std::abs(det.region.x - 754) <= 6);
+    CHECK(std::abs(det.region.y - 1056) <= 6);
 }
 
 TEST_CASE("Gemini 3.1 Pro (2400x1792) still detects as V1 (non-regression)", "[integration]") {
@@ -256,31 +257,36 @@ TEST_CASE("Gemini 3.1 Pro (2400x1792) still detects as V1 (non-regression)", "[i
     // The auto search is scoped to V2 small; V1 large is untouched (returns nullopt).
     StillGeometryOverride ov;
     CHECK_FALSE(engine.resolve_still_geometry(image, WatermarkVariant::V1,
-                                              WatermarkSize::Large, ov).has_value());
+                                              WatermarkSize::Large, ov).pos.has_value());
     auto det = engine.detect_watermark(image, std::nullopt, std::nullopt, nullptr,
                                        WatermarkVariant::V1, /*enable_snap=*/false);
     REQUIRE(det.detected);
 }
 
-TEST_CASE("Gemini 3.6 faint (896x1200) geometry preset forces the true position",
+TEST_CASE("Gemini 3.6 faint (896x1200) geometry preset forces the 48px position",
           "[integration][v2]") {
     cv::Mat image = load_fixture("896x1200-test3-gemini36.png");
     if (image.empty()) SKIP("test3 fixture not available");
 
     WatermarkEngine engine;
     StillGeometryOverride ov;
-    ov.preset = std::string("gemini36-portrait");   // calibrated 896x1200 -> margin 100
-    auto pos = engine.resolve_still_geometry(image, WatermarkVariant::V2,
+    ov.preset = std::string("gemini36-portrait");   // calibrated 896x1200 -> 48px @ (94,96)
+    auto res = engine.resolve_still_geometry(image, WatermarkVariant::V2,
                                              WatermarkSize::Small, ov);
-    REQUIRE(pos.has_value());
-    CHECK(pos->margin_right == 100);
-    CHECK(pos->margin_bottom == 100);
+    REQUIRE(res.pos.has_value());
+    CHECK(res.pos->margin_right == 94);
+    CHECK(res.pos->margin_bottom == 96);
+    CHECK(res.pos->logo_size == 48);
+    REQUIRE(res.alpha != nullptr);
+    CHECK(res.alpha->cols == 48);   // the override uses the correct 48px alpha, not the default 36
 
-    // A --rect override forces the exact measured rect regardless of variant.
+    // A --rect override forces the exact measured box; logo_size follows the rect width.
     StillGeometryOverride ov2;
-    ov2.rect = cv::Rect(760, 1063, 36, 36);
-    auto pos2 = engine.resolve_still_geometry(image, WatermarkVariant::V1,
+    ov2.rect = cv::Rect(754, 1056, 48, 48);
+    auto res2 = engine.resolve_still_geometry(image, WatermarkVariant::V1,
                                               WatermarkSize::Small, ov2);
-    REQUIRE(pos2.has_value());
-    CHECK(pos2->margin_right == 896 - (760 + 36));
+    REQUIRE(res2.pos.has_value());
+    CHECK(res2.pos->margin_right == 896 - (754 + 48));
+    REQUIRE(res2.alpha != nullptr);
+    CHECK(res2.alpha->cols == 48);
 }

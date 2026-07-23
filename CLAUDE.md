@@ -84,40 +84,49 @@ Both operate in the frequency domain via `FftContext` (FFTW3 wrapper with plan c
 
 ### Still-image Watermark Geometry (auto-detect, Gemini 3.6+)
 
-Gemini 3.6 Flash moved the small 36px diamond to a margin the position model
-(`v2_small_config_from_dims`) no longer predicts (model 84 vs real ~100 at
-896x1200; the ~16px gap beats the ±3px snap, so even a clear mark read "not
-detected"). Still images now content-detect the position like the video path
-(shipped 1.12.0), adapted for the single-image reality. New pure unit
-`src/detection/still_geometry.{hpp,cpp}` (OpenCV-only, no FFmpeg, links in the
-test exe like `geometry_detector`).
+Gemini 3.6 Flash's small diamond is **48px** (the same asset the video path uses for
+small watermarks, `get_v2_diamond_alpha_small`), NOT the 36px Gemini 3.5 still alpha,
+and it sits at a margin the position model (`v2_small_config_from_dims`) no longer
+predicts (model 36px@84 vs real 48px@(94,96) at 896x1200). Still images now
+content-detect the position AND size like the video path (shipped 1.12.0), adapted
+for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
+(OpenCV-only, no FFmpeg, links in the test exe like `geometry_detector`).
 
+- **Multi-template (36 AND 48):** `locate_still_watermark_hybrid` is fed both the
+  36px (Gemini 3.5) and 48px (Gemini 3.6) diamond alphas; the winner
+  (`StillGeometryHit::template_index`) selects the matched-size alpha for removal.
+  A single-size assumption fails one of the two Gemini generations (1.13.0 shipped
+  36px-only and under-covered 3.6's 48px mark).
 - **Why anchored, not a blind corner scan:** video's blind scan works because it
   aggregates ~12 frames (the static mark wins over transient content). A single
   busy still has no such advantage: a faint mark (~0.48 NCC) is beaten by corner
   content (~0.51-0.54) in a blind scan. So the search is **anchored** on the
-  model-predicted top-left first (±`kStillAnchorPad`=40 px, where the model is
-  usually within ~20 px), then **widened** to the bottom-right corner
-  (`max(0,W-320) x max(0,H-320)`) only if the anchored hit is not trusted.
+  model-predicted top-left first (±`kStillAnchorPad`=40 px), then **widened** to the
+  bottom-right corner (`max(0,W-320) x max(0,H-320)`) only if the anchored hit is
+  not trusted.
 - **Trust gate** (reuses `decide_auto_geometry`): a hit that **snaps** to a
   calibrated preset (`snap_still_to_known`, center L1 <= 40 within the size +
   short-side-tier gate) is trusted at `kStillMinConfidence` (0.45); a raw off-table
   hit must clear `kStillHighConfidence` (0.60) or it falls back to the model.
-- **Scope:** the search runs only for `V2 && Small` (the one variant with a known
-  model error and a content-matchable 36px diamond). V1 and V2-large keep today's
+- **Scope:** the search runs only for `V2 && Small`. V1 and V2-large keep today's
   exact model, byte-identical. `WatermarkEngine::resolve_still_geometry` is called
   **once** at the CLI layer (not inside `detect_watermark`, which runs per variant
-  attempt) and feeds the result through the existing `force_position` arg.
+  attempt) and returns `{pos, alpha}` — the matched alpha is threaded as
+  `custom_alpha` through `detect_watermark` and the remover, so a 48px detection
+  removes with the 48px alpha (and a `--rect`/`--geo-preset` override too, not the
+  default 36px).
 - **Calibrated preset table** `kStillPresets[]` (first entry `gemini36-portrait`,
-  896x1200 -> margin 100) pins exact measured geometries and lets a faint mark be
-  trusted via the snap gate once its position is recognized. The model is the
-  fallback for uncalibrated resolutions.
+  896x1200 -> 48px @ margin (94,96)); `kStillPresetNames[]` drives the `--geo-preset`
+  IsMember validator (help lists names, unknown rejected). The model is the fallback
+  for uncalibrated resolutions.
 - **Precedence:** `--rect` > `--geo-preset` > auto-detect > model. New flags on
   `remove`/`visible`/`detect`: `--rect x,y,w,h` (shared `parse_rect` helper, also
   used by video), `--geo-preset <name>`, `--no-auto-geometry`. An explicit
   `--rect`/`--geo-preset` **forces removal at that position** even when the
   detector's confidence is below the 0.35 gate (a faint mark the search localized
-  but could not confirm). `--force` still uses the model position (unchanged).
+  but could not confirm); the override's logo_size picks the removal alpha (a 48px
+  box or the 48px preset -> 48px alpha). `--force` still uses the model position
+  (unchanged).
 - **Polarity caveat:** `locate_still_watermark_hybrid` is polarity-invariant
   (`max(|mx|,|mn|)`), but `NccDetector`'s stage-1 spatial NCC is max-only, so a
   dark-on-bright mark the geometry search localizes can still be rejected by the

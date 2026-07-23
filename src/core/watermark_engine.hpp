@@ -79,14 +79,25 @@ public:
                                 WatermarkVariant::V1, /*enable_snap=*/false);
     }
 
+    // Result of the still-image geometry resolution: the position to force (nullopt =
+    // use the model) and the matched-size removal alpha (36 or 48 px; nullptr = let the
+    // detector pick the default). The alpha follows the resolved logo_size for ALL
+    // paths (auto, --rect, --geo-preset), so a manual override removes with the correct
+    // size, not the default 36px.
+    struct StillResolveResult {
+        std::optional<WatermarkPosition> pos;
+        const cv::Mat* alpha = nullptr;
+    };
+
     // Resolve the still-image watermark position via the hybrid auto-geometry search
     // (Gemini 3.5+/3.6 small diamond), honoring --rect / --geo-preset overrides. Runs
-    // the content search only for V2 small; other variants return nullopt (use the
-    // model) unless an explicit --rect override is given. Returns nullopt when the
-    // result is the model position, so detect_watermark derives it itself (and the
-    // V2->V1 fallback path is unaffected). Call this ONCE per image, before the
-    // variant loop, and feed the result as detect_watermark's force_position.
-    std::optional<WatermarkPosition> resolve_still_geometry(
+    // the content search only for V2 small; other variants return {nullopt, nullptr}
+    // (use the model) unless an explicit --rect override is given. Returns pos=nullopt
+    // when the result is the model position, so detect_watermark derives it itself (and
+    // the V2->V1 fallback path is unaffected). Call this ONCE per image, before the
+    // variant loop, and feed pos as detect_watermark's force_position + alpha as its
+    // custom_alpha.
+    StillResolveResult resolve_still_geometry(
         const cv::Mat& image,
         WatermarkVariant variant,
         WatermarkSize size,

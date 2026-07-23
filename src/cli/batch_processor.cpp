@@ -62,14 +62,14 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
 
         // Resolve the still geometry overrides + hybrid auto-search ONCE per image
         // (V2 small only). Mirrors process_single_image so batch and single-image
-        // modes handle Gemini 3.6 identically.
-        std::optional<WatermarkPosition> resolved_geo;
+        // modes handle Gemini 3.6 identically (incl. the matched 48px alpha).
+        WatermarkEngine::StillResolveResult resolved;
         if (!opts.force) {
             StillGeometryOverride gov;
             resolve_still_geometry_override(opts, gov);  // already validated in batch_process
             const WatermarkSize sz =
                 force_size.value_or(get_watermark_size(image.cols, image.rows));
-            resolved_geo = engine.resolve_still_geometry(
+            resolved = engine.resolve_still_geometry(
                 image, WatermarkVariant::V2, sz, gov);
         }
 
@@ -80,17 +80,19 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
             !opts.still_rect_str.empty() || !opts.still_geo_preset.empty();
 
         auto try_remove = [&](WatermarkVariant v,
-                              std::optional<WatermarkPosition> force_pos) -> bool {
+                              std::optional<WatermarkPosition> force_pos,
+                              const cv::Mat* alpha_override) -> bool {
             bool snap = force_pos.has_value() ||
                 (v == WatermarkVariant::V2 &&
                  force_size.value_or(get_watermark_size(image.cols, image.rows))
                      == WatermarkSize::Small);
             auto detection = engine.detect_watermark(image, force_size, force_pos,
-                                                     nullptr, v, snap);
+                                                     alpha_override, v, snap);
             if (!detection.detected && !(explicit_override && force_pos.has_value())) {
                 return false;
             }
-            const cv::Mat& alpha = engine.get_still_alpha(detection.size, v);
+            const cv::Mat& alpha = alpha_override ? *alpha_override
+                                                  : engine.get_still_alpha(detection.size, v);
             InpaintConfig icfg;
             bool do_cleanup = resolve_inpaint_config(opts, icfg);
             if (do_cleanup) {
@@ -105,10 +107,11 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
             engine.remove_watermark(image, force_size, force_variant);
         } else {
             WatermarkVariant primary = force_variant.value_or(WatermarkVariant::V2);
-            if (!try_remove(primary,
-                            (primary == WatermarkVariant::V2) ? resolved_geo : std::nullopt) &&
+            const bool is_v2 = (primary == WatermarkVariant::V2);
+            if (!try_remove(primary, is_v2 ? resolved.pos : std::nullopt,
+                            is_v2 ? resolved.alpha : nullptr) &&
                 try_fallback && primary == WatermarkVariant::V2) {
-                try_remove(WatermarkVariant::V1, std::nullopt);
+                try_remove(WatermarkVariant::V1, std::nullopt, nullptr);
             }
         }
     }

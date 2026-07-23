@@ -197,38 +197,59 @@ DetectionResult WatermarkEngine::detect_watermark(
     return detector_->detect(image, size, pos_cfg, alpha, enable_snap);
 }
 
-std::optional<WatermarkPosition> WatermarkEngine::resolve_still_geometry(
+WatermarkEngine::StillResolveResult WatermarkEngine::resolve_still_geometry(
     const cv::Mat& image, WatermarkVariant variant, WatermarkSize size,
     const StillGeometryOverride& override) const
 {
-    // An explicit --rect override is meaningful for any variant (manual position).
+    const int W = image.cols, H = image.rows;
+
+    // Pick the removal alpha for a resolved logo_size: 48px (Gemini 3.6 small) or 36px
+    // (Gemini 3.5 small). Both are pre-decoded V2 diamond maps.
+    auto alpha_for_logo = [&](int logo_size) -> const cv::Mat* {
+        if (logo_size > 40) {
+            return alpha_map_v2_diamond_small_.empty() ? nullptr
+                                                       : &alpha_map_v2_diamond_small_;
+        }
+        return alpha_map_v2_diamond_36_.empty() ? nullptr : &alpha_map_v2_diamond_36_;
+    };
+
+    // (1) Manual --rect wins outright (any variant). logo_size = the rect's own width,
+    // so the removal uses the matching-size alpha (a 48px box -> 48px alpha).
     if (override.rect) {
-        return rect_to_still_position(*override.rect, image.cols, image.rows);
+        WatermarkPosition p = rect_to_still_position(*override.rect, W, H, override.rect->width);
+        return {p, alpha_for_logo(p.logo_size)};
     }
-    // The content search only covers the V2 small path (the one variant with a known
-    // model error and a content-matchable 36px diamond). V1/V2-large keep the model.
+    // The content search only covers the V2 small path (the variant with a known model
+    // error and content-matchable diamond). V1/V2-large keep the model.
     if (variant != WatermarkVariant::V2 || size != WatermarkSize::Small || !has_v2_) {
-        return std::nullopt;
+        return {std::nullopt, nullptr};
     }
 
-    const WatermarkPosition model_pos = get_watermark_config(image.cols, image.rows, variant);
-    const cv::Mat& alpha = get_v2_diamond_alpha_36();  // CV_32FC1 [0,1]
-    if (alpha.empty()) return std::nullopt;
+    const WatermarkPosition model_pos = get_watermark_config(W, H, variant);
 
+    // Candidate templates: BOTH small-diamond sizes (36 = Gemini 3.5, 48 = Gemini 3.6).
+    // The search reports which matched so removal uses the right-size alpha. (A blind
+    // single-size assumption fails one of the two Gemini generations.)
     cv::Mat gray;
     if (image.channels() >= 3) cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
     else                        gray = image.clone();
-    cv::Mat alpha8u;
-    alpha.convertTo(alpha8u, CV_8U, 255.0);
+    std::vector<cv::Mat> templates;
+    if (!alpha_map_v2_diamond_36_.empty()) {
+        cv::Mat t; alpha_map_v2_diamond_36_.convertTo(t, CV_8U, 255.0); templates.push_back(t);
+    }
+    if (!alpha_map_v2_diamond_small_.empty()) {
+        cv::Mat t; alpha_map_v2_diamond_small_.convertTo(t, CV_8U, 255.0); templates.push_back(t);
+    }
+    if (templates.empty()) return {std::nullopt, nullptr};
 
-    // wmr::-qualified so it resolves to the free function in still_geometry.cpp, not
-    // this member (different arity; qualified lookup skips class members anyway).
+    // wmr::-qualified: resolves to the free function in still_geometry.cpp (this member
+    // is in class scope; qualified lookup does not find it).
     const StillResolvedGeometry r = wmr::resolve_still_geometry(
-        gray, alpha8u, model_pos, image.cols, image.rows, override);
-    spdlog::debug("Still geometry: source={}, score={:.2f}, margin=({},{})",
-                  r.source, r.score, r.pos.margin_right, r.pos.margin_bottom);
-    if (r.source == "model") return std::nullopt;  // let detect_watermark derive it
-    return r.pos;
+        gray, templates, model_pos, W, H, override);
+    spdlog::debug("Still geometry: source={}, score={:.2f}, margin=({},{}) logo_size={}",
+                  r.source, r.score, r.pos.margin_right, r.pos.margin_bottom, r.pos.logo_size);
+    if (r.source == "model") return {std::nullopt, nullptr};
+    return {r.pos, alpha_for_logo(r.pos.logo_size)};
 }
 
 void WatermarkEngine::remove_watermark(cv::Mat& image,

@@ -47,14 +47,15 @@ std::optional<StillPreset> snap_still_to_known(const cv::Rect& detected, int W, 
 }
 
 namespace {
-// Run detect_geometry_in_frames (pure, polarity-invariant) over a single window.
-std::optional<StillGeometryHit> search_window(const cv::Mat& gray, const cv::Mat& alpha8u,
+// Run detect_geometry_in_frames (pure, polarity-invariant, multi-template) over one
+// window. Returns the winning rect + score + which template matched.
+std::optional<StillGeometryHit> search_window(const cv::Mat& gray,
+                                              const std::vector<cv::Mat>& templates8u,
                                               const cv::Rect& window, float min_confidence) {
     const std::vector<cv::Mat> frames{gray};
-    const std::vector<cv::Mat> templates{alpha8u};
-    auto hit = detect_geometry_in_frames(frames, templates, window, min_confidence);
+    auto hit = detect_geometry_in_frames(frames, templates8u, window, min_confidence);
     if (!hit) return std::nullopt;
-    return StillGeometryHit{hit->rect, hit->score};
+    return StillGeometryHit{hit->rect, hit->score, hit->template_index};
 }
 
 // Trust a hit if it snaps to a known preset (trusted at the min confidence) or clears
@@ -68,20 +69,25 @@ bool hit_is_trusted(const cv::Rect& rect, float score, int W, int H, float high_
 }  // namespace
 
 std::optional<StillGeometryHit> locate_still_watermark_hybrid(
-    const cv::Mat& gray_frame, const cv::Mat& alpha_template_8u,
+    const cv::Mat& gray_frame, const std::vector<cv::Mat>& alpha_templates_8u,
     cv::Point model_anchor, int W, int H,
     float min_confidence, float high_confidence)
 {
-    if (gray_frame.empty() || alpha_template_8u.empty()) return std::nullopt;
-    const int tw = alpha_template_8u.cols;
-    const int th = alpha_template_8u.rows;
+    if (gray_frame.empty() || alpha_templates_8u.empty()) return std::nullopt;
+    int maxw = 0, maxh = 0;
+    for (const cv::Mat& t : alpha_templates_8u) {
+        if (t.empty()) continue;
+        maxw = std::max(maxw, t.cols);
+        maxh = std::max(maxh, t.rows);
+    }
+    if (maxw == 0 || maxh == 0) return std::nullopt;
     const int pad = kStillAnchorPad;
 
-    // (1) Anchored window around the model prediction.
+    // (1) Anchored window around the model prediction (sized for the largest template).
     const cv::Rect anchored(std::max(0, model_anchor.x - pad),
                             std::max(0, model_anchor.y - pad),
-                            tw + 2 * pad, th + 2 * pad);
-    if (auto ah = search_window(gray_frame, alpha_template_8u, anchored, min_confidence)) {
+                            maxw + 2 * pad, maxh + 2 * pad);
+    if (auto ah = search_window(gray_frame, alpha_templates_8u, anchored, min_confidence)) {
         if (hit_is_trusted(ah->rect, ah->score, W, H, high_confidence)) return ah;
     }
 
@@ -89,7 +95,7 @@ std::optional<StillGeometryHit> locate_still_watermark_hybrid(
     const int x0 = std::max(0, W - 320);
     const int y0 = std::max(0, H - 320);
     const cv::Rect corner(x0, y0, W - x0, H - y0);
-    if (auto wh = search_window(gray_frame, alpha_template_8u, corner, min_confidence)) {
+    if (auto wh = search_window(gray_frame, alpha_templates_8u, corner, min_confidence)) {
         if (hit_is_trusted(wh->rect, wh->score, W, H, high_confidence)) return wh;
     }
 
@@ -97,34 +103,42 @@ std::optional<StillGeometryHit> locate_still_watermark_hybrid(
 }
 
 StillResolvedGeometry resolve_still_geometry(
-    const cv::Mat& gray_frame, const cv::Mat& alpha_template_8u,
+    const cv::Mat& gray_frame, const std::vector<cv::Mat>& alpha_templates_8u,
     const WatermarkPosition& model_pos, int W, int H,
     const StillGeometryOverride& override)
 {
-    // (1) Manual --rect wins outright.
+    // (1) Manual --rect wins outright. logo_size = the rect's own width so the caller
+    // picks the matching removal alpha (a 48px box -> 48px alpha).
     if (override.rect) {
-        return {rect_to_still_position(*override.rect, W, H), "rect", 0.0f};
+        return {rect_to_still_position(*override.rect, W, H, override.rect->width),
+                "rect", 0.0f, -1};
     }
     // (2) Named --geo-preset.
     if (override.preset) {
         if (auto p = find_preset(*override.preset)) {
             return {WatermarkPosition{p->margin_right, p->margin_bottom, p->logo_size},
-                    "preset", 0.0f};
+                    "preset", 0.0f, -1};
         }
         // Unknown name: fall through to auto/model (caller logs the miss).
     }
     // (3) Hybrid auto-detect.
     if (!override.no_auto_geometry) {
         const cv::Point anchor = model_pos.get_position(W, H);
-        if (auto hit = locate_still_watermark_hybrid(gray_frame, alpha_template_8u,
+        if (auto hit = locate_still_watermark_hybrid(gray_frame, alpha_templates_8u,
                                                      anchor, W, H)) {
             const bool snapped = snap_still_to_known(hit->rect, W, H).has_value();
             const std::string src = snapped ? "auto/snapped" : "auto/raw";
-            return {rect_to_still_position(hit->rect, W, H), src, hit->score};
+            // logo_size = the matched template's width (36 or 48).
+            const int logo = (hit->template_index >= 0 &&
+                              hit->template_index < static_cast<int>(alpha_templates_8u.size()))
+                                 ? alpha_templates_8u[hit->template_index].cols
+                                 : model_pos.logo_size;
+            return {rect_to_still_position(hit->rect, W, H, logo), src, hit->score,
+                    hit->template_index};
         }
     }
     // (4) Model fallback.
-    return {model_pos, "model", 0.0f};
+    return {model_pos, "model", 0.0f, -1};
 }
 
 } // namespace wmr
