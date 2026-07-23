@@ -131,15 +131,19 @@ ffmpeg -ss 30 -i input.mp4 -frames:v 1 frame.png   # then measure the mark in fr
 
 Leave ~1px border around the mark, and pick a frame where it's clearly visible (it can be faint or absent on some scenes).
 
-### AI denoise (release builds)
+### Residual cleanup (optional)
 
-Release binaries ship an FDnCNN denoiser (NCNN/Vulkan, CPU fallback) that cleans residual artifacts after reverse-blending. It's the default cleanup when built.
+The default visible removal is a pure reverse-alpha-blend (the exact mathematical
+inversion, no blur). Optionally clean up residual artifacts from an imperfect reversal
+with `--denoise`. The opt-in cleanup is **residual-only** (it only touches pixels where
+the reverse-blend left a real residual, so it never blurs a clean removal).
 
 ```bash
-wmr remove in.png --denoise ai  -o out.png    # AI (default in releases)
-wmr remove in.png --denoise soft -o out.png   # Gaussian
-wmr remove in.png --denoise off -o out.png    # reverse-blend only, no cleanup
-wmr remove in.png --sigma 75 --strength 150 -o out.png   # tune
+wmr remove in.png -o out.png                   # default: exact reverse-blend, no cleanup
+wmr remove in.png --denoise ns -o out.png      # residual-only Navier-Stokes
+wmr remove in.png --denoise telea -o out.png   # residual-only Telea
+wmr remove in.png --denoise ai -o out.png      # AI (FDnCNN, release builds only)
+wmr remove in.png --strength 150 -o out.png    # cleanup strength (0-300%)
 ```
 
 | Flag | Range | Default | Notes |

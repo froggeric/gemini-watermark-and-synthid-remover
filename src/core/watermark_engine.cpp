@@ -123,6 +123,15 @@ void WatermarkEngine::init_alpha_maps() {
             alpha_map_v2_diamond_small_ = correct_alpha_for_background(calculate_alpha_map(bg), bg);
         }
     }
+    if (embedded::v2_diamond_48_still_png_size > 0) {
+        std::vector<unsigned char> buf(
+            embedded::v2_diamond_48_still_png,
+            embedded::v2_diamond_48_still_png + embedded::v2_diamond_48_still_png_size);
+        cv::Mat bg = cv::imdecode(buf, cv::IMREAD_COLOR);
+        if (!bg.empty()) {
+            alpha_map_v2_diamond_48_still_ = correct_alpha_for_background(calculate_alpha_map(bg), bg);
+        }
+    }
     if (embedded::v2_diamond_96_png_size > 0) {
         std::vector<unsigned char> buf(
             embedded::v2_diamond_96_png, embedded::v2_diamond_96_png + embedded::v2_diamond_96_png_size);
@@ -203,10 +212,12 @@ WatermarkEngine::StillResolveResult WatermarkEngine::resolve_still_geometry(
 {
     const int W = image.cols, H = image.rows;
 
-    // Pick the removal alpha for a resolved logo_size: 48px (Gemini 3.6 small) or 36px
-    // (Gemini 3.5 small). Both are pre-decoded V2 diamond maps.
+    // Pick the removal alpha for a resolved logo_size: 48px (Gemini 3.6 still) or 36px
+    // (Gemini 3.5 still). For 48px prefer the dedicated STILL capture (the video 48px
+    // alpha is stronger and over-removes stills); fall back to it if absent.
     auto alpha_for_logo = [&](int logo_size) -> const cv::Mat* {
         if (logo_size > 40) {
+            if (!alpha_map_v2_diamond_48_still_.empty()) return &alpha_map_v2_diamond_48_still_;
             return alpha_map_v2_diamond_small_.empty() ? nullptr
                                                        : &alpha_map_v2_diamond_small_;
         }
@@ -227,9 +238,10 @@ WatermarkEngine::StillResolveResult WatermarkEngine::resolve_still_geometry(
 
     const WatermarkPosition model_pos = get_watermark_config(W, H, variant);
 
-    // Candidate templates: BOTH small-diamond sizes (36 = Gemini 3.5, 48 = Gemini 3.6).
-    // The search reports which matched so removal uses the right-size alpha. (A blind
-    // single-size assumption fails one of the two Gemini generations.)
+    // Candidate templates: BOTH small-diamond sizes (36 = Gemini 3.5, 48 = Gemini 3.6
+    // still). Prefer the dedicated still-48 capture for the 48px template (matches 3.6
+    // stills better than the video 48px). The search reports which matched so removal
+    // uses the right-size alpha.
     cv::Mat gray;
     if (image.channels() >= 3) cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
     else                        gray = image.clone();
@@ -237,8 +249,11 @@ WatermarkEngine::StillResolveResult WatermarkEngine::resolve_still_geometry(
     if (!alpha_map_v2_diamond_36_.empty()) {
         cv::Mat t; alpha_map_v2_diamond_36_.convertTo(t, CV_8U, 255.0); templates.push_back(t);
     }
-    if (!alpha_map_v2_diamond_small_.empty()) {
-        cv::Mat t; alpha_map_v2_diamond_small_.convertTo(t, CV_8U, 255.0); templates.push_back(t);
+    const cv::Mat& a48 = !alpha_map_v2_diamond_48_still_.empty()
+                             ? alpha_map_v2_diamond_48_still_
+                             : alpha_map_v2_diamond_small_;
+    if (!a48.empty()) {
+        cv::Mat t; a48.convertTo(t, CV_8U, 255.0); templates.push_back(t);
     }
     if (templates.empty()) return {std::nullopt, nullptr};
 

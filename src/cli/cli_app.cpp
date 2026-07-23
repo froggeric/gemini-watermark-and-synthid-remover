@@ -476,6 +476,31 @@ int run_cli(int argc, char* argv[]) {
                       "Disable the content-based geometry search; use the model position");
     };
 
+    // Residual cleanup flags shared by remove / visible. The DEFAULT is "off" (pure
+    // mathematical reverse-alpha-blend, no blur). opt in to a residual-only cleanup
+    // with --denoise soft|ns|telea (or ai on AI builds).
+    std::vector<std::string> denoise_choices{"off", "soft", "ns", "telea"};
+#ifdef WMR_AI_DENOISE
+    denoise_choices.insert(denoise_choices.begin(), "ai");
+#endif
+    auto add_denoise = [&](CLI::App* cmd) {
+        cmd->add_option("--denoise", opts.denoise_method,
+                        "Residual cleanup after reverse-blend: off (default, exact "
+                        "reversal) | soft (Gaussian) | ns (Navier-Stokes) | telea")
+            ->check(CLI::IsMember(denoise_choices));
+        cmd->add_option("--strength", opts.denoise_strength_pct,
+                        "Cleanup strength 0-300 percent (default 120)")
+            ->check(CLI::Range(0.0f, 300.0f));
+        cmd->add_option("--radius", opts.denoise_radius,
+                        "Inpaint radius 1-25 (default 10)")
+            ->check(CLI::Range(1, 25));
+#ifdef WMR_AI_DENOISE
+        cmd->add_option("--sigma", opts.denoise_sigma,
+                        "AI denoise noise level 1-150 (default 50)")
+            ->check(CLI::Range(1.0f, 150.0f));
+#endif
+    };
+
     // --- remove (default) ---
     auto* remove_cmd = app.add_subcommand("remove", "Auto-detect and remove watermarks");
     remove_cmd->add_option("input", opts.input_path, "Input image or directory")
@@ -498,21 +523,7 @@ int run_cli(int argc, char* argv[]) {
     remove_cmd->add_option("--inpaint-strength", opts.inpaint_strength,
                            "Inpaint strength 0.0-1.0")
         ->check(CLI::Range(0.0f, 1.0f));
-#ifdef WMR_AI_DENOISE
-    remove_cmd->add_option("--denoise", opts.denoise_method,
-                           "Residual cleanup method: ai|soft|ns|telea|off "
-                           "(ai = FDnCNN AI denoise, soft = Gaussian)")
-        ->check(CLI::IsMember({"ai", "soft", "ns", "telea", "off"}));
-    remove_cmd->add_option("--sigma", opts.denoise_sigma,
-                           "AI denoise noise level 1-150 (default 50)")
-        ->check(CLI::Range(1.0f, 150.0f));
-    remove_cmd->add_option("--strength", opts.denoise_strength_pct,
-                           "Cleanup strength 0-300 percent (default 120)")
-        ->check(CLI::Range(0.0f, 300.0f));
-    remove_cmd->add_option("--radius", opts.denoise_radius,
-                           "Inpaint radius 1-25 (default 10)")
-        ->check(CLI::Range(1, 25));
-#endif
+    add_denoise(remove_cmd);
     remove_cmd->add_flag("-r,--recursive", opts.recursive, "Process directories recursively");
     remove_cmd->add_option("-o,--output", opts.output_path, "Output path (required for files; batch defaults to cleaned/)");
     add_still_geometry(remove_cmd);
@@ -546,21 +557,7 @@ int run_cli(int argc, char* argv[]) {
     visible_cmd->add_option("--inpaint-strength", opts.inpaint_strength,
                             "Inpaint strength 0.0-1.0")
         ->check(CLI::Range(0.0f, 1.0f));
-#ifdef WMR_AI_DENOISE
-    visible_cmd->add_option("--denoise", opts.denoise_method,
-                            "Residual cleanup method: ai|soft|ns|telea|off "
-                            "(ai = FDnCNN AI denoise, soft = Gaussian)")
-        ->check(CLI::IsMember({"ai", "soft", "ns", "telea", "off"}));
-    visible_cmd->add_option("--sigma", opts.denoise_sigma,
-                            "AI denoise noise level 1-150 (default 50)")
-        ->check(CLI::Range(1.0f, 150.0f));
-    visible_cmd->add_option("--strength", opts.denoise_strength_pct,
-                            "Cleanup strength 0-300 percent (default 120)")
-        ->check(CLI::Range(0.0f, 300.0f));
-    visible_cmd->add_option("--radius", opts.denoise_radius,
-                            "Inpaint radius 1-25 (default 10)")
-        ->check(CLI::Range(1, 25));
-#endif
+    add_denoise(visible_cmd);
     visible_cmd->add_option("-o,--output", opts.output_path, "Output path (required)");
     add_still_geometry(visible_cmd);
     add_common(visible_cmd);

@@ -48,11 +48,14 @@ Single-pass C++20 CLI tool. No libraries, everything compiles into one `wmr` exe
 
 1. **NccDetector** (detection/), 3-stage NCC: spatial template match (cv::matchTemplate), gradient match (Sobel magnitudes), variance analysis. Fusion: spatial×0.50 + gradient×0.30 + variance×0.20. Threshold: 0.35.
 2. **Reverse alpha blend** (core/blend_modes), `original = (watermarked - alpha*255) / (1-alpha)`. Alpha maps decoded from embedded PNGs (assets/embedded_assets.hpp).
-3. **Inpaint** (core/inpaint), Gaussian soft blend (default), TELEA, or Navier-Stokes. Cleans residual artifacts.
+3. **Inpaint** (core/inpaint) — OFF by default since 1.14.0: the default is the pure
+   reverse-alpha-blend (the exact inversion). The opt-in `--denoise ns|telea` cleanup
+   is **residual-only** (predicts clean content with cv::inpaint and blends it in only
+   where the reverse-blend left a real residual, never blurring a clean removal).
 
 ### AI Denoise (optional, OFF by default)
 
-An FDnCNN denoiser (`src/core/ai_denoise.{hpp,cpp}`, NCNN + Vulkan, CPU fallback) is an optional residual-cleanup method, gated on `WMR_BUILD_AI_DENOISE`. When built (ON), AI is the **default** still-image cleanup and transparently falls back to Gaussian on init failure; the lean OFF build is provably AI-free.
+An FDnCNN denoiser (`src/core/ai_denoise.{hpp,cpp}`, NCNN + Vulkan, CPU fallback) is an optional residual-cleanup method, gated on `WMR_BUILD_AI_DENOISE`. Since 1.14.0 the default cleanup is **off** (pure reverse-alpha-blend, the exact inversion); AI is opt-in via `--denoise ai` (it denoises the reverse-blended region, so prefer it only when there is real residual). The lean OFF build is provably AI-free.
 
 - **Build:** `WMR_AI_DENOISE=1 ./scripts/build.sh` (inits the NCNN submodule + checks `vulkan-volk`/`molten-vk`). `WMR_AI_MIGAN=1 ./scripts/build.sh` adds the MI-GAN inpainter (CoreML on mac, ORT on linux/windows; mac fetches no ORT). Combine both: `WMR_AI_MIGAN=1 WMR_AI_DENOISE=1 ./scripts/build.sh` (matches a release binary). CI uses the vcpkg `ai-denoise` manifest feature (`volk`), no Vulkan SDK install. NCNN is a git submodule; volk comes from vcpkg.
 - **CLI (ON only):** `--denoise {ai|soft|ns|telea|off}`, `--sigma` (1–150), `--strength` (0–300 %), `--radius` (1–25) on `remove`/`visible`. `--denoise off` skips cleanup (reverse-blend only). OFF build has none of these, `--inpaint-strength` remains the only knob.

@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-07-23
+
+### Changed: visible removal defaults to the exact reverse-blend (no blur)
+
+The visible-watermark removal is now a pure reverse-alpha-blend by default, the
+mathematically exact inversion. Previously a Gaussian "residual cleanup" ran after
+it by default, which was inpainting (a blur-fill of the region with its surroundings)
+and left a visible "blurred translucent area," especially on textured backgrounds.
+Measured on a textured test image: the cleaned patch now matches the surrounding
+texture (std 62.9 vs band 64.5) with zero change outside the watermark box.
+
+- `--denoise` is now always available (not just AI builds); default is `off`.
+- The opt-in cleanup (`--denoise ns|telea`, or `ai` on AI builds) is **residual-only**:
+  it predicts the clean content with cv::inpaint and blends it in ONLY where the
+  reverse-blend left a real residual, so a clean removal is left byte-for-byte intact
+  (no whole-region blur).
+
+### Added: dedicated Gemini 3.6 still alpha (exact reversal)
+
+The 3.6 small diamond is removed with a dedicated 48px still alpha captured from a
+real 3.6 image, instead of the 48px *video* alpha (which is stronger and over-removed
+stills). On a uniform-black test image the new alpha reverses the mark near-exactly
+(residual-diamond correlation 0.10 vs 0.33 with the video alpha; detection spatial
+NCC 1.000). The engine applies its existing background decontamination, so the
+captured alpha yields the watermark's true alpha.
+
 ## [1.13.1] - 2026-07-23
 
 ### Fixed: Gemini 3.6 small watermark is 48px, not 36px

@@ -52,14 +52,10 @@ struct CliOptions {
     int video_crf = 14;
     std::string video_preset = "slow";
     std::string video_codec = "libx264";
-    // AI denoise knobs (always present; only bound to CLI flags when WMR_AI_DENOISE).
-    // denoise_method default: "ai" when built with AI, else "soft" (Gaussian).
-    std::string denoise_method =
-#ifdef WMR_AI_DENOISE
-        "ai";
-#else
-        "soft";
-#endif
+    // Residual-cleanup method. Default "off" = pure reverse-alpha-blend (the exact
+    // mathematical reversal, no blur). Opt in to a residual-only cleanup with
+    // soft|ns|telea (or ai on AI builds). Always bound to --denoise now.
+    std::string denoise_method = "off";
     float denoise_sigma = 50.0f;        // --sigma 1-150
     float denoise_strength_pct = 120.0f; // --strength 0-300 (percent; /100 internally)
     int denoise_radius = 10;            // --radius 1-25
