@@ -270,11 +270,11 @@ TEST_CASE("Gemini 3.6 faint (896x1200) geometry preset forces the 48px position"
 
     WatermarkEngine engine;
     StillGeometryOverride ov;
-    ov.preset = std::string("gemini36-portrait");   // calibrated 896x1200 -> 48px @ (94,96)
+    ov.preset = std::string("gemini36-portrait");   // calibrated 896x1200 -> 48px @ (96,96)
     auto res = engine.resolve_still_geometry(image, WatermarkVariant::V2,
                                              WatermarkSize::Small, ov);
     REQUIRE(res.pos.has_value());
-    CHECK(res.pos->margin_right == 94);
+    CHECK(res.pos->margin_right == 96);
     CHECK(res.pos->margin_bottom == 96);
     CHECK(res.pos->logo_size == 48);
     REQUIRE(res.alpha != nullptr);
@@ -282,11 +282,11 @@ TEST_CASE("Gemini 3.6 faint (896x1200) geometry preset forces the 48px position"
 
     // A --rect override forces the exact measured box; logo_size follows the rect width.
     StillGeometryOverride ov2;
-    ov2.rect = cv::Rect(754, 1056, 48, 48);
+    ov2.rect = cv::Rect(752, 1056, 48, 48);
     auto res2 = engine.resolve_still_geometry(image, WatermarkVariant::V1,
                                               WatermarkSize::Small, ov2);
     REQUIRE(res2.pos.has_value());
-    CHECK(res2.pos->margin_right == 896 - (754 + 48));
+    CHECK(res2.pos->margin_right == 896 - (752 + 48));
     REQUIRE(res2.alpha != nullptr);
     CHECK(res2.alpha->cols == 48);
 }

@@ -55,10 +55,10 @@ struct StillPreset {
 };
 
 // The calibrated table. Gemini 3.6 Flash portrait ~1k (896x1200): the small diamond
-// is 48px (NOT 36px like Gemini 3.5 stills), at margin ~(94,96). Grow as more
-// fixtures arrive; the model stays the fallback for uncalibrated resolutions.
+// is 48px (NOT 36px like Gemini 3.5 stills), at margin (96,96) -> top-left (752,1056),
+// the mark's true edge. Grow as more fixtures arrive; the model stays the fallback.
 inline constexpr StillPreset kStillPresets[] = {
-    { "gemini36-portrait", 800, 1000, 94, 96, 48 },
+    { "gemini36-portrait", 800, 1000, 96, 96, 48 },
 };
 
 // The valid preset names, for CLI help / validation (kept in sync with kStillPresets).

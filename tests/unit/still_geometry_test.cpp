@@ -48,7 +48,7 @@ TEST_CASE("still_geometry: model under-predicts the 3.6 margin (the bug this fix
     CHECK(p.logo_size == 36);
     CHECK(p.margin_right == 84);   // round(192 * 1200/2752) = 84
     CHECK(p.margin_bottom == 84);
-    // Gemini 3.6's real small mark is 48px at margin ~(94,96) -> the search recovers it.
+    // Gemini 3.6's real small mark is 48px at margin ~(96,96) -> the search recovers it.
 }
 
 TEST_CASE("still_geometry: multi-template picks the 48px Gemini 3.6 diamond",
@@ -59,8 +59,8 @@ TEST_CASE("still_geometry: multi-template picks the 48px Gemini 3.6 diamond",
     REQUIRE(a48.cols == 48);
     const std::vector<cv::Mat> templates{alpha_to_template(a36), alpha_to_template(a48)};
 
-    // Stamp the 48px diamond at the calibrated 3.6 geometry (margin 94,96).
-    const int margin_r = 94, margin_b = 96;
+    // Stamp the 48px diamond at the calibrated 3.6 geometry (margin 96,96).
+    const int margin_r = 96, margin_b = 96;
     const cv::Point pos(kW - margin_r - 48, kH - margin_b - 48);  // (754, 1056)
     cv::Mat frame = textured(kW, kH, cv::Scalar(80, 100, 120));
     add_watermark_alpha_blend(frame, a48, pos, 255.0f);
@@ -120,7 +120,7 @@ TEST_CASE("still_geometry: widen search catches a far-off-model 48px mark",
 TEST_CASE("still_geometry: snap_still_to_known respects tier + size + center L1",
           "[still_geometry]") {
     // Near the gemini36-portrait geometry (48px, short side 896 in [800,1000]).
-    const cv::Rect near(kW - 94 - 48 + 10, kH - 96 - 48 + 10, 48, 48);
+    const cv::Rect near(kW - 96 - 48 + 10, kH - 96 - 48 + 10, 48, 48);
     auto s1 = snap_still_to_known(near, kW, kH);
     CHECK(s1.has_value());
     CHECK(s1->name == std::string("gemini36-portrait"));
@@ -129,17 +129,17 @@ TEST_CASE("still_geometry: snap_still_to_known respects tier + size + center L1"
     CHECK_FALSE(snap_still_to_known(far, kW, kH).has_value());
 
     // Wrong resolution tier -> no snap.
-    CHECK_FALSE(snap_still_to_known(cv::Rect(2048 - 94 - 48, 1408 - 96 - 48, 48, 48),
+    CHECK_FALSE(snap_still_to_known(cv::Rect(2048 - 96 - 48, 1408 - 96 - 48, 48, 48),
                                     2048, 1408).has_value());
     // Wrong size (36 cannot snap to the 48 slot).
-    CHECK_FALSE(snap_still_to_known(cv::Rect(kW - 94 - 36, kH - 96 - 36, 36, 36),
+    CHECK_FALSE(snap_still_to_known(cv::Rect(kW - 96 - 36, kH - 96 - 36, 36, 36),
                                     kW, kH).has_value());
 }
 
 TEST_CASE("still_geometry: rect_to_still_position keeps the rect's size", "[still_geometry]") {
-    const cv::Rect rect(kW - 94 - 48, kH - 96 - 48, 48, 48);
+    const cv::Rect rect(kW - 96 - 48, kH - 96 - 48, 48, 48);
     const auto wp = rect_to_still_position(rect, kW, kH, 48);
-    CHECK(wp.margin_right == 94);
+    CHECK(wp.margin_right == 96);
     CHECK(wp.margin_bottom == 96);
     CHECK(wp.logo_size == 48);
     CHECK(find_preset("gemini36-portrait").has_value());
@@ -174,7 +174,7 @@ TEST_CASE("still_geometry: resolve_still_geometry precedence + matched alpha siz
     o2.preset = std::string("gemini36-portrait");
     auto r2 = resolve_still_geometry(to_gray(clean), templates, model, kW, kH, o2);
     CHECK(r2.source == "preset");
-    CHECK(r2.pos.margin_right == 94);
+    CHECK(r2.pos.margin_right == 96);
     CHECK(r2.pos.logo_size == 48);
 
     // --no-auto-geometry -> model fallback.

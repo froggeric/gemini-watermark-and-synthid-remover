@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.14.1] - 2026-07-23
+
+### Still-image watermark auto-geometry + exact removal
+
+First tool to auto-detect and exactly remove Gemini 3.6 Flash's visible watermark.
+Supersedes the intermediate 1.13.0 / 1.14.0 releases (yanked). Cumulative change since
+1.12.0:
+
+- **Auto-detect the watermark position and size.** A polarity-invariant NCC template
+  match, anchored on the predicted position then widened to the bottom-right corner,
+  finds the mark and its size (36px Gemini 3.5, 48px Gemini 3.6, 96px large) with no
+  manual geometry: `wmr remove` just works. `--rect`/`--geo-preset` force a position for
+  faint marks; `--no-auto-geometry` opts out.
+- **Exact reverse-alpha-blend by default.** `original = (watermarked − α·logo)/(1−α)`,
+  the mathematical inversion, with no blur. The old Gaussian "cleanup" was inpainting
+  that left a "blurred translucent area"; it is now opt-in (`--denoise`) and
+  **residual-only** (it predicts clean content with cv::inpaint and blends it in only
+  where the reversal left a real residual, never blurring a clean removal).
+- **Dedicated Gemini 3.6 still alpha.** The 3.6 small diamond is 48px and rendered
+  weaker (~0.31) than the 48px video diamond (~0.40); a capture from a real 3.6 image
+  (at the mark's true top-left, no median, on a pure-black patch so decontamination
+  yields the true alpha) gives an exact reversal. Templates are native per size and
+  never resized (intensity is source-dependent; resizing smears the edges).
+- New still flags on `remove`/`visible`/`detect`: `--rect`, `--geo-preset`,
+  `--no-auto-geometry`; `--denoise {off|soft|ns|telea}` (+`ai` on AI builds), default
+  `off`.
+
 ## [1.14.0] - 2026-07-23
 
 ### Changed: visible removal defaults to the exact reverse-blend (no blur)

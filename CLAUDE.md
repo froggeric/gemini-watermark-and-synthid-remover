@@ -58,7 +58,7 @@ Single-pass C++20 CLI tool. No libraries, everything compiles into one `wmr` exe
 An FDnCNN denoiser (`src/core/ai_denoise.{hpp,cpp}`, NCNN + Vulkan, CPU fallback) is an optional residual-cleanup method, gated on `WMR_BUILD_AI_DENOISE`. Since 1.14.0 the default cleanup is **off** (pure reverse-alpha-blend, the exact inversion); AI is opt-in via `--denoise ai` (it denoises the reverse-blended region, so prefer it only when there is real residual). The lean OFF build is provably AI-free.
 
 - **Build:** `WMR_AI_DENOISE=1 ./scripts/build.sh` (inits the NCNN submodule + checks `vulkan-volk`/`molten-vk`). `WMR_AI_MIGAN=1 ./scripts/build.sh` adds the MI-GAN inpainter (CoreML on mac, ORT on linux/windows; mac fetches no ORT). Combine both: `WMR_AI_MIGAN=1 WMR_AI_DENOISE=1 ./scripts/build.sh` (matches a release binary). CI uses the vcpkg `ai-denoise` manifest feature (`volk`), no Vulkan SDK install. NCNN is a git submodule; volk comes from vcpkg.
-- **CLI (ON only):** `--denoise {ai|soft|ns|telea|off}`, `--sigma` (1–150), `--strength` (0–300 %), `--radius` (1–25) on `remove`/`visible`. `--denoise off` skips cleanup (reverse-blend only). OFF build has none of these, `--inpaint-strength` remains the only knob.
+- **CLI:** `--denoise` is always available (not AI-gated): default `off` (pure reverse-blend), or `soft|ns|telea` residual-only cleanup; `ai` only when built. `--strength`/`--radius` tune it; `--sigma` is AI-only. OFF build has `--inpaint-strength`.
 - **Dispatch:** `WatermarkEngine::remove_watermark_detected` takes an `InpaintConfig` overload (the `float` overload forwards). AI dispatches in the engine (engine-level, not in `inpaint.cpp`), keeps ncnn headers out of the inpaint TU. All AI symbols are `#ifdef WMR_AI_DENOISE`-guarded so the OFF build compiles with zero AI knowledge.
 - **Singleton lifetime:** `WatermarkEngine::denoiser()` returns an **intentionally-leaked** heap `NcnnDenoiser` (never destroyed). Destroying the embedded `ncnn::Net` during C++ static teardown races ncnn's global Vulkan-device teardown → EXC_BAD_ACCESS in `VulkanDevice::vkdevice()` at exit (only on the GPU path). Leaking the singleton is the standard fix for a process singleton owning a Vulkan context. Do NOT turn it back into a static-local.
 - **Release build:** single full-package build per (OS, arch), no lean/full split, no separate AI tarball. A separate `tests` job builds AI+TESTS ON to cover the AI/routing unit tests. The `build` matrix has 4 legs, all `WMR_BUILD_AI_DENOISE=ON` + `WMR_BUILD_AI_MIGAN=ON`:
@@ -87,10 +87,11 @@ Both operate in the frequency domain via `FftContext` (FFTW3 wrapper with plan c
 
 ### Still-image Watermark Geometry (auto-detect, Gemini 3.6+)
 
-Gemini 3.6 Flash's small diamond is **48px** (the same asset the video path uses for
-small watermarks, `get_v2_diamond_alpha_small`), NOT the 36px Gemini 3.5 still alpha,
-and it sits at a margin the position model (`v2_small_config_from_dims`) no longer
-predicts (model 36px@84 vs real 48px@(94,96) at 896x1200). Still images now
+Gemini 3.6 Flash's small diamond is **48px** (NOT the 36px Gemini 3.5 still alpha) and
+is rendered weaker (~0.31 alpha) than the 48px VIDEO diamond (~0.40), so stills use a
+**dedicated** capture `v2_diamond_48_still` (`get_v2_diamond_alpha_48_still`), NOT the
+video alpha (which over-removes). It sits at a margin the position model
+(`v2_small_config_from_dims`) no longer predicts (model 36px@84 vs real 48px@(96,96) at 896x1200). Still images now
 content-detect the position AND size like the video path (shipped 1.12.0), adapted
 for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
 (OpenCV-only, no FFmpeg, links in the test exe like `geometry_detector`).
@@ -119,9 +120,13 @@ for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
   removes with the 48px alpha (and a `--rect`/`--geo-preset` override too, not the
   default 36px).
 - **Calibrated preset table** `kStillPresets[]` (first entry `gemini36-portrait`,
-  896x1200 -> 48px @ margin (94,96)); `kStillPresetNames[]` drives the `--geo-preset`
+  896x1200 -> 48px @ margin (96,96)); `kStillPresetNames[]` drives the `--geo-preset`
   IsMember validator (help lists names, unknown rejected). The model is the fallback
   for uncalibrated resolutions.
+- **Still-path fixtures:** `test-images/896x1200-test4-gemini36.png` = clear mark on
+  near-uniform black (the `v2_diamond_48_still` capture source); `...-test3-...` = faint
+  mark on a busy poster (the hard case; auto-detect can fail, so force with
+  `--geo-preset gemini36-portrait`).
 - **Precedence:** `--rect` > `--geo-preset` > auto-detect > model. New flags on
   `remove`/`visible`/`detect`: `--rect x,y,w,h` (shared `parse_rect` helper, also
   used by video), `--geo-preset <name>`, `--no-auto-geometry`. An explicit
@@ -233,6 +238,14 @@ CLI11 subcommands in src/cli/: `remove` (default), `visible`, `synthid`, `detect
 ## Key Conventions
 
 - Alpha maps are constexpr PNG byte arrays decoded at runtime via `cv::imdecode`
+- Capturing a watermark alpha from a real image: crop at the mark's TRUE top-left so the
+  full mark fills the crop (a 2px clip reads as a reversal border); do NOT median-denoise
+  (it erodes the faint outer edge); a pure-black background makes
+  `correct_alpha_for_background` a no-op so you get the true alpha. Intensity is
+  source-dependent (PlayerYK `bg_48` peaks 0.506, our 3.6 images ~0.31: same shape,
+  different strength, so it would over-remove). Never resize an alpha between sizes
+  (48/96); use a native capture per size, since resizing smears the anti-aliased edges
+  the exact reverse-blend depends on (see also the video path's native-size templates).
 - Still-image watermark geometry is profile-aware (`WatermarkVariant::V1`/`V2`, default V2 with auto V2→V1 fallback; `--legacy` pins V1): V1 (legacy, pre-3.5) → 48×48 if either dim ≤ 1024 else 96×96, margins {32,32}/{64,64}; V2 (Gemini 3.5+) → large 96×96 @192px, small 36×36 with aspect-aware margin (`v2_small_config_from_dims`) + ±3px NCC snap (trusted iff spatial NCC ≥ 0.60). `WatermarkSize` (Small/Large) is a size class, not a pixel count (V2 Small = 36px alpha). Still `WatermarkVariant` is distinct from video `VideoVariant`.
 - Video encoding defaults: libx264, CRF 14, High profile, slow preset
 - Test executable re-compiles library sources (doesn't link main binary), add new sources to both CMakeLists.txt and tests/CMakeLists.txt
