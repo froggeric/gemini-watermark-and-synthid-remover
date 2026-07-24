@@ -87,16 +87,19 @@ Both operate in the frequency domain via `FftContext` (FFTW3 wrapper with plan c
 
 ### Still-image Watermark Geometry (auto-detect, Gemini 3.6+)
 
-Gemini 3.6 Flash's small diamond is **48px** (NOT the 36px Gemini 3.5 still alpha) and
-rendered at ~0.31 alpha. A **dedicated** capture `v2_diamond_48_still`
-(`get_v2_diamond_alpha_48_still`), taken on a near-uniform-black patch so
-`correct_alpha_for_background` is a no-op, gives the exact reversal. The old VIDEO 48px
-capture (`v2_diamond_48`) sat on a non-black background (~0.09) and was "corrected" with an
-approximate 25th-percentile estimate that left it **under**-calibrated (corrected ~0.341 vs
-the true ~0.31 center / ~0.38 peak, measured directly from a real 3.6 video), leaving a
-faint bright residual; the VIDEO path therefore removes the 48px mark with the STILL
-capture too (see `select_video_alpha` below), so the still alpha is the single clean source
-for both still and video 48px removal. It sits at a margin the position model
+Gemini 3.6 Flash's small diamond is **48px** (NOT the 36px Gemini 3.5 still alpha). The
+STILL watermark renders at ~0.30 alpha; the VIDEO watermark is a **stronger, separate
+render** (~0.32 center / ~0.39 peak, measured directly from a real 3.6 video). The removal
+alpha `v2_diamond_48_still` (`get_v2_diamond_alpha_48_still`) is the **average of 10
+distinct Gemini 3.6 generations**, each with the mark on a near-uniform-black patch (so
+`correct_alpha_for_background` is a no-op); averaging suppresses per-pixel capture noise
+~3x vs a single capture (the SynthID carrier in the mark region is only ~0.025/255 and
+content-correlated, so the gain is shot-noise, not SynthID). It matches the still watermark
+exactly, so it slightly UNDER-removes the stronger video watermark; the VIDEO path uses it
+anyway (see `select_video_alpha` below) as the single clean source for both, accepting a
+faint residual on video (part under-removal, part H.264 compression ringing baked into the
+original that the reverse-blend cannot undo). The real video fix is a dedicated video alpha
+from a black-background Gemini 3.6 video (tracked). It sits at a margin the position model
 (`v2_small_config_from_dims`) no longer predicts (model 36px@84 vs real 48px@(96,96) at 896x1200). Still images now
 content-detect the position AND size like the video path (shipped 1.12.0), adapted
 for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`

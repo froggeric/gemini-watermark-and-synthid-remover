@@ -6,18 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Video: cleaner Gemini 3.6 watermark removal
+### Gemini 3.6 48px watermark: cleaner still + video removal
 
-- The 48px Gemini video watermark is now removed with the same clean **still** capture
-  (`v2_diamond_48_still`) used for still images, instead of the video-path 48px capture.
-  Measured directly on a real Gemini 3.6 video, the old video capture was slightly
-  **under**-calibrated (its non-black capture background plus an approximate 25th-percentile
-  correction left it ~0.007 too low), producing a faint bright residual (a "slight border").
-  Switching to the still capture cuts the systematic residual ~60% (signed mark-mean
-  +0.0168 → +0.0067) and the center leftover ~37%. Same watermark either way (shape
-  corr 0.997); the still capture is now the single clean source for both still and video
-  48px removal. A small per-pixel noise floor remains (baked-in capture noise), to be
-  addressed by alpha-averaging in a later release.
+- **Averaged still alpha.** `v2_diamond_48_still` is now the average of 10 distinct Gemini 3.6
+  generations (each with the mark on a near-uniform-black patch), not a single capture,
+  suppressing per-pixel capture noise ~3x. Still removal stays exact (the SynthID carrier in
+  the mark region is only ~0.025/255 and content-correlated, so averaging buys a real but
+  small shot-noise reduction).
+- **Video uses the still alpha.** The 48px Gemini video mark is now removed with this same
+  clean still alpha instead of the video-path 48px capture, which was slightly
+  under-calibrated (non-black capture background + approximate correction). The still alpha
+  is the single clean source for both still and video 48px removal.
+- **Known limitation: the Gemini 3.6 video watermark is a stronger, separate render**
+  (~0.32 center / ~0.39 peak vs the still's ~0.30), so the still alpha slightly under-removes
+  video, and part of the faint remaining residual is H.264 compression ringing baked into the
+  original (which the reverse-blend cannot undo). The real video fix is a dedicated video
+  alpha from a black-background Gemini 3.6 video; an opt-in residual-cleanup step for video
+  is also tracked.
 
 ## [1.14.1] - 2026-07-23
 
