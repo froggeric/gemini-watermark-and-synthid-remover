@@ -159,7 +159,13 @@ std::optional<SnappedGeometry> VideoProcessor::auto_detect_geometry(
         add_template(engine.get_veo_text_alpha_small());  // 68x30
         add_template(engine.get_veo_text_alpha_large());  // 99x43
     } else {
-        add_template(engine.get_v2_diamond_alpha_small());  // 48x48
+        // 48px detection template: use the clean still alpha (the removal mask) — same
+        // watermark, correctly calibrated; the legacy v2_diamond_48 video capture is ~5% the
+        // wrong shape. NCC normalizes magnitude, so this is a consistency fix, not a scoring
+        // one (detection already scored ~1.0 either way). Fall back to the video alpha only
+        // if the still alpha failed to decode.
+        const cv::Mat& still48 = engine.get_v2_diamond_alpha_48_still();
+        add_template(still48.empty() ? engine.get_v2_diamond_alpha_small() : still48);  // 48x48
         add_template(engine.get_v2_diamond_alpha_large());  // 96x96
     }
     if (templates.empty()) return std::nullopt;

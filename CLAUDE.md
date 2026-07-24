@@ -178,11 +178,13 @@ corner + logo size so `--variant` is rarely needed. Two layers:
   `select_video_alpha` is the single helper that turns a `geo` into an alpha Mat +
   top-left + bbox; it routes the small/large pick through `effective_alpha_size`
   (so the `>48/>68` gate truly has one source) and is called from `detect_in_shot`
-  and once in `process()` (its anchor reused by both `--force` branches). **Removal
-  alpha for the 48px Gemini mark is the STILL capture** (`get_v2_diamond_alpha_48_still`,
-  cleaner-calibrated than the video 48px capture; fallback to `get_v2_diamond_alpha_small`
-  if it failed to decode); the 96px large and the **detection templates** still use the
-  video `get_v2_diamond_alpha_small/_large` (the video alpha is fine for matching).
+  and once in `process()` (its anchor reused by both `--force` branches). **The 48px Gemini
+  alpha (removal AND detection template) is the STILL capture** (`get_v2_diamond_alpha_48_still`,
+  the averaged clean mask; the legacy `v2_diamond_48` video capture is a decode-failure fallback
+  only — it is ~5% the wrong shape and mis-calibrated, kept for safety). Only the 96px large
+  template uses the video `get_v2_diamond_alpha_large`. (NCC normalizes magnitude, so this is a
+  consistency fix; detection scores ~1.0 either way.) The masks are also exported as standalone
+  PNGs in `assets/watermark-masks/` for community reuse.
 
   Templates: diamond `{48, 96}` (`get_v2_diamond_alpha_small/_large`), Veo text
   `{68x30, 99x43}`. The 36 diamond is still-only, never video. Corner window
