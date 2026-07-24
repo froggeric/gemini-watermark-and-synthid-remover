@@ -405,6 +405,7 @@ static int process_video(const CliOptions& opts) {
     config.scenes = opts.scenes;
     config.scene_threshold = opts.scene_threshold;
     config.no_auto_geometry = opts.no_auto_geometry;
+    config.edge_cleanup = !opts.no_edge_cleanup;
     config.notebooklm_complexity_threshold = opts.notebooklm_complexity_threshold;
     config.notebooklm_method = opts.notebooklm_method;
     if (opts.notebooklm_method != "auto" && config.profile != VideoProfile::NotebookLM) {
@@ -611,6 +612,8 @@ int run_cli(int argc, char* argv[]) {
                            "Force geometry: 720p-1, 720p-2, 1080p");
     video_cmd->add_flag("--no-auto-geometry", opts.no_auto_geometry,
                            "Disable content-based geometry search; use the resolution guess");
+    video_cmd->add_flag("--no-edge-cleanup", opts.no_edge_cleanup,
+                           "Pure reverse-blend; skip the diamond edge cleanup");
     video_cmd->add_flag("-f,--force", opts.force, "Skip detection");
     video_cmd->add_option("--crf", opts.video_crf, "Encode CRF")
         ->check(CLI::Range(0, 51));

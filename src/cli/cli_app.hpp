@@ -47,6 +47,7 @@ struct CliOptions {
     bool still_no_auto_geometry = false; // still images: --no-auto-geometry
     std::string video_variant_str;
     bool no_auto_geometry = false;   // video: --no-auto-geometry (skip content-based geometry search)
+    bool no_edge_cleanup = false;    // video: --no-edge-cleanup (pure reverse-blend, no edge cleanup)
     bool scenes = false;
     double scene_threshold = 0.30;
     int video_crf = 14;

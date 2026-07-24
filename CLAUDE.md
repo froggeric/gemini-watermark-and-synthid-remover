@@ -87,19 +87,21 @@ Both operate in the frequency domain via `FftContext` (FFTW3 wrapper with plan c
 
 ### Still-image Watermark Geometry (auto-detect, Gemini 3.6+)
 
-Gemini 3.6 Flash's small diamond is **48px** (NOT the 36px Gemini 3.5 still alpha). The
-STILL watermark renders at ~0.30 alpha; the VIDEO watermark is a **stronger, separate
-render** (~0.32 center / ~0.39 peak, measured directly from a real 3.6 video). The removal
-alpha `v2_diamond_48_still` (`get_v2_diamond_alpha_48_still`) is the **average of 10
-distinct Gemini 3.6 generations**, each with the mark on a near-uniform-black patch (so
-`correct_alpha_for_background` is a no-op); averaging suppresses per-pixel capture noise
-~3x vs a single capture (the SynthID carrier in the mark region is only ~0.025/255 and
-content-correlated, so the gain is shot-noise, not SynthID). It matches the still watermark
-exactly, so it slightly UNDER-removes the stronger video watermark; the VIDEO path uses it
-anyway (see `select_video_alpha` below) as the single clean source for both, accepting a
-faint residual on video (part under-removal, part H.264 compression ringing baked into the
-original that the reverse-blend cannot undo). The real video fix is a dedicated video alpha
-from a black-background Gemini 3.6 video (tracked). It sits at a margin the position model
+Gemini 3.6 Flash's small diamond is **48px** (NOT the 36px Gemini 3.5 still alpha) at
+~0.30 alpha for BOTH stills and video. A pristine measurement across 3 clean 1280x720
+videos (360 frames, mark on a uniform dark patch) gives the video alpha peak 0.304 / center
+0.301, matching the still alpha (shape diff 0.5%). An earlier 720x1280 reading of "video
+peak ~0.39 / stronger render" was inflated by busy-content background-estimation error —
+disregard it; video ≈ still ≈ 0.30. The removal alpha `v2_diamond_48_still`
+(`get_v2_diamond_alpha_48_still`) is the **average of 10 distinct Gemini 3.6 generations**,
+each with the mark on a near-uniform-black patch (so `correct_alpha_for_background` is a
+no-op); averaging suppresses per-pixel capture noise ~3x vs a single capture (the SynthID
+carrier in the mark region is only ~0.025/255 and content-correlated, so the gain is
+shot-noise, not SynthID). The VIDEO path removes with this same alpha (see
+`select_video_alpha` below) as the single clean source for both. The faint residual
+sometimes seen on video is H.264 compression ringing at the diamond edge (not under-removal);
+the video path now repairs it with an opt-out edge cleanup (see Video Watermark Geometry).
+It sits at a margin the position model
 (`v2_small_config_from_dims`) no longer predicts (model 36px@84 vs real 48px@(96,96) at 896x1200). Still images now
 content-detect the position AND size like the video path (shipped 1.12.0), adapted
 for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
@@ -207,6 +209,27 @@ corner + logo size so `--variant` is rarely needed. Two layers:
   positive cannot regress a video that already works. `kAutoGeometryMinConfidence`
   is 0.45 (same as NotebookLM). Log line `Geometry: margin=.. logo_size=.. (source=..,
   score=..)` names the branch that ran.
+
+### Video diamond edge cleanup (default-on; `--no-edge-cleanup` to disable)
+
+After the per-frame reverse-blend, the Gemini/Veo diamond path repairs the faint border/halo
+that survives at the diamond's edge (H.264 ringing + any under-removal). `wmr::inpaint_diamond_edges`
+(`src/core/inpaint.{hpp,cpp}`, the validated "U4" recipe) operates on a **thin ring around the
+footprint boundary only** — `band = dilate(footprint, r3) - erode(footprint, r3)` — leaving the
+recovered interior and the untouched exterior byte-for-byte intact (unlike `inpaint_residual`,
+which can touch the whole footprint). TELEA inpaint the band -> `ref0`; gate to edge pixels where
+`max-ch |cur - ref0| > 14` (so a clean reversal is untouched); re-inpaint the gated mask -> blend.
+Called from all 4 reverse-blend sites in `process()` via the file-local `apply_edge_cleanup`,
+guarded by `config.edge_cleanup && profile != VeoLegacy`. **Safe no-op on clean footage:** when
+the mark sits on a uniform background there is no edge residual, the gate fires on 0 pixels, and
+nothing changes (verified on 3 Gemini 3.6 1280x720 clips: ghost 0.0015 with/without). It only
+fires on busy/compressed footage where a halo is actually present. `EdgeCleanupConfig{ring_radius=3,
+residual_thresh=14, inpaint_radius=3, strength=1.0}`.
+
+- **1280x720 (Gemini 3.6 horizontal)** auto-detects cleanly: margin **(96,96)**, logo_size **48**,
+  score **1.00** — the same margin as the `gemini36-portrait` still preset. No new variant needed
+  (raw detection clears the 0.60 gate). The mark sits on a persistent near-uniform dark patch, so
+  detection is trivial (12/12 sampled frames).
 
 ### Scene Detection and Splitting (opt-in via `--scenes`)
 

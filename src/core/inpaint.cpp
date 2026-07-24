@@ -118,4 +118,97 @@ void inpaint_residual(
                   name, active, strength * 100.0);
 }
 
+// Edge-only repair for the video diamond. See inpaint.hpp for the rationale. This is
+// the validated "U4" recipe: a TELEA inpaint confined to a thin boundary ring, gated to
+// only the edge pixels where the reverse-blend left a real residual, then blended in.
+// The recovered interior and the untouched exterior are never modified.
+void inpaint_diamond_edges(
+    cv::Mat& image,
+    const cv::Rect& region,
+    const cv::Mat& alpha_map,
+    const EdgeCleanupConfig& config)
+{
+    if (image.empty() || region.width < 4 || region.height < 4) return;
+
+    const int pad = 16;
+    cv::Rect padded(region.x - pad, region.y - pad,
+                    region.width + pad * 2, region.height + pad * 2);
+    padded &= cv::Rect(0, 0, image.cols, image.rows);
+    if (padded.width < 8 || padded.height < 8) return;
+
+    cv::Rect inner(region.x - padded.x, region.y - padded.y,
+                   region.width, region.height);
+    inner &= cv::Rect(0, 0, padded.width, padded.height);
+    if (inner.width < 4 || inner.height < 4) return;
+
+    // Footprint (alpha > 0.05) resized to the region.
+    cv::Mat alpha_resized;
+    const int interp = (region.width > alpha_map.cols) ? cv::INTER_LINEAR : cv::INTER_AREA;
+    cv::resize(alpha_map, alpha_resized, cv::Size(region.width, region.height), 0, 0, interp);
+    cv::Mat foot;
+    cv::threshold(alpha_resized, foot, 0.05f, 255.0f, cv::THRESH_BINARY);
+    foot.convertTo(foot, CV_8U);
+    if (cv::countNonZero(foot) == 0) return;
+
+    // Edge band = dilate(footprint) - erode(footprint): a ring on the diamond boundary.
+    const int ks = std::max(3, config.ring_radius * 2 + 1);
+    cv::Mat elem = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(ks, ks));
+    cv::Mat dil, ero, band;
+    cv::dilate(foot, dil, elem);
+    cv::erode(foot, ero, elem);
+    cv::subtract(dil, ero, band);
+
+    cv::Mat mask = cv::Mat::zeros(padded.size(), CV_8UC1);
+    band.copyTo(mask(inner));
+    if (cv::countNonZero(mask) == 0) return;
+
+    // Predict clean edge content with TELEA (propagates isophotes -> keeps shape/colour).
+    cv::Mat padded_area = image(padded).clone();
+    cv::Mat ref0;
+    cv::inpaint(padded_area, mask, ref0, config.inpaint_radius, cv::INPAINT_TELEA);
+
+    // Gate: keep only edge pixels where the reverse-blended image deviates from the
+    // prediction (the residual / halo). Clean edges are left untouched.
+    cv::Mat cur_f, ref_f;
+    image(padded).convertTo(cur_f, CV_32FC3);
+    ref0.convertTo(ref_f, CV_32FC3);
+    cv::Mat diff;
+    cv::absdiff(cur_f, ref_f, diff);
+    std::vector<cv::Mat> ch;
+    cv::split(diff, ch);
+    cv::Mat resid;
+    cv::max(ch[0], ch[1], resid);
+    cv::max(resid, ch[2], resid);
+
+    cv::Mat gate;
+    cv::threshold(resid, gate, config.residual_thresh, 255.0, cv::THRESH_BINARY);
+    gate.convertTo(gate, CV_8U);
+    gate &= mask;
+    const int active = cv::countNonZero(gate);
+    if (active == 0) {
+        spdlog::debug("inpaint: diamond-edges, no residual at the edge (untouched)");
+        return;
+    }
+
+    // Re-inpaint the (smaller) gated mask for the final fill, then blend.
+    cv::Mat ref;
+    cv::inpaint(padded_area, gate, ref, config.inpaint_radius, cv::INPAINT_TELEA);
+    ref.convertTo(ref_f, CV_32FC3);
+
+    cv::Mat w;
+    gate.convertTo(w, CV_32F, static_cast<double>(config.strength) / 255.0);
+    cv::Mat w3;
+    cv::merge(std::vector<cv::Mat>{w, w, w}, w3);
+    cv::Mat one_minus_w = cv::Scalar(1.0, 1.0, 1.0) - w3;
+    cv::multiply(cur_f, one_minus_w, cur_f);
+    cv::multiply(ref_f, w3, ref_f);
+    cv::Mat result_f = cur_f + ref_f;
+
+    cv::Mat dst = image(padded);
+    result_f.convertTo(dst, CV_8UC3);
+
+    spdlog::debug("inpaint: diamond-edges, {} edge px repaired (TELEA, ring r={}, gated>{:.0f})",
+                  active, config.ring_radius, config.residual_thresh);
+}
+
 } // namespace wmr

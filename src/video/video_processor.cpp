@@ -4,6 +4,7 @@
 #include "video/notebooklm_gates.hpp"
 #include "video/geometry_detector.hpp"
 #include "core/watermark_engine.hpp"
+#include "core/inpaint.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -102,6 +103,13 @@ constexpr float kAutoGeometryMinConfidence = 0.45f;
 // so a busy-corner false positive cannot regress a video that already works.
 // Snapped (on-table) detections are trusted at kAutoGeometryMinConfidence.
 constexpr float kAutoOverrideRawScore = 0.60f;
+
+// Edge-only TELEA cleanup of the reverse-blended diamond's border/halo. Caller guards
+// on config.edge_cleanup and profile (Gemini diamond only).
+void apply_edge_cleanup(cv::Mat& frame, const cv::Rect& region, const cv::Mat* alpha) {
+    if (!alpha || alpha->empty() || region.width < 4 || region.height < 4) return;
+    wmr::inpaint_diamond_edges(frame, region, *alpha);
+}
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -611,6 +619,8 @@ VideoResult VideoProcessor::process(const std::string& input_path,
                     det.region = shot.region;
                     det.size = shot.size;
                     engine.remove_watermark_alpha_only(frame, det, video_alpha);
+                    if (config.edge_cleanup && config.profile != VideoProfile::VeoLegacy)
+                        apply_edge_cleanup(frame, det.region, video_alpha);
                 } else {
                     DetectionResult det;
                     det.detected = true;
@@ -631,6 +641,8 @@ VideoResult VideoProcessor::process(const std::string& input_path,
                     }
 
                     engine.remove_watermark_alpha_only(frame, det, video_alpha);
+                    if (config.edge_cleanup && config.profile != VideoProfile::VeoLegacy)
+                        apply_edge_cleanup(frame, det.region, video_alpha);
                 }
 
                 writer.write_frame(frame);
@@ -712,6 +724,8 @@ VideoResult VideoProcessor::process(const std::string& input_path,
                 det.region = shot.region;
                 det.size = shot.size;
                 engine.remove_watermark_alpha_only(frame, det, video_alpha);
+                if (config.edge_cleanup && config.profile != VideoProfile::VeoLegacy)
+                    apply_edge_cleanup(frame, det.region, video_alpha);
                 writer.write_frame(frame);
                 ++result.frames_processed;
             } else {
@@ -739,6 +753,8 @@ VideoResult VideoProcessor::process(const std::string& input_path,
                 }
 
                 engine.remove_watermark_alpha_only(frame, det, video_alpha);
+                if (config.edge_cleanup && config.profile != VideoProfile::VeoLegacy)
+                    apply_edge_cleanup(frame, det.region, video_alpha);
                 writer.write_frame(frame);
                 ++result.frames_processed;
             }

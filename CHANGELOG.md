@@ -17,12 +17,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   clean still alpha instead of the video-path 48px capture, which was slightly
   under-calibrated (non-black capture background + approximate correction). The still alpha
   is the single clean source for both still and video 48px removal.
-- **Known limitation: the Gemini 3.6 video watermark is a stronger, separate render**
-  (~0.32 center / ~0.39 peak vs the still's ~0.30), so the still alpha slightly under-removes
-  video, and part of the faint remaining residual is H.264 compression ringing baked into the
-  original (which the reverse-blend cannot undo). The real video fix is a dedicated video
-  alpha from a black-background Gemini 3.6 video; an opt-in residual-cleanup step for video
-  is also tracked.
+- **Video diamond edge cleanup (default-on).** After the reverse-blend, the Gemini/Veo video
+  path repairs the faint border/halo at the diamond's edge with `inpaint_diamond_edges` (the
+  validated "U4" recipe: a TELEA inpaint confined to a thin boundary ring, residual-gated so a
+  clean reversal is untouched). It only touches the edge ring; the recovered interior and the
+  untouched exterior stay byte-for-byte intact. `--no-edge-cleanup` disables it for a pure
+  reverse-blend. It is a safe no-op when the mark sits on a clean background (fires only when
+  there is a real edge residual, e.g. busy/compressed footage).
+- **Gemini 3.6 video watermark magnitude corrected.** A pristine measurement across 3 clean
+  1280x720 videos (360 frames, mark on a uniform dark patch) puts the video alpha at peak
+  0.304 / center 0.301, the same as the still alpha, not "stronger" as an earlier busy-fixture
+  reading suggested. So the still alpha (used for video since the averaged-alpha change) is the
+  correct magnitude for both. 1280x720 auto-detects cleanly (margin 96,96, 48px, score 1.00).
 
 ## [1.14.1] - 2026-07-23
 

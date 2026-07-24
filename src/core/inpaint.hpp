@@ -34,4 +34,22 @@ void inpaint_residual(
     const cv::Mat& alpha_map,
     const InpaintConfig& config = InpaintConfig{});
 
+// Edge-only cleanup for the Gemini/Veo video diamond. The reverse-blend leaves a
+// faint border/halo concentrated on the diamond's boundary (under-removal + H.264
+// ringing). This repairs ONLY a thin ring around the footprint edge, leaving the
+// recovered interior and the untouched exterior byte-for-byte intact (unlike
+// inpaint_residual, which can touch the whole footprint). Tuned to the validated
+// "U4" recipe: TELEA, residual-gated, binary blend at the defect pixels.
+struct EdgeCleanupConfig {
+    int ring_radius = 3;          // band = dilate(footprint, 2r+1) - erode(footprint, 2r+1)
+    double residual_thresh = 14.0; // gate: repair edge px where max-ch |cur-ref| > this (0..255)
+    int inpaint_radius = 3;       // cv::inpaint neighbourhood
+    float strength = 1.0f;        // blend weight at gated pixels (1.0 = full replace)
+};
+void inpaint_diamond_edges(
+    cv::Mat& image,
+    const cv::Rect& region,
+    const cv::Mat& alpha_map,
+    const EdgeCleanupConfig& config = EdgeCleanupConfig{});
+
 } // namespace wmr

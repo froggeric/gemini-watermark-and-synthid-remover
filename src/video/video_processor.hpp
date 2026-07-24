@@ -19,6 +19,10 @@ struct VideoWatermarkConfig {
     bool force = false;
     float inpaint_strength = 0.85f;
     bool scenes = false;
+    // Gemini/Veo diamond: after the reverse-blend, repair the faint border/halo on the
+    // diamond's edge ring only (TELEA, residual-gated; interior/exterior untouched). ON by
+    // default; --no-edge-cleanup disables for a pure reverse-blend. Skipped for VeoLegacy.
+    bool edge_cleanup = true;
     std::optional<cv::Rect> rect;             // --rect x,y,w,h override (Gemini/Veo and NotebookLM)
     bool no_auto_geometry = false;            // --no-auto-geometry: skip content-based geometry search
     double scene_threshold = 0.4;
