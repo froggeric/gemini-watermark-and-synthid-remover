@@ -114,7 +114,6 @@ public:
     const cv::Mat& get_alpha_map(WatermarkSize size) const;
     const cv::Mat& get_veo_text_alpha() const { return alpha_map_veo_text_; }
     const cv::Mat& get_v2_diamond_alpha_36() const { return alpha_map_v2_diamond_36_; }
-    const cv::Mat& get_v2_diamond_alpha_small() const { return alpha_map_v2_diamond_small_; }
     const cv::Mat& get_v2_diamond_alpha_48_still() const { return alpha_map_v2_diamond_48_still_; }
     const cv::Mat& get_v2_diamond_alpha_large() const { return alpha_map_v2_diamond_large_; }
     const cv::Mat& get_veo_text_alpha_small() const { return alpha_map_veo_text_small_; }
@@ -133,8 +132,7 @@ private:
     cv::Mat alpha_map_large_;
     cv::Mat alpha_map_veo_text_;
     cv::Mat alpha_map_v2_diamond_36_;
-    cv::Mat alpha_map_v2_diamond_small_;
-    cv::Mat alpha_map_v2_diamond_48_still_;   // Gemini 3.6 STILL 48px (from a real capture)
+    cv::Mat alpha_map_v2_diamond_48_still_;   // Gemini 3.6 48px (averaged still capture; still + video)
     cv::Mat alpha_map_v2_diamond_large_;
     cv::Mat alpha_map_veo_text_small_;
     cv::Mat alpha_map_veo_text_large_;

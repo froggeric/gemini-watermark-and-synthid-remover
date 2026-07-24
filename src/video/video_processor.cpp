@@ -69,18 +69,10 @@ VideoProcessor::VideoAlphaAnchor VideoProcessor::select_video_alpha(
         if (a == cv::Size(96, 96)) {
             out.alpha = &engine.get_v2_diamond_alpha_large();
         } else {
-            // Gemini 3.6 48px: remove with the STILL capture, not the VIDEO 48px
-            // capture. Both are the same watermark (shape corr 0.997), but the
-            // still alpha was captured on a near-uniform-black background so it
-            // needs no background correction, while the video 48px capture sat on
-            // a non-black background (~0.09) and was "corrected" with an
-            // approximate 25th-percentile estimate that left it ~0.007
-            // under-calibrated -> a faint bright residual. Measured on a real
-            // Gemini 3.6 video the still alpha cuts the mark-mean residual from
-            // 0.0074 to 0.0030 (and |residual| 0.0235 -> 0.0200). Fall back to
-            // the video capture only if the still alpha failed to decode.
-            const cv::Mat& still = engine.get_v2_diamond_alpha_48_still();
-            out.alpha = still.empty() ? &engine.get_v2_diamond_alpha_small() : &still;
+            // Gemini 48px: remove with the still capture (v2_diamond_48_still). It is the
+            // same ~0.30 watermark the video renders, captured on near-uniform black so it
+            // needs no background correction. No fallback: the embedded PNG always decodes.
+            out.alpha = &engine.get_v2_diamond_alpha_48_still();
         }
     }
     if (out.alpha && !out.alpha->empty()) {
@@ -159,14 +151,8 @@ std::optional<SnappedGeometry> VideoProcessor::auto_detect_geometry(
         add_template(engine.get_veo_text_alpha_small());  // 68x30
         add_template(engine.get_veo_text_alpha_large());  // 99x43
     } else {
-        // 48px detection template: use the clean still alpha (the removal mask) — same
-        // watermark, correctly calibrated; the legacy v2_diamond_48 video capture is ~5% the
-        // wrong shape. NCC normalizes magnitude, so this is a consistency fix, not a scoring
-        // one (detection already scored ~1.0 either way). Fall back to the video alpha only
-        // if the still alpha failed to decode.
-        const cv::Mat& still48 = engine.get_v2_diamond_alpha_48_still();
-        add_template(still48.empty() ? engine.get_v2_diamond_alpha_small() : still48);  // 48x48
-        add_template(engine.get_v2_diamond_alpha_large());  // 96x96
+        add_template(engine.get_v2_diamond_alpha_48_still());  // 48x48 (clean still alpha)
+        add_template(engine.get_v2_diamond_alpha_large());     // 96x96
     }
     if (templates.empty()) return std::nullopt;
 

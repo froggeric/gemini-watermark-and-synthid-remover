@@ -53,7 +53,7 @@ static constexpr float kThresh = 0.45f;
 
 TEST_CASE("geometry: recovers 720p-1 (48 @ margin 72,72)", "[geometry]") {
     WatermarkEngine engine;
-    const cv::Mat a48 = engine.get_v2_diamond_alpha_small();
+    const cv::Mat a48 = engine.get_v2_diamond_alpha_48_still();
     const cv::Mat a96 = engine.get_v2_diamond_alpha_large();
     const std::vector<cv::Mat> templates{alpha_to_template(a48), alpha_to_template(a96)};
 
@@ -79,7 +79,7 @@ TEST_CASE("geometry: recovers 720p-1 (48 @ margin 72,72)", "[geometry]") {
 
 TEST_CASE("geometry: recovers 720p-2 (48 @ margin 29,40) via position snap", "[geometry]") {
     WatermarkEngine engine;
-    const cv::Mat a48 = engine.get_v2_diamond_alpha_small();
+    const cv::Mat a48 = engine.get_v2_diamond_alpha_48_still();
     const cv::Mat a96 = engine.get_v2_diamond_alpha_large();
     const std::vector<cv::Mat> templates{alpha_to_template(a48), alpha_to_template(a96)};
 
@@ -103,7 +103,7 @@ TEST_CASE("geometry: recovers 720p-2 (48 @ margin 29,40) via position snap", "[g
 
 TEST_CASE("geometry: recovers 1080p (96 @ margin 192,192)", "[geometry]") {
     WatermarkEngine engine;
-    const cv::Mat a48 = engine.get_v2_diamond_alpha_small();
+    const cv::Mat a48 = engine.get_v2_diamond_alpha_48_still();
     const cv::Mat a96 = engine.get_v2_diamond_alpha_large();
     const std::vector<cv::Mat> templates{alpha_to_template(a48), alpha_to_template(a96)};
 
@@ -143,7 +143,7 @@ TEST_CASE("geometry: snap tolerates a 10px near-miss, rejects an 80px miss", "[g
 
 TEST_CASE("geometry: polarity-invariant (bright-on-dark and dark-on-bright)", "[geometry]") {
     WatermarkEngine engine;
-    const cv::Mat a48 = engine.get_v2_diamond_alpha_small();
+    const cv::Mat a48 = engine.get_v2_diamond_alpha_48_still();
     const cv::Mat a96 = engine.get_v2_diamond_alpha_large();
     const std::vector<cv::Mat> templates{alpha_to_template(a48), alpha_to_template(a96)};
     const int W = 1280, H = 720;
@@ -166,7 +166,7 @@ TEST_CASE("geometry: polarity-invariant (bright-on-dark and dark-on-bright)", "[
 
 TEST_CASE("geometry: clean frame yields no detection", "[geometry]") {
     WatermarkEngine engine;
-    const cv::Mat a48 = engine.get_v2_diamond_alpha_small();
+    const cv::Mat a48 = engine.get_v2_diamond_alpha_48_still();
     const cv::Mat a96 = engine.get_v2_diamond_alpha_large();
     const std::vector<cv::Mat> templates{alpha_to_template(a48), alpha_to_template(a96)};
     const int W = 1280, H = 720;

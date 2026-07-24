@@ -55,7 +55,7 @@ TEST_CASE("still_geometry: multi-template picks the 48px Gemini 3.6 diamond",
           "[still_geometry]") {
     WatermarkEngine engine;
     const cv::Mat a36 = engine.get_v2_diamond_alpha_36();
-    const cv::Mat a48 = engine.get_v2_diamond_alpha_small();   // 48px (video small) = Gemini 3.6
+    const cv::Mat a48 = engine.get_v2_diamond_alpha_48_still();   // 48px still capture = Gemini 3.6
     REQUIRE(a48.cols == 48);
     const std::vector<cv::Mat> templates{alpha_to_template(a36), alpha_to_template(a48)};
 
@@ -84,7 +84,7 @@ TEST_CASE("still_geometry: multi-template still picks 36px (Gemini 3.5) when tha
           "[still_geometry]") {
     WatermarkEngine engine;
     const cv::Mat a36 = engine.get_v2_diamond_alpha_36();
-    const cv::Mat a48 = engine.get_v2_diamond_alpha_small();
+    const cv::Mat a48 = engine.get_v2_diamond_alpha_48_still();
     const std::vector<cv::Mat> templates{alpha_to_template(a36), alpha_to_template(a48)};
 
     // Stamp the 36px diamond at the model position (margin 84).
@@ -102,7 +102,7 @@ TEST_CASE("still_geometry: widen search catches a far-off-model 48px mark",
           "[still_geometry]") {
     WatermarkEngine engine;
     const cv::Mat a36 = engine.get_v2_diamond_alpha_36();
-    const cv::Mat a48 = engine.get_v2_diamond_alpha_small();
+    const cv::Mat a48 = engine.get_v2_diamond_alpha_48_still();
     const std::vector<cv::Mat> templates{alpha_to_template(a36), alpha_to_template(a48)};
     const int margin = 200;  // well outside the +/-40 anchored window
     const cv::Point pos(kW - margin - 48, kH - margin - 48);
@@ -157,7 +157,7 @@ TEST_CASE("still_geometry: resolve_still_geometry precedence + matched alpha siz
           "[still_geometry]") {
     WatermarkEngine engine;
     const cv::Mat a36 = engine.get_v2_diamond_alpha_36();
-    const cv::Mat a48 = engine.get_v2_diamond_alpha_small();
+    const cv::Mat a48 = engine.get_v2_diamond_alpha_48_still();
     const std::vector<cv::Mat> templates{alpha_to_template(a36), alpha_to_template(a48)};
     const WatermarkPosition model = v2_small_config_from_dims(kW, kH);
 

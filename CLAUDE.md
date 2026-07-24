@@ -180,10 +180,9 @@ corner + logo size so `--variant` is rarely needed. Two layers:
   (so the `>48/>68` gate truly has one source) and is called from `detect_in_shot`
   and once in `process()` (its anchor reused by both `--force` branches). **The 48px Gemini
   alpha (removal AND detection template) is the STILL capture** (`get_v2_diamond_alpha_48_still`,
-  the averaged clean mask; the legacy `v2_diamond_48` video capture is a decode-failure fallback
-  only — it is ~5% the wrong shape and mis-calibrated, kept for safety). Only the 96px large
-  template uses the video `get_v2_diamond_alpha_large`. (NCC normalizes magnitude, so this is a
-  consistency fix; detection scores ~1.0 either way.) The masks are also exported as standalone
+  the averaged clean mask) — there is no separate "video" 48px alpha; the old `v2_diamond_48`
+  video capture (~5% wrong shape, mis-calibrated) has been removed entirely. Only the 96px large
+  template uses the video `get_v2_diamond_alpha_large`. The masks are also exported as standalone
   PNGs in `assets/watermark-masks/` for community reuse.
 
   Templates: diamond `{48, 96}` (`get_v2_diamond_alpha_small/_large`), Veo text

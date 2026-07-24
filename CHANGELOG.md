@@ -24,11 +24,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   untouched exterior stay byte-for-byte intact. `--no-edge-cleanup` disables it for a pure
   reverse-blend. It is a safe no-op when the mark sits on a clean background (fires only when
   there is a real edge residual, e.g. busy/compressed footage).
-- **Watermark masks exported + detection consistency.** The alpha masks are now in
+- **Watermark masks exported + legacy 48px video alpha removed.** The alpha masks are now in
   `assets/watermark-masks/` as standalone PNGs (with a README) for community reuse. The 48px
-  detection template now uses the same clean still alpha as removal; the legacy `v2_diamond_48`
-  video capture (~5% wrong shape, mis-calibrated) is a fallback only. NCC is magnitude-invariant,
-  so detection is unaffected (still ~1.0); this is a consistency fix.
+  detection template uses the same clean still alpha as removal, and the mis-calibrated legacy
+  `v2_diamond_48` video capture (~5% wrong shape, peak 0.34) has been removed entirely (no
+  fallback to it anywhere). NCC is magnitude-invariant, so detection is unaffected (still ~1.0);
+  this is a consistency + dead-code cleanup.
 - **Gemini 3.6 video watermark magnitude corrected.** A pristine measurement across 3 clean
   1280x720 videos (360 frames, mark on a uniform dark patch) puts the video alpha at peak
   0.304 / center 0.301, the same as the still alpha, not "stronger" as an earlier busy-fixture

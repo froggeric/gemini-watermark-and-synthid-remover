@@ -30,7 +30,6 @@ resolution: 48px small (short side ≤ 1024), 96px large.
 |------|------------|----------|
 | `gemini-3.6-diamond-48px.png` | **Gemini 3.6 (Flash) 48px diamond** — the average of 10 distinct captures, each with the mark on a near-uniform-black patch (peak ~0.30). | **Removal** of the Gemini 3.6 mark (both stills and video) + the detection template. |
 | `gemini-3.6-diamond-48px-extracted-video-REFERENCE.png` | Pristine video alpha extracted from 3 clean 1280x720 Gemini 3.6 videos (360 frames, mark on a uniform dark patch). | Reference / validation. **Identical to the 48px mask above** (per-pixel std 0.002, shape diff 0.3%, correlation 0.9999) — confirming still and video render the mark at the same ~0.30 alpha. |
-| `gemini-3.6-diamond-48px-video-template-LEGACY.png` | The original video-path capture (peak ~0.34, mis-calibrated: non-black capture background + approximate correction). | **Legacy fallback only.** Not used for removal. Kept as a decode-failure fallback for the detection template. |
 | `gemini-3.5-diamond-36px.png` | Gemini 3.5 still small diamond (36px). | Removal of the Gemini 3.5 mark. |
 | `gemini-diamond-96px.png` | Large-output diamond (96px). | Removal + detection template for large images/videos. |
 | `veo-text-68px.png`, `veo-text-99px.png` | Veo legacy "Veo" text watermark (68x30 and 99x43). | Removal of the Veo legacy text mark. |

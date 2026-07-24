@@ -115,14 +115,6 @@ void WatermarkEngine::init_alpha_maps() {
             alpha_map_v2_diamond_36_ = correct_alpha_for_background(calculate_alpha_map(bg), bg);
         }
     }
-    if (embedded::v2_diamond_48_png_size > 0) {
-        std::vector<unsigned char> buf(
-            embedded::v2_diamond_48_png, embedded::v2_diamond_48_png + embedded::v2_diamond_48_png_size);
-        cv::Mat bg = cv::imdecode(buf, cv::IMREAD_COLOR);
-        if (!bg.empty()) {
-            alpha_map_v2_diamond_small_ = correct_alpha_for_background(calculate_alpha_map(bg), bg);
-        }
-    }
     if (embedded::v2_diamond_48_still_png_size > 0) {
         std::vector<unsigned char> buf(
             embedded::v2_diamond_48_still_png,
@@ -162,13 +154,13 @@ void WatermarkEngine::init_alpha_maps() {
     }
 
     spdlog::debug("Alpha maps initialized: small {}x{}, large {}x{}, veo_text {}x{}, "
-                  "v2_diamond_36 {}x{}, v2_diamond_small {}x{}, v2_diamond_large {}x{}, "
+                  "v2_diamond_36 {}x{}, v2_diamond_48_still {}x{}, v2_diamond_large {}x{}, "
                   "veo_text_ref_small {}x{}, veo_text_ref_large {}x{}",
                   alpha_map_small_.cols, alpha_map_small_.rows,
                   alpha_map_large_.cols, alpha_map_large_.rows,
                   alpha_map_veo_text_.cols, alpha_map_veo_text_.rows,
                   alpha_map_v2_diamond_36_.cols, alpha_map_v2_diamond_36_.rows,
-                  alpha_map_v2_diamond_small_.cols, alpha_map_v2_diamond_small_.rows,
+                  alpha_map_v2_diamond_48_still_.cols, alpha_map_v2_diamond_48_still_.rows,
                   alpha_map_v2_diamond_large_.cols, alpha_map_v2_diamond_large_.rows,
                   alpha_map_veo_text_small_.cols, alpha_map_veo_text_small_.rows,
                   alpha_map_veo_text_large_.cols, alpha_map_veo_text_large_.rows);
@@ -212,14 +204,14 @@ WatermarkEngine::StillResolveResult WatermarkEngine::resolve_still_geometry(
 {
     const int W = image.cols, H = image.rows;
 
-    // Pick the removal alpha for a resolved logo_size: 48px (Gemini 3.6 still) or 36px
-    // (Gemini 3.5 still). For 48px prefer the dedicated STILL capture (the video 48px
-    // alpha is stronger and over-removes stills); fall back to it if absent.
+    // Pick the removal alpha for a resolved logo_size: 48px (Gemini 3.6) uses the still
+    // capture; 36px (Gemini 3.5) uses the 36 capture. No legacy fallback: these are
+    // constexpr-embedded PNGs that always decode in a correct build, so an empty Mat would
+    // signal a build bug, not a runtime condition.
     auto alpha_for_logo = [&](int logo_size) -> const cv::Mat* {
         if (logo_size > 40) {
-            if (!alpha_map_v2_diamond_48_still_.empty()) return &alpha_map_v2_diamond_48_still_;
-            return alpha_map_v2_diamond_small_.empty() ? nullptr
-                                                       : &alpha_map_v2_diamond_small_;
+            return alpha_map_v2_diamond_48_still_.empty() ? nullptr
+                                                          : &alpha_map_v2_diamond_48_still_;
         }
         return alpha_map_v2_diamond_36_.empty() ? nullptr : &alpha_map_v2_diamond_36_;
     };
@@ -239,9 +231,7 @@ WatermarkEngine::StillResolveResult WatermarkEngine::resolve_still_geometry(
     const WatermarkPosition model_pos = get_watermark_config(W, H, variant);
 
     // Candidate templates: BOTH small-diamond sizes (36 = Gemini 3.5, 48 = Gemini 3.6
-    // still). Prefer the dedicated still-48 capture for the 48px template (matches 3.6
-    // stills better than the video 48px). The search reports which matched so removal
-    // uses the right-size alpha.
+    // still). The search reports which matched so removal uses the right-size alpha.
     cv::Mat gray;
     if (image.channels() >= 3) cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
     else                        gray = image.clone();
@@ -249,9 +239,7 @@ WatermarkEngine::StillResolveResult WatermarkEngine::resolve_still_geometry(
     if (!alpha_map_v2_diamond_36_.empty()) {
         cv::Mat t; alpha_map_v2_diamond_36_.convertTo(t, CV_8U, 255.0); templates.push_back(t);
     }
-    const cv::Mat& a48 = !alpha_map_v2_diamond_48_still_.empty()
-                             ? alpha_map_v2_diamond_48_still_
-                             : alpha_map_v2_diamond_small_;
+    const cv::Mat& a48 = alpha_map_v2_diamond_48_still_;
     if (!a48.empty()) {
         cv::Mat t; a48.convertTo(t, CV_8U, 255.0); templates.push_back(t);
     }
