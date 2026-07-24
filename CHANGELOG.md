@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.14.2] - 2026-07-24
+
 ### Gemini 3.6 48px watermark: cleaner still + video removal
 
 - **Averaged still alpha.** `v2_diamond_48_still` is now the average of 10 distinct Gemini 3.6
