@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Video: cleaner Gemini 3.6 watermark removal
+
+- The 48px Gemini video watermark is now removed with the same clean **still** capture
+  (`v2_diamond_48_still`) used for still images, instead of the video-path 48px capture.
+  Measured directly on a real Gemini 3.6 video, the old video capture was slightly
+  **under**-calibrated (its non-black capture background plus an approximate 25th-percentile
+  correction left it ~0.007 too low), producing a faint bright residual (a "slight border").
+  Switching to the still capture cuts the systematic residual ~60% (signed mark-mean
+  +0.0168 → +0.0067) and the center leftover ~37%. Same watermark either way (shape
+  corr 0.997); the still capture is now the single clean source for both still and video
+  48px removal. A small per-pixel noise floor remains (baked-in capture noise), to be
+  addressed by alpha-averaging in a later release.
+
 ## [1.14.1] - 2026-07-23
 
 ### Still-image watermark auto-geometry + exact removal

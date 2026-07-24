@@ -88,9 +88,15 @@ Both operate in the frequency domain via `FftContext` (FFTW3 wrapper with plan c
 ### Still-image Watermark Geometry (auto-detect, Gemini 3.6+)
 
 Gemini 3.6 Flash's small diamond is **48px** (NOT the 36px Gemini 3.5 still alpha) and
-is rendered weaker (~0.31 alpha) than the 48px VIDEO diamond (~0.40), so stills use a
-**dedicated** capture `v2_diamond_48_still` (`get_v2_diamond_alpha_48_still`), NOT the
-video alpha (which over-removes). It sits at a margin the position model
+rendered at ~0.31 alpha. A **dedicated** capture `v2_diamond_48_still`
+(`get_v2_diamond_alpha_48_still`), taken on a near-uniform-black patch so
+`correct_alpha_for_background` is a no-op, gives the exact reversal. The old VIDEO 48px
+capture (`v2_diamond_48`) sat on a non-black background (~0.09) and was "corrected" with an
+approximate 25th-percentile estimate that left it **under**-calibrated (corrected ~0.341 vs
+the true ~0.31 center / ~0.38 peak, measured directly from a real 3.6 video), leaving a
+faint bright residual; the VIDEO path therefore removes the 48px mark with the STILL
+capture too (see `select_video_alpha` below), so the still alpha is the single clean source
+for both still and video 48px removal. It sits at a margin the position model
 (`v2_small_config_from_dims`) no longer predicts (model 36px@84 vs real 48px@(96,96) at 896x1200). Still images now
 content-detect the position AND size like the video path (shipped 1.12.0), adapted
 for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
@@ -167,7 +173,11 @@ corner + logo size so `--variant` is rarely needed. Two layers:
   `select_video_alpha` is the single helper that turns a `geo` into an alpha Mat +
   top-left + bbox; it routes the small/large pick through `effective_alpha_size`
   (so the `>48/>68` gate truly has one source) and is called from `detect_in_shot`
-  and once in `process()` (its anchor reused by both `--force` branches).
+  and once in `process()` (its anchor reused by both `--force` branches). **Removal
+  alpha for the 48px Gemini mark is the STILL capture** (`get_v2_diamond_alpha_48_still`,
+  cleaner-calibrated than the video 48px capture; fallback to `get_v2_diamond_alpha_small`
+  if it failed to decode); the 96px large and the **detection templates** still use the
+  video `get_v2_diamond_alpha_small/_large` (the video alpha is fine for matching).
 
   Templates: diamond `{48, 96}` (`get_v2_diamond_alpha_small/_large`), Veo text
   `{68x30, 99x43}`. The 36 diamond is still-only, never video. Corner window
@@ -246,6 +256,11 @@ CLI11 subcommands in src/cli/: `remove` (default), `visible`, `synthid`, `detect
   different strength, so it would over-remove). Never resize an alpha between sizes
   (48/96); use a native capture per size, since resizing smears the anti-aliased edges
   the exact reverse-blend depends on (see also the video path's native-size templates).
+  A capture from a real Gemini image also bakes in that image's **SynthID carrier**
+  (structured, ~±0.5/255; it self-cancels only on the capture image, NOT on others, so
+  it is not negligible). For a pristine alpha: average many **distinct** generations each
+  with the mark on uniform black (SynthID is content-adaptive, so identical content stays
+  correlated and won't average out), or SynthID-strip the capture first.
 - Still-image watermark geometry is profile-aware (`WatermarkVariant::V1`/`V2`, default V2 with auto V2→V1 fallback; `--legacy` pins V1): V1 (legacy, pre-3.5) → 48×48 if either dim ≤ 1024 else 96×96, margins {32,32}/{64,64}; V2 (Gemini 3.5+) → large 96×96 @192px, small 36×36 with aspect-aware margin (`v2_small_config_from_dims`) + ±3px NCC snap (trusted iff spatial NCC ≥ 0.60). `WatermarkSize` (Small/Large) is a size class, not a pixel count (V2 Small = 36px alpha). Still `WatermarkVariant` is distinct from video `VideoVariant`.
 - Video encoding defaults: libx264, CRF 14, High profile, slow preset
 - Test executable re-compiles library sources (doesn't link main binary), add new sources to both CMakeLists.txt and tests/CMakeLists.txt

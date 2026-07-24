@@ -925,10 +925,14 @@ inline constexpr unsigned char v2_diamond_48_png[] = {
 inline constexpr size_t v2_diamond_48_png_size = 2469;
 
 // Gemini 3.6 STILL small diamond (48px). Captured from a real 3.6 Flash image
-// (896x1200) at the mark's TRUE top-left (752,1056) = margin (96,96), no median.
-// The full 48px mark fills the crop (left edge at the mark's left edge), so the
-// mask aligns when placed at the detected/preset top-left. Pure-black crop border
-// => correct_alpha_for_background is a no-op => the watermark's TRUE alpha.
+// (896x1200) at the mark's TRUE top-left (752,1056) = margin (96,96), no median
+// (a median pass erodes the faint outer edge into a reversal border). The full 48px
+// mark fills the crop, so the mask aligns at the detected/preset top-left. Pure-black
+// crop border => correct_alpha_for_background is a no-op. CAVEAT: this is the true
+// alpha CONTAMINATED by the capture image's SynthID carrier (~+/-0.5/255, structured;
+// no real Gemini image is pure black). It self-cancels only on the capture image, so
+// other images keep a faint residual. A pristine alpha needs averaging many distinct
+// black-bg generations, or SynthID-stripping the capture first.
 inline constexpr unsigned char v2_diamond_48_still_png[] = {
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
     0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x30,
