@@ -173,9 +173,39 @@ SpectralProfile CodebookBuilder::finalize(const ProfileAccumulator& acc) const {
         cv::Mat std_dev;
         cv::sqrt(cv::max(variance, 0.0), std_dev);
 
+        // max_std normalizes the per-bin std into [0,1]. It MUST exclude the DC
+        // neighborhood: DC is the per-image mean brightness, which varies more
+        // across captures than any real frequency, so a bare global max would
+        // always sit at DC and make std/max_std ~= 0 for every non-DC bin,
+        // saturating consistency at ~0.99 across the whole spectrum (a near-
+        // no-op gate where only phase_consistency discriminates; verified in
+        // docs/research/synthid-content-fixture-analysis.md). DC sits at [0,0]
+        // in the natural (non-fftshift) layout and its 3 wraparound copies at
+        // the other 3 grid corners; mask a small square (radius kDcMaskRadius)
+        // around each so max_std reflects the strongest CONTENT bin and the
+        // gate actually separates carrier bins from content bins. Do NOT
+        // simplify this back to an unmasked minMaxLoc — the saturation is
+        // silent (no existing test fails, the gate just stops discriminating).
+        constexpr int kDcMaskRadius = 4;
+        cv::Mat dc_mask = cv::Mat::ones(std_dev.size(), CV_8UC1);
+        const int rows = std_dev.rows, cols = std_dev.cols;
+        for (int cy : {0, rows - 1}) {
+            for (int cx : {0, cols - 1}) {
+                for (int dy = -kDcMaskRadius; dy <= kDcMaskRadius; ++dy) {
+                    for (int dx = -kDcMaskRadius; dx <= kDcMaskRadius; ++dx) {
+                        const int y = cy + dy;
+                        const int x = cx + dx;
+                        if (y >= 0 && y < rows && x >= 0 && x < cols) {
+                            dc_mask.at<uint8_t>(y, x) = 0;
+                        }
+                    }
+                }
+            }
+        }
+
         double max_std;
-        cv::minMaxLoc(std_dev, nullptr, &max_std);
-        if (max_std > 1e-9f) {
+        cv::minMaxLoc(std_dev, nullptr, &max_std, nullptr, nullptr, dc_mask);
+        if (max_std > 1e-9) {
             profile.consistency_bgr[ch] = 1.0f - (std_dev / static_cast<float>(max_std));
         } else {
             profile.consistency_bgr[ch] = cv::Mat::ones(std_dev.size(), CV_32FC1);

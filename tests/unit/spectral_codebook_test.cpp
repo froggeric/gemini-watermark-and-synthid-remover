@@ -1,10 +1,16 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "core/fft_context.hpp"
+#include "synthid/codebook_builder.hpp"
 #include "synthid/spectral_codebook.hpp"
 #include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <vector>
 
 using namespace wmr;
@@ -331,4 +337,108 @@ TEST_CASE("SpectralCodebook::merge_from: max on activation + magnitude, preserve
     REQUIRE(prof.consistency_bgr[0].at<float>(15, 15) == 0.40f);
     REQUIRE(prof.phase_consistency_bgr[0].at<float>(15, 15) == 0.30f);
     REQUIRE(prof.phase_bgr[0].at<float>(15, 15) == 0.40f);  // NOT src's 0.90
+}
+
+TEST_CASE("consistency_bgr discriminates carrier vs content bins once DC is excluded from max_std",
+          "[codebook][synthid]") {
+    // Phase 0.5 regression test for the consistency_bgr normalization.
+    //
+    // consistency_bgr = 1 - std/max_std, where max_std is the peak per-bin
+    // magnitude std across captures. Pre-fix, max_std was the GLOBAL max via a
+    // bare cv::minMaxLoc(std_dev). DC sits at [0,0] in the natural (non-
+    // fftshift) layout and mean brightness varies more across captures than
+    // any real frequency, so the global max is always at the DC neighborhood,
+    // making std/max_std ~= 0 for every non-DC bin and consistency saturate
+    // at ~0.99 across the whole spectrum. The magnitude-variability gate was
+    // a near-no-op; only the phase_consistency gate discriminated.
+    //
+    // This test builds a synthetic codebook from N captures where:
+    //   - mean brightness (DC) varies a lot across captures (DC std huge),
+    //   - one frequency bin is a stable carrier (constant cosine amplitude),
+    //   - one frequency bin is variable content (cosine amplitude varies).
+    // Post-fix, max_std excludes the DC neighborhood, so the variable bin's
+    // std becomes the normalization reference and consistency there drops
+    // near 0 while the stable carrier bin stays near 1.
+    //
+    // PRE-FIX THIS ASSERTION WOULD HAVE FAILED: with the bare global max,
+    // both the stable and the variable bin read consistency ~= 0.9+ (DC
+    // dominated max_std), so the `variable < 0.4` check below is the
+    // load-bearing regression guard. Confirmed by temporarily reverting the
+    // mask in codebook_builder.cpp::finalize (both bins read > 0.85).
+
+    constexpr int W = 64, H = 64;
+    constexpr int N = 8;
+
+    // A stable "carrier" frequency and a variable "content" frequency, both
+    // off-axis and well outside the DC mask radius (radius 4 -> bins within
+    // 4px of any corner are masked). (10,8) has radius ~12.8, (22,18) ~28.5.
+    constexpr int stable_x = 10, stable_y = 8;
+    constexpr int variable_x = 22, variable_y = 18;
+    static_assert(stable_x > 5 && stable_y > 5, "stable bin must be outside DC mask");
+    static_assert(variable_x > 5 && variable_y > 5, "variable bin must be outside DC mask");
+
+    // Per-capture mean brightness (DC). Wide span so DC std dominates the
+    // whole spectrum by a large margin (the pre-fix saturation condition).
+    const float base_means[N] = {50, 75, 100, 125, 150, 175, 200, 225};
+    // Stable carrier amplitude is CONSTANT across captures.
+    const float stable_amp = 7.0f;
+    // Variable content amplitude swings across captures.
+    const float variable_amps[N] = {3.0f, 5.0f, 8.0f, 12.0f, 15.0f, 19.0f, 23.0f, 27.0f};
+
+    namespace fs = std::filesystem;
+    const fs::path scratch = fs::temp_directory_path() / "wmr_consistency_metric_test";
+    fs::remove_all(scratch);
+    fs::create_directories(scratch);
+
+    for (int i = 0; i < N; ++i) {
+        cv::Mat img(H, W, CV_8UC3);
+        for (int y = 0; y < H; ++y) {
+            for (int x = 0; x < W; ++x) {
+                const float ph_stable =
+                    2.0f * static_cast<float>(CV_PI) *
+                    (stable_x * x + stable_y * y) / static_cast<float>(W);
+                const float ph_var =
+                    2.0f * static_cast<float>(CV_PI) *
+                    (variable_x * x + variable_y * y) / static_cast<float>(W);
+                float v = base_means[i]
+                          + stable_amp * std::cos(ph_stable)
+                          + variable_amps[i] * std::cos(ph_var);
+                // Keep within [4, 251] so there is zero clipping (clipping
+                // would inject harmonics and contaminate the bins under test).
+                v = std::clamp(v, 4.0f, 251.0f);
+                const uint8_t u = static_cast<uint8_t>(std::lroundf(v));
+                img.at<cv::Vec3b>(y, x) = cv::Vec3b(u, u, u);  // grey (B==G==R)
+            }
+        }
+        std::ostringstream name;
+        name << "synth_" << std::setw(2) << std::setfill('0') << i << ".png";
+        cv::imwrite((scratch / name.str()).string(), img);
+    }
+
+    FftContext fft;
+    CodebookBuilder builder(fft);
+    const fs::path cb_path = scratch / "consistency.cb";
+    builder.build_from_directory(scratch.string(), cb_path.string());
+
+    SpectralCodebook cb;
+    cb.load(cb_path.string());
+    REQUIRE(cb.has_profile(W, H));
+    const auto& prof = cb.get_profile(W, H);
+
+    // Read consistency at both bins (channel 0; BGR are identical on grey
+    // input, so any channel tells the same story).
+    const float cons_stable = prof.consistency_bgr[0].at<float>(stable_y, stable_x);
+    const float cons_variable = prof.consistency_bgr[0].at<float>(variable_y, variable_x);
+
+    INFO("stable bin (" << stable_x << "," << stable_y << ") consistency=" << cons_stable
+         << " | variable bin (" << variable_x << "," << variable_y << ") consistency="
+         << cons_variable << " | samples=" << prof.sample_count);
+
+    // Post-fix: the carrier bin is stable (consistency high), the content bin
+    // is variable (consistency low). This is the discrimination the gate was
+    // supposed to provide.
+    REQUIRE(cons_stable > 0.6f);
+    REQUIRE(cons_variable < 0.4f);
+
+    fs::remove_all(scratch);
 }
