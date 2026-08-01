@@ -30,6 +30,13 @@ void NoiseResidualSubtractor::remove_synthid(
 {
     if (image.empty()) return;
 
+    // WS3: LAB `a`-channel sibling path. Fully separate so the default BGR path
+    // (config.lab_a == false) is byte-for-byte unchanged.
+    if (config.lab_a) {
+        remove_synthid_lab_a(image, config);
+        return;
+    }
+
     if (image.channels() == 4) {
         cv::cvtColor(image, image, cv::COLOR_BGRA2BGR);
     } else if (image.channels() == 1) {
@@ -274,6 +281,170 @@ void NoiseResidualSubtractor::remove_synthid(
     merged.convertTo(image, CV_8UC3, 255.0);
 
     spdlog::debug("Codebook-free SynthID suppression complete");
+}
+
+void NoiseResidualSubtractor::remove_synthid_lab_a(
+    cv::Mat& image, const RemovalConfig& config)
+{
+    // WS3 experiment: operate on the LAB `a` (green-red opponent) channel only.
+    // vitotitto/synthid-fingerprint-analysis reported SynthID most detectable in
+    // `a` (AUC 0.977/0.926). This path makes that measurable on our fixtures.
+    // Data-gated: see docs/research/synthid-lab-a-experiment.md for the verdict.
+
+    if (image.channels() == 4) {
+        cv::cvtColor(image, image, cv::COLOR_BGRA2BGR);
+    } else if (image.channels() == 1) {
+        cv::cvtColor(image, image, cv::COLOR_GRAY2BGR);
+    }
+
+    const int h = image.rows;
+    const int w = image.cols;
+
+    RemovalStrength base_strength = config.strength;
+    if (config.custom_strength >= 0.0f) {
+        if (config.custom_strength <= 0.25f) base_strength = RemovalStrength::Gentle;
+        else if (config.custom_strength <= 0.50f) base_strength = RemovalStrength::Moderate;
+        else if (config.custom_strength <= 0.75f) base_strength = RemovalStrength::Aggressive;
+        else base_strength = RemovalStrength::Maximum;
+    }
+
+    // BGR -> Lab (8-bit). OpenCV Lab: L,a,b in [0,255], a/b centered at 128
+    // (neutral). Channel index 1 is `a` (green-red opponent).
+    cv::Mat lab;
+    cv::cvtColor(image, lab, cv::COLOR_BGR2Lab);
+    cv::Mat lab_planes[3];
+    cv::split(lab, lab_planes);
+
+    // Operate on `a` only, as float [0,1] (single plane, weight 1.0).
+    cv::Mat a_f;
+    lab_planes[1].convertTo(a_f, CV_32FC1, 1.0 / 255.0);
+
+    // Uniform-vs-content decision uses the average std across all 3 Lab planes
+    // (in [0,1]), mirroring the BGR path's avg-3-channel-std threshold. Using the
+    // `a` std alone would misclassify luminance-only content (a near-flat `a`
+    // channel with high L structure) as uniform, wrongly replacing `a` with noise
+    // instead of running the carrier-band disruption. The decision is about
+    // whether there is image STRUCTURE to preserve, which is a luminance question.
+    cv::Scalar lab_std_scalar;
+    cv::meanStdDev(lab, cv::Scalar(), lab_std_scalar);
+    float lab_std = static_cast<float>(
+        (lab_std_scalar[0] + lab_std_scalar[1] + lab_std_scalar[2]) / 3.0 / 255.0);
+    bool is_content_image = lab_std > 0.05f;
+
+    cv::Scalar a_std_scalar;
+    cv::meanStdDev(a_f, cv::Scalar(), a_std_scalar);
+    float a_std = static_cast<float>(a_std_scalar[0]);
+
+    if (is_content_image) {
+        spdlog::info("LAB-a: content image (lab-std={:.4f}, a-std={:.4f}): spectral disruption in `a`.",
+                     lab_std, a_std);
+    } else {
+        spdlog::info("LAB-a: uniform image (lab-std={:.4f}, a-std={:.4f}): direct carrier suppression in `a`.",
+                     lab_std, a_std);
+    }
+    spdlog::info("LAB-a codebook-free SynthID suppression (heuristic): "
+                 "{}x{}, strength={}, content={}",
+                 w, h, static_cast<int>(base_strength), is_content_image);
+
+    if (!is_content_image) {
+        // Uniform `a` plane: the carrier IS the only spectral content. Replace
+        // with mean+noise, mirroring the BGR uniform branch (keep_ratio schedule).
+        float mean_val = static_cast<float>(cv::mean(a_f)[0]);
+        float keep_ratio = 0.0f;
+        switch (base_strength) {
+            case RemovalStrength::Gentle:    keep_ratio = 0.30f; break;
+            case RemovalStrength::Moderate:  keep_ratio = 0.15f; break;
+            case RemovalStrength::Aggressive: keep_ratio = 0.05f; break;
+            case RemovalStrength::Maximum:   keep_ratio = 0.00f; break;
+        }
+        cv::RNG rng(std::rand());
+        cv::Mat noise(h, w, CV_32FC1);
+        rng.fill(noise, cv::RNG::NORMAL, mean_val, 0.002f);
+        cv::Mat new_a;
+        if (keep_ratio > 0.0f) {
+            new_a = a_f * keep_ratio + noise * (1.0f - keep_ratio);
+        } else {
+            new_a = noise;
+        }
+        new_a = cv::max(new_a, 0.0);
+        new_a = cv::min(new_a, 1.0);
+        new_a.convertTo(lab_planes[1], CV_8U, 255.0);
+        spdlog::info("LAB-a uniform: replaced `a` with mean+noise (keep_ratio={:.2f})",
+                     base_strength == RemovalStrength::Maximum ? 0.0f : keep_ratio);
+    } else {
+        // Content `a` plane: disrupt carrier band (r=30-500) in magnitude + phase.
+        const float band_inner = 30.0f;
+        float max_r = std::sqrt(static_cast<float>((h / 2) * (h / 2) + (w / 2) * (w / 2)));
+        (void)max_r;
+        const float band_outer = 500.0f;
+        const float ramp_width = 20.0f;
+
+        cv::Mat carrier_mask(h, w, CV_32FC1);
+        for (int y = 0; y < h; ++y) {
+            float fy = static_cast<float>(y);
+            if (fy > h / 2.0f) fy -= h;
+            for (int x = 0; x < w; ++x) {
+                float fx = static_cast<float>(x);
+                if (fx > w / 2.0f) fx -= w;
+                float dist = std::sqrt(fy * fy + fx * fx);
+                float lo = std::clamp((dist - band_inner) / ramp_width, 0.0f, 1.0f);
+                float hi = std::clamp((band_outer - dist) / ramp_width, 0.0f, 1.0f);
+                carrier_mask.at<float>(y, x) = lo * hi;
+            }
+        }
+
+        float mag_noise_strength = 0.0f;
+        switch (base_strength) {
+            case RemovalStrength::Gentle:    mag_noise_strength = 0.01f; break;
+            case RemovalStrength::Moderate:  mag_noise_strength = 0.03f; break;
+            case RemovalStrength::Aggressive: mag_noise_strength = 0.05f; break;
+            case RemovalStrength::Maximum:   mag_noise_strength = 0.10f; break;
+        }
+        float phase_sigma = 0.0f;
+        switch (base_strength) {
+            case RemovalStrength::Gentle:    phase_sigma = 0.10f; break;
+            case RemovalStrength::Moderate:  phase_sigma = 0.20f; break;
+            case RemovalStrength::Aggressive: phase_sigma = 0.30f; break;
+            case RemovalStrength::Maximum:   phase_sigma = 0.40f; break;
+        }
+
+        cv::RNG rng(42);
+
+        cv::Mat ch_fft = fft_.forward(a_f);
+        cv::Mat img_mag = FftContext::magnitude(ch_fft);
+        cv::Mat img_phase = FftContext::phase(ch_fft);
+        cv::Mat new_mag = img_mag.clone();
+        cv::Mat new_phase = img_phase.clone();
+
+        if (mag_noise_strength > 0.0f) {
+            cv::Mat mag_perturbation(h, w, CV_32FC1);
+            rng.fill(mag_perturbation, cv::RNG::NORMAL, 1.0, mag_noise_strength);
+            cv::max(mag_perturbation, 0.5, mag_perturbation);
+            cv::min(mag_perturbation, 1.5, mag_perturbation);
+            new_mag = img_mag.mul(1.0f - carrier_mask) +
+                      img_mag.mul(mag_perturbation).mul(carrier_mask);
+        }
+        if (phase_sigma > 0.0f) {
+            cv::Mat phase_noise(h, w, CV_32FC1);
+            rng.fill(phase_noise, cv::RNG::NORMAL, 0.0, phase_sigma);
+            new_phase = img_phase + phase_noise.mul(carrier_mask);
+        }
+
+        cv::Mat new_a = fft_.inverse(FftContext::from_polar(new_mag, new_phase));
+        // Light 3x3 blur on the processed `a` plane only (BGR path blurs the
+        // merged image; here we blur `a` before merge so L and b stay untouched).
+        cv::GaussianBlur(new_a, new_a, {3, 3}, 0.4);
+        new_a = cv::max(new_a, 0.0);
+        new_a = cv::min(new_a, 1.0);
+        new_a.convertTo(lab_planes[1], CV_8U, 255.0);
+    }
+
+    // Merge [L, a_processed, b] (L and b byte-identical to input) and Lab -> BGR.
+    cv::Mat merged_lab;
+    cv::merge(lab_planes, 3, merged_lab);
+    cv::cvtColor(merged_lab, image, cv::COLOR_Lab2BGR);
+
+    spdlog::debug("LAB-a codebook-free SynthID suppression complete (heuristic)");
 }
 
 cv::Mat NoiseResidualSubtractor::compute_dc_ramp(int rows, int cols, float radius) {

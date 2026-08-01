@@ -12,6 +12,15 @@ SynthidDetector::SynthidDetector(FftContext& fft)
 
 SynthidDetectionResult SynthidDetector::detect(
     const cv::Mat& image,
+    const SpectralCodebook& codebook,
+    ColorSpace cs) const
+{
+    if (cs == ColorSpace::LabA) return detect_lab_a(image, codebook);
+    return detect_bgr(image, codebook);
+}
+
+SynthidDetectionResult SynthidDetector::detect_bgr(
+    const cv::Mat& image,
     const SpectralCodebook& codebook) const
 {
     SynthidDetectionResult result;
@@ -114,6 +123,90 @@ SynthidDetectionResult SynthidDetector::detect(
         spdlog::info("Note: FFT-based detector cannot reliably detect SynthID. "
                      "Score {:.1f}% is near random baseline.", result.confidence * 100.0f);
     }
+
+    return result;
+}
+
+SynthidDetectionResult SynthidDetector::detect_lab_a(
+    const cv::Mat& image,
+    const SpectralCodebook& codebook) const
+{
+    // WS3 sibling path. Convert BGR -> Lab and score on channel index 1 (`a`).
+    // The codebook is BGR; we use the green-channel profile (index 1) as the
+    // reference, since `a` is the green-red opponent and green is the closest
+    // single-channel BGR proxy (also the highest-weighted BGR channel, 1.0).
+    // This is a measurement proxy for the a-vs-BGR comparison, not a calibrated
+    // `a`-space codebook.
+    SynthidDetectionResult result;
+    if (image.empty()) return result;
+
+    cv::Mat work;
+    if (image.channels() == 4) {
+        cv::cvtColor(image, work, cv::COLOR_BGRA2BGR);
+    } else if (image.channels() == 1) {
+        cv::cvtColor(image, work, cv::COLOR_GRAY2BGR);
+    } else {
+        work = image.clone();
+    }
+
+    const int w = work.cols;
+    const int h = work.rows;
+    const SpectralProfile& profile = codebook.get_profile(w, h);
+
+    cv::Mat lab;
+    cv::cvtColor(work, lab, cv::COLOR_BGR2Lab);
+    cv::Mat lab_planes[3];
+    cv::split(lab, lab_planes);
+    cv::Mat a_ch;
+    lab_planes[1].convertTo(a_ch, CV_32FC1, 1.0 / 255.0);
+
+    // Reference profile: green channel (index 1), resized to match if needed.
+    constexpr int kRefCh = 1;
+    cv::Mat prof_mag, prof_phase, prof_cons;
+    if (profile.width != w || profile.height != h) {
+        cv::resize(profile.magnitude_bgr[kRefCh], prof_mag, {w, h}, 0, 0, cv::INTER_LINEAR);
+        cv::resize(profile.phase_bgr[kRefCh], prof_phase, {w, h}, 0, 0, cv::INTER_LINEAR);
+        cv::resize(profile.consistency_bgr[kRefCh], prof_cons, {w, h}, 0, 0, cv::INTER_LINEAR);
+    } else {
+        prof_mag = profile.magnitude_bgr[kRefCh];
+        prof_phase = profile.phase_bgr[kRefCh];
+        prof_cons = profile.consistency_bgr[kRefCh];
+    }
+
+    float noise = noise_correlation(a_ch, prof_mag);
+    cv::Mat a_fft = fft_.forward(a_ch);
+    float phase = carrier_phase_matching(a_fft, prof_phase);
+    float struct_r = structure_ratio(a_fft, prof_mag, prof_cons);
+
+    // multi_scale_consistency is 0.05 weight; reuse the BGR computation so the
+    // a-vs-BGR confidence delta is attributable to the three chrominance metrics.
+    float ms_cons = multi_scale_consistency(work, profile);
+
+    result.noise_correlation = noise;
+    result.carrier_phase_score = phase;
+    result.structure_ratio = struct_r;
+    result.multi_scale_consistency = ms_cons;
+
+    result.confidence = std::clamp(
+        kWeightNoiseCorr * noise
+        + kWeightCarrierPhase * phase
+        + kWeightStructure * struct_r
+        + kWeightMultiScale * ms_cons, 0.0f, 1.0f);
+
+    // Same content-aware threshold logic as detect_bgr, but measured on the `a`
+    // plane's std (content in `a` drives the struct_ratio baseline up).
+    float threshold = kDefaultThreshold;
+    cv::Scalar a_mean, a_std_scalar;
+    cv::meanStdDev(a_ch, a_mean, a_std_scalar);
+    float a_std = static_cast<float>(a_std_scalar[0]);
+    if (a_std > 0.05f) threshold = 0.70f;
+    result.detected = result.confidence >= threshold;
+
+    spdlog::debug("SynthID detect (LAB-a): noise={:.3f} phase={:.3f} struct={:.3f} "
+                  "ms_cons={:.3f} -> confidence={:.3f} ({})",
+                  noise, phase, struct_r, ms_cons,
+                  result.confidence,
+                  result.detected ? "DETECTED" : "not detected");
 
     return result;
 }

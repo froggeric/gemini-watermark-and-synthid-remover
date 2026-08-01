@@ -121,6 +121,7 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
         RemovalConfig config;
         config.custom_strength = opts.synthid_strength;
         config.phase_adaptive = opts.phase_adaptive;
+        config.lab_a = opts.lab_a;
 
         if (!opts.codebook_path.empty()) {
             FftContext fft;

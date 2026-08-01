@@ -27,6 +27,13 @@ private:
 
     static StrengthParams get_strength_params(RemovalStrength strength);
 
+    // WS3: LAB `a`-channel sibling path. Converts BGR -> Lab, runs the full
+    // codebook-free algorithm on channel index 1 (`a`, single plane, weight 1.0),
+    // keeps L and b byte-identical, merges back, Lab -> BGR. Self-contained so
+    // the default BGR path (remove_synthid with config.lab_a == false) is byte-
+    // for-byte unchanged.
+    void remove_synthid_lab_a(cv::Mat& image, const RemovalConfig& config);
+
     cv::Mat estimate_carrier_from_noise(
         const cv::Mat& channel_fft,
         const cv::Mat& channel_float,

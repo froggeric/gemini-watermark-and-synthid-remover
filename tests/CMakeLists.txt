@@ -13,6 +13,7 @@ set(TEST_SOURCES
     unit/still_geometry_test.cpp
     unit/synthid_wording_test.cpp
     unit/codebook_subtractor_test.cpp
+    unit/lab_a_experiment_test.cpp
     integration/visible_pipeline_test.cpp
 )
 
@@ -27,6 +28,7 @@ set(LIB_SOURCES
     ${CMAKE_SOURCE_DIR}/src/synthid/spectral_codebook.cpp
     ${CMAKE_SOURCE_DIR}/src/synthid/codebook_subtractor.cpp
     ${CMAKE_SOURCE_DIR}/src/synthid/codebook_builder.cpp
+    ${CMAKE_SOURCE_DIR}/src/synthid/noise_residual_subtractor.cpp
     ${CMAKE_SOURCE_DIR}/src/video/notebooklm_gates.cpp  # VideoReader-free (pure OpenCV); safe for the test link
     ${CMAKE_SOURCE_DIR}/src/video/geometry_detector.cpp  # VideoReader-free (pure OpenCV); safe for the test link
     ${CMAKE_SOURCE_DIR}/src/detection/still_geometry.cpp  # VideoReader-free (pure OpenCV); safe for the test link

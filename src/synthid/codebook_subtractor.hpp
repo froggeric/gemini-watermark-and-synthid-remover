@@ -19,6 +19,12 @@ struct RemovalConfig {
     RemovalStrength strength = RemovalStrength::Moderate;
     float custom_strength = -1.0f;  // Override: 0.0-1.0 if >= 0
     bool phase_adaptive = false;    // Use image's own phase for uniform images
+    // WS3 experiment: operate on the LAB `a` (green-red opponent) channel only,
+    // keeping L and b byte-identical. Default off = today's BGR path (byte-identical).
+    // Reported more detectable in `a` (vitotitto/synthid-fingerprint-analysis); this
+    // flag makes the path measurable on our fixtures. Data-gated: ship only if it
+    // measurably beats BGR (see docs/research/synthid-lab-a-experiment.md).
+    bool lab_a = false;
 };
 
 class CodebookSubtractor {

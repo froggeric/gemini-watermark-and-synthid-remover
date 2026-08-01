@@ -326,6 +326,7 @@ static int process_single_image(const CliOptions& opts) {
         RemovalConfig config;
         config.custom_strength = opts.synthid_strength;
         config.phase_adaptive = opts.phase_adaptive;
+        config.lab_a = opts.lab_a;
 
         if (!opts.codebook_path.empty()) {
             SpectralCodebook codebook;
@@ -333,7 +334,9 @@ static int process_single_image(const CliOptions& opts) {
 
             if (!opts.force) {
                 SynthidDetector detector(fft);
-                auto det = detector.detect(image, codebook);
+                auto det = detector.detect(image, codebook,
+                    opts.lab_a ? SynthidDetector::ColorSpace::LabA
+                               : SynthidDetector::ColorSpace::BGR);
                 if (!det.detected) {
                     spdlog::debug("No SynthID detected ({:.1f}%)", det.confidence * 100.0f);
                     if (opts.mode == CliMode::SynthidOnly) {
@@ -569,6 +572,8 @@ int run_cli(int argc, char* argv[]) {
     remove_cmd->add_option("--codebook", opts.codebook_path, "Spectral codebook path (.wcb)");
     remove_cmd->add_flag("--codebook-free", opts.codebook_free,
                           "Estimate carrier from noise residual (no codebook needed)");
+    remove_cmd->add_flag("--lab-a", opts.lab_a,
+                         "WS3 experiment: suppress in the LAB `a` channel only (with --codebook-free/--codebook)");
     remove_cmd->add_option("--synthid-strength", opts.synthid_strength,
                            "SynthID suppression strength 0.0-2.0")
         ->check(CLI::Range(0.0f, 2.0f));
@@ -625,6 +630,8 @@ int run_cli(int argc, char* argv[]) {
                           "Estimate carrier from noise residual (no codebook needed)");
     synthid_cmd->add_flag("--phase-adaptive", opts.phase_adaptive,
                           "Use image's own phase for uniform images (conjugate subtraction)");
+    synthid_cmd->add_flag("--lab-a", opts.lab_a,
+                          "WS3 experiment: suppress in the LAB `a` channel only");
     synthid_cmd->add_option("--synthid-strength", opts.synthid_strength,
                             "SynthID suppression strength 0.0-2.0")
         ->check(CLI::Range(0.0f, 2.0f));
