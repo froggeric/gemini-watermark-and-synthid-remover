@@ -156,19 +156,20 @@ TEST_CASE("SynthID per-channel carrier energy: B > R verified (header comment ch
     // plane. The bias pushes the multi-color measurement to B > R > G
     // (B strongest, G weakest) instead of the doc's G > B > R.
     //
-    // The 30 RAW pure-black frames in test-images/gemini-3.1-pro/2400x1792/
-    // pure-black/ (the doc's methodology, clipping-free) tell a different
-    // story: G > R > B barely (G=33.6%, R=33.4%, B=33.0% of carrier energy
-    // in the r=3..400 band, ~1.6% spread; an independent probe measured a
-    // 4.8% spread with the same G > R > B ordering). The two fixture types
-    // contradict each other on everything except B > R: multi-color says
-    // B > R > G, pure-black says G > R > B. So neither the header's full
-    // G > B > R ordering nor the doc's 36.3/32.6/31.1% split is robustly
-    // reproducible; only B > R (the part the channel weights actually
-    // encode, 0.85 vs 0.70) is verifier-stable across both fixture types.
-    //
-    // Net: B > R is asserted below; the G position and ratio tuning are
-    // out of scope for this gate. The measured numbers are logged via INFO.
+    // This test measures the multi-color set in r=3..400 |FFT| magnitude
+    // (whole-plane cv::mean above, which is dominated by this band on
+    // pure-color frames) and asserts B > R (B/R ~ 1.12), the load-bearing
+    // sub-claim of the channel weights {B:0.85, G:1.0, R:0.70}. The 30 RAW
+    // pure-black frames in test-images/gemini-3.1-pro/2400x1792/pure-black/
+    // reproduce the doc's G > B > R split (36.4/32.5/31.0) under whole-
+    // spectrum |FFT|^2 ENERGY (the doc's stated methodology), but under
+    // THIS band-limited r=3..400 |FFT| magnitude measure they read
+    // G=33.6 / R=33.4 / B=33.0 (G > R > B, so R > B here). The two fixture
+    // types therefore DISAGREE on B vs R under this measure: multi-color
+    // B > R, pure-black R > B. B > R below is multi-color-verified, NOT a
+    // cross-fixture invariant. The weights are unchanged because the test's
+    // flip trigger (R > B on the multi-color set, which is what the test
+    // measures) does not fire. The measured numbers are logged via INFO.
     // ---------------------------------------------------------------
     CHECK(mean_b > mean_r);
 

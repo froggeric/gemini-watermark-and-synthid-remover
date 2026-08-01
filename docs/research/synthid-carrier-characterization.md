@@ -27,17 +27,16 @@ pattern has RMS amplitude ~3.5/255 (1.4% of full scale) and peaks at ~128/255.
 - Blue: 32.6% (0.90× green)
 - Red: 31.1% (0.86× green)
 
-> **Caveat (not reproducible on the shipped fixtures):** the 36.3/32.6/31.1%
-> split above was not reproducible on `test-images/gemini-3.1-pro/2400x1792/`.
-> The 30 RAW pure-black frames in `pure-black/` (this doc's methodology) measure
-> closer to G=33.6% / B=33.0% / R=33.4% (1.6% spread, G > R > B ordering); an
-> independent probe measured a 4.8% spread with the same G > R > B ordering.
-> The 9-frame multi-color `pure-*-gemini.png` set measures B > R > G (biased
-> by clipping harmonics in the saturated ON channels). The two fixture types
-> agree only on **B > R** (the load-bearing claim encoded by `kChannelWeights`
-> = {0.85, 1.0, 0.70} for {B, G, R}); the G position is not robustly
-> resolvable across capture types. The WS1b test in
-> `tests/unit/codebook_subtractor_test.cpp` therefore asserts only B > R.
+> **Caveat (methodology-dependent):** the 36.3/32.6/31.1 (G/B/R) split above
+> reproduces under whole-spectrum |FFT|² energy (the methodology used here) on
+> `test-images/gemini-3.1-pro/2400x1792/pure-black/` (30 RAW frames measure
+> G≈36.4 / B≈32.5 / R≈31.0). Under a band-limited r=3..400 |FFT| magnitude
+> measure, the same pure-black frames read G≈33.6 / B≈33.0 / R≈33.4 (G > R > B,
+> i.e. R > B), and the 9-frame multi-color `pure-*-gemini.png` set under that
+> same band-limited measure reads B > R > G (biased by clipping harmonics in
+> the saturated ON channels). The per-channel split is therefore methodology-
+> dependent; B > R is the multi-color band-limited result asserted by the WS1b
+> unit test in `tests/unit/codebook_subtractor_test.cpp`.
 
 ### 2. Per-Image Variation (Stochastic Component)
 
