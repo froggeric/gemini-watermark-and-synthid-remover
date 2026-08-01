@@ -12,6 +12,7 @@ set(TEST_SOURCES
     unit/geometry_detector_test.cpp
     unit/still_geometry_test.cpp
     unit/synthid_wording_test.cpp
+    unit/codebook_subtractor_test.cpp
     integration/visible_pipeline_test.cpp
 )
 
