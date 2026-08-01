@@ -1,32 +1,31 @@
 // WS1b: empirically verify the SynthID per-channel carrier-energy ordering
 // against the {0.85, 1.0, 0.70} BGR weights in CodebookSubtractor /
-// NoiseResidualSubtractor (kChannelWeights, in the headers), and probe that
-// WS2a's phase_consistency soft gate is not a regression on the carrier band.
+// NoiseResidualSubtractor (kChannelWeights, in the headers), and prove that
+// WS2a's phase_consistency soft gate actually bites.
 //
-// Both cases are fixture-backed and SKIP cleanly when the pure-color Gemini
-// captures under test-images/gemini-3.1-pro/2400x1792/ are absent (the
-// CLAUDE.md SKIP-on-missing-data convention; CI runs without test-images/ and
-// must stay green). Pure-color frames are the ideal fixture: DC plus the
-// SynthID carrier, no content masking the carrier, so the per-channel FFT
-// magnitude ordering reflects the carrier's per-channel strength and nothing
-// else.
+// (a) Fixture-backed ordering probe (SKIPs without test-images/): build a
+//     codebook over the 9 multi-color pure-*-gemini.png captures and check
+//     the load-bearing B > R claim encoded by the channel weights. The full
+//     G > B > R ordering is NOT robustly reproducible across capture types
+//     (multi-color says B > R > G, pure-black says G > R > B), so only the
+//     B > R part the weights actually encode is asserted. See the comment
+//     inside the case for the full measurement context.
 //
-// (a) Ordering probe: build a codebook over the full pure-color set, read the
-// averaged SpectralProfile, and check mean(magnitude_bgr[G]) >
-// mean(magnitude_bgr[B]) > mean(magnitude_bgr[R]). The headers' BGR ordering
-// (G strongest, R weakest) is what the channel weights encode; this locks it.
-//
-// (b) Gate regression probe: build a codebook from a subset, suppress a
-// held-out frame with (i) the normal profile and (ii) the same profile with
-// phase_consistency forced to all-ones (the v1 / pre-WS2a behavior), and
-// compare aggregate |FFT| energy in the carrier band (r=30..400, the band
-// codebook_subtractor.cpp itself targets). The gate must not leave more
-// residual than the no-gate path: gate_on <= gate_off (within FP noise).
+// (b) Synthetic-profile gate unit test (no fixture, always runs): on uniform
+//     pure-color captures the phase_consistency gate has zero observable
+//     effect (consistency_bgr and phase_consistency_bgr are coupled: a bin
+//     with stable magnitude also has coherent phase, so when consistency is
+//     ~1.0 the pcons gate reads ~1.0 too, and gate-on vs gate-off give byte-
+//     identical output). To exercise the gate at all we construct a
+//     SpectralProfile where consistency_bgr = 1.0 everywhere but
+//     phase_consistency_bgr = 0 at a chosen bin, plus a matching input with
+//     FFT content at that bin, and verify gate-on vs gate-off outputs differ
+//     specifically there (carrier subtracted when gate off, preserved when
+//     gate on).
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -97,58 +96,6 @@ SpectralCodebook build_codebook_from_subset(const std::vector<fs::path>& images,
     return cb;
 }
 
-// Aggregate |FFT| energy per BGR channel in the carrier band r=30..400 (the
-// same band codebook_subtractor.cpp's phase-disruption step targets, matching
-// the SynthID data-encoding region per docs/research/
-// synthid-carrier-characterization.md Section 4). Used as the post-suppression
-// residual metric.
-std::array<double, 3> carrier_band_energy_bgr(const cv::Mat& bgr_image,
-                                              FftContext& fft) {
-    cv::Mat work;
-    if (bgr_image.channels() == 4) {
-        cv::cvtColor(bgr_image, work, cv::COLOR_BGRA2BGR);
-    } else if (bgr_image.channels() == 1) {
-        cv::cvtColor(bgr_image, work, cv::COLOR_GRAY2BGR);
-    } else {
-        work = bgr_image.clone();
-    }
-    work.convertTo(work, CV_32FC3, 1.0 / 255.0);
-
-    cv::Mat channels[3];
-    cv::split(work, channels);
-
-    const int h = work.rows;
-    const int w = work.cols;
-
-    // Band mask: smooth ramp into r=30 and out of r=400 (15px ramps, matching
-    // codebook_subtractor.cpp's freq_window shape).
-    cv::Mat band(h, w, CV_32FC1);
-    const float inner = 30.0f, outer = 400.0f, ramp = 15.0f;
-    for (int y = 0; y < h; ++y) {
-        float fy = static_cast<float>(y);
-        if (fy > h / 2.0f) fy -= h;
-        for (int x = 0; x < w; ++x) {
-            float fx = static_cast<float>(x);
-            if (fx > w / 2.0f) fx -= w;
-            float dist = std::sqrt(fy * fy + fx * fx);
-            float lo = std::clamp((dist - inner) / ramp, 0.0f, 1.0f);
-            float hi = std::clamp((outer - dist) / ramp, 0.0f, 1.0f);
-            band.at<float>(y, x) = lo * hi;
-        }
-    }
-
-    std::array<double, 3> energy = {0.0, 0.0, 0.0};
-    for (int ch = 0; ch < 3; ++ch) {
-        cv::Mat freq = fft.forward(channels[ch]);
-        cv::Mat mag = FftContext::magnitude(freq);
-        cv::Mat masked;
-        cv::multiply(mag, band, masked);
-        cv::Scalar s = cv::sum(masked);
-        energy[ch] = static_cast<double>(s[0]);
-    }
-    return energy;
-}
-
 }  // namespace
 
 TEST_CASE("SynthID per-channel carrier energy: B > R verified (header comment check)",
@@ -210,15 +157,18 @@ TEST_CASE("SynthID per-channel carrier energy: B > R verified (header comment ch
     // (B strongest, G weakest) instead of the doc's G > B > R.
     //
     // The 30 RAW pure-black frames in test-images/gemini-3.1-pro/2400x1792/
-    // pure-black/ (the doc's methodology) are the clipping-free
-    // measurement: there the per-channel carrier is within ~2% across B/G/R
-    // (G slightly strongest), so even on pure-black the G > B part of the
-    // ordering is within measurement noise. The doc's stronger 36/33/31%
-    // split was not reproducible on the fixtures shipped here.
+    // pure-black/ (the doc's methodology, clipping-free) tell a different
+    // story: G > R > B barely (G=33.6%, R=33.4%, B=33.0% of carrier energy
+    // in the r=3..400 band, ~1.6% spread; an independent probe measured a
+    // 4.8% spread with the same G > R > B ordering). The two fixture types
+    // contradict each other on everything except B > R: multi-color says
+    // B > R > G, pure-black says G > R > B. So neither the header's full
+    // G > B > R ordering nor the doc's 36.3/32.6/31.1% split is robustly
+    // reproducible; only B > R (the part the channel weights actually
+    // encode, 0.85 vs 0.70) is verifier-stable across both fixture types.
     //
-    // Net: B > R (the claim the weights actually encode) is verified below.
-    // Ratio tuning and the G-vs-B position are out of scope for this gate;
-    // the measured numbers are logged via INFO for transparency.
+    // Net: B > R is asserted below; the G position and ratio tuning are
+    // out of scope for this gate. The measured numbers are logged via INFO.
     // ---------------------------------------------------------------
     CHECK(mean_b > mean_r);
 
@@ -229,72 +179,153 @@ TEST_CASE("SynthID per-channel carrier energy: B > R verified (header comment ch
     CHECK(hi <= lo * 1.30 + 1e-9);
 }
 
-TEST_CASE("WS2a phase-consistency gate does not regress carrier-band residual",
+TEST_CASE("WS2a phase_consistency gate bites when consistency_bgr cannot",
           "[synthid]") {
-    const auto fixtures = discover_pure_color_fixtures();
-    // Need at least 3 frames to build (codebook_builder warns below 3) plus
-    // at least 1 disjoint held-out frame for the residual comparison.
-    if (fixtures.size() < 4) {
-        SKIP("Need >=4 pure-color captures to hold out a test frame (found "
-             << fixtures.size() << ")");
+    // Synthetic-profile unit test: the WS2a phase_consistency gate is the
+    // ONLY attenuator at bins where consistency_bgr = 1.0 (consistency gate
+    // fully open) but phase_consistency_bgr < 1 (incoherent phase). On the
+    // shipped pure-color fixtures BOTH gates read ~1.0 everywhere (magnitude
+    // variability and phase incoherence are coupled on uniform captures: a
+    // bin with stable magnitude also has coherent phase), so an end-to-end
+    // gate-on vs gate-off residual comparison on those fixtures is vacuous
+    // (byte-identical output, ratio exactly 1.0). This case forces the
+    // scenario the gate exists for and checks it actually bites.
+    //
+    // Construct a small synthetic SpectralProfile (64x64) with:
+    //   - consistency_bgr = 1.0 everywhere (consistency gate fully open)
+    //   - phase_consistency_bgr = 0.0 at one chosen bin, 1.0 elsewhere
+    //   - large magnitude_bgr (100) so the subtractor's magnitude cap is
+    //     the binding constraint and a healthy subtraction happens at the
+    //     gated bin
+    // Plus a matching input image whose FFT phase at the gated bin aligns
+    // with the profile phase (real cosine input + phase_bgr=0 means
+    // subtraction cleanly reduces |FFT| at the bin, rather than rotating
+    // it). Run CodebookSubtractor::remove_synthid twice — once with the
+    // WS2a gate active, once with phase_consistency forced to all-ones
+    // (v1 / pre-WS2a path) — and assert:
+    //   1. |FFT(output)| at the gated bin is materially smaller with the
+    //      gate OFF (carrier subtracted) than with the gate ON (carrier
+    //      not subtracted because pcons=0 there).
+    //   2. |FFT(output)| at a non-gated control bin is the same in both
+    //      runs (gate-on and gate-off agree everywhere except the gated
+    //      bin). This proves the gate's effect concentrates at the gated
+    //      bin and is not a global side-effect.
+
+    constexpr int W = 64, H = 64;
+
+    // Pick a bin OUTSIDE the DC exclusion ramp (dc_radius=30 for Gentle)
+    // AND outside the phase-noise band (band_outer = min(H,W)/2 = 32 for
+    // non-content images). At radius ~34, neither dc_ramp nor phase_noise
+    // touches it: the only variable between the two runs is the pcons
+    // gate. (24, 24) has radius sqrt(24^2 + 24^2) ~ 34.
+    constexpr int bin_y = 24, bin_x = 24;
+    // A non-gated control bin at similar radius (so the magnitude cap and
+    // dc_ramp treat both bins the same).
+    constexpr int ctrl_y = 24, ctrl_x = 8;  // radius ~25, but dc_ramp=1 here
+    static_assert(ctrl_y != bin_y || ctrl_x != bin_x,
+                  "control bin must differ from gated bin");
+
+    auto make_profile = [&](const cv::Mat& pcons_plane) {
+        SpectralProfile p;
+        p.width = W;
+        p.height = H;
+        p.sample_count = 4;
+        for (int ch = 0; ch < 3; ++ch) {
+            // Large magnitude_bgr so subtraction at the gated bin is
+            // non-trivial (the subtractor's cap = mag_cap * |img_fft| is
+            // the binding constraint, not the requested subtraction).
+            p.magnitude_bgr[ch] = cv::Mat::ones(H, W, CV_32FC1) * 100.0f;
+            // phase_bgr = 0: subtracted carrier is purely real. With a
+            // real-valued cosine input, this aligns with the input's FFT
+            // phase and produces a clean magnitude reduction.
+            p.phase_bgr[ch] = cv::Mat::zeros(H, W, CV_32FC1);
+            // Consistency fully open: the pre-WS2a consistency gate is a
+            // no-op here, so any attenuation must come from the pcons gate.
+            p.consistency_bgr[ch] = cv::Mat::ones(H, W, CV_32FC1);
+            p.phase_consistency_bgr[ch] = pcons_plane.clone();
+        }
+        return p;
+    };
+
+    cv::Mat pcons_active = cv::Mat::ones(H, W, CV_32FC1);
+    pcons_active.at<float>(bin_y, bin_x) = 0.0f;  // gate CLOSED at this bin
+
+    SpectralCodebook cb_a, cb_b;
+    cb_a.add_profile(make_profile(pcons_active));
+    cb_b.add_profile(make_profile(cv::Mat::ones(H, W, CV_32FC1)));  // v1: gate off
+
+    // Synthetic input: uniform grey + cosine sinusoids at BOTH the gated
+    // bin and the control bin's frequencies, so both bins have FFT content
+    // for the subtractor to act on. Cosine (not sine) keeps the FFT real
+    // at both bins, so the real-valued subtraction reduces magnitude
+    // cleanly. Amplitude small enough to keep is_content_image false
+    // (std < 0.05 in [0,1] units, i.e. < ~12.75 in 8-bit).
+    cv::Mat raw(H, W, CV_8UC3, cv::Scalar(80, 80, 80));
+    const float amp = 8.0f;
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            const float phase_bin = 2.0f * static_cast<float>(M_PI) *
+                                    (bin_y * y + bin_x * x) / H;
+            const float phase_ctrl = 2.0f * static_cast<float>(M_PI) *
+                                     (ctrl_y * y + ctrl_x * x) / H;
+            const float s = amp * (std::cos(phase_bin) + std::cos(phase_ctrl));
+            const int v = std::clamp(static_cast<int>(80.0f + s), 0, 255);
+            for (int ch = 0; ch < 3; ++ch) {
+                raw.at<cv::Vec3b>(y, x)[ch] = static_cast<uint8_t>(v);
+            }
+        }
     }
 
-    // Disjoint split: build from all-but-last, test on the last. CLAUDE.md:
-    // never score on the frames you derived the codebook from.
-    std::vector<fs::path> build_set(fixtures.begin(), fixtures.end() - 1);
-    const fs::path held_out = fixtures.back();
+    // Gentle: smallest phase-disruption sigma on uniform images (0.15),
+    // one pass, dc_radius=30. The gated and control bins are at radius
+    // ~34 and ~25 respectively; dc_ramp is 1.0 at both (>= 30 for the
+    // gated bin, and the ramp is `clamp(dist/30, 0, 1)` which equals 1.0
+    // at dist>=30; for the control bin at dist~25, dc_ramp = 25/30 ~ 0.83,
+    // which is fine — both runs see the same dc_ramp).
+    RemovalConfig config;
+    config.strength = RemovalStrength::Gentle;
 
     FftContext fft;
-    const SpectralCodebook cb_a = build_codebook_from_subset(build_set, fft, "gate_a");
-    REQUIRE(cb_a.has_profile(2400, 1792));
-
-    // Codebook B shares profile A's magnitude/phase/consistency planes, but
-    // phase_consistency_bgr forced to all-ones (the v1 / pre-WS2a behavior:
-    // the soft gate becomes a no-op). cv::Mat is COW, so zeroing one profile's
-    // planes cannot mutate the codebook-A profile.
-    SpectralProfile profile_b = cb_a.get_profile(2400, 1792);  // deep copy
-    for (int ch = 0; ch < 3; ++ch) {
-        profile_b.phase_consistency_bgr[ch] =
-            cv::Mat::ones(profile_b.magnitude_bgr[ch].size(), CV_32FC1);
-    }
-    SpectralCodebook cb_b;
-    cb_b.add_profile(profile_b);
-
-    cv::Mat raw = cv::imread(held_out.string(), cv::IMREAD_COLOR);
-    REQUIRE_FALSE(raw.empty());
-
-    // Same strength on both, so any residual difference is attributable to the
-    // gate. Aggressive runs the full multi-pass schedule (3 passes), the
-    // strictest test of whether the gate over- or under-subtracts.
-    RemovalConfig config;
-    config.strength = RemovalStrength::Aggressive;
+    CodebookSubtractor subtractor(fft);
 
     cv::Mat img_a = raw.clone();
     cv::Mat img_b = raw.clone();
+    subtractor.remove_synthid(img_a, cb_a, config);  // WS2a gate ON
+    subtractor.remove_synthid(img_b, cb_b, config);  // gate forced off (v1)
 
-    CodebookSubtractor subtractor(fft);
-    subtractor.remove_synthid(img_a, cb_a, config);  // gate ON (WS2a)
-    subtractor.remove_synthid(img_b, cb_b, config);  // gate OFF (v1)
+    // Compare output FFT magnitudes at the gated bin and the control bin.
+    auto fft_mag_at = [&](const cv::Mat& bgr_img, int by, int bx) -> double {
+        cv::Mat gray;
+        cv::cvtColor(bgr_img, gray, cv::COLOR_BGR2GRAY);
+        cv::Mat f;
+        gray.convertTo(f, CV_32FC1, 1.0 / 255.0);
+        cv::Mat ft = fft.forward(f);
+        cv::Mat mag = FftContext::magnitude(ft);
+        return static_cast<double>(mag.at<float>(by, bx));
+    };
 
-    const auto energy_a = carrier_band_energy_bgr(img_a, fft);
-    const auto energy_b = carrier_band_energy_bgr(img_b, fft);
+    const double gated_on = fft_mag_at(img_a, bin_y, bin_x);
+    const double gated_off = fft_mag_at(img_b, bin_y, bin_x);
+    const double ctrl_on = fft_mag_at(img_a, ctrl_y, ctrl_x);
+    const double ctrl_off = fft_mag_at(img_b, ctrl_y, ctrl_x);
 
-    const double total_a = energy_a[0] + energy_a[1] + energy_a[2];
-    const double total_b = energy_b[0] + energy_b[1] + energy_b[2];
+    INFO("Synthetic gate probe on 64x64 profile:"
+         << " gated bin (" << bin_y << "," << bin_x << ")"
+         << " |FFT| gate-ON=" << gated_on << " gate-OFF=" << gated_off
+         << " delta=" << (gated_on - gated_off)
+         << " || control bin (" << ctrl_y << "," << ctrl_x << ")"
+         << " |FFT| gate-ON=" << ctrl_on << " gate-OFF=" << ctrl_off
+         << " delta=" << (ctrl_on - ctrl_off));
 
-    INFO("Carrier-band |FFT| residual (r=30..400) on held-out frame '"
-         << held_out.filename().string() << "':"
-         << " gate-ON  B=" << energy_a[0] << " G=" << energy_a[1]
-         << " R=" << energy_a[2] << " total=" << total_a
-         << " || gate-OFF B=" << energy_b[0] << " G=" << energy_b[1]
-         << " R=" << energy_b[2] << " total=" << total_b
-         << " || ratio gate_on/gate_off="
-         << (total_a / std::max(total_b, 1e-12)));
+    // (1) At the gated bin: gate ON preserves more magnitude (carrier NOT
+    //     subtracted because pcons=0) than gate OFF (carrier subtracted).
+    //     Require a meaningful margin (>= 5 units) to rule out FFT/quant
+    //     noise: the subtractor's magnitude cap on this input is ~50,
+    //     so a healthy subtraction moves the bin by tens of units.
+    CHECK(gated_on > gated_off + 5.0);
 
-    // The gate may attenuate subtraction at incoherent bins, so a small
-    // residual increase is acceptable and expected. The lock is: NOT a
-    // regression beyond a 5% tolerance (FP noise + the gate's intended softer
-    // subtraction). A large regression here would mean WS2a's soft gate is
-    // suppressing real carrier energy.
-    CHECK(total_a <= total_b * 1.05 + 1e-9);
+    // (2) At the control bin: gate ON and gate OFF agree (no pcons gating
+    //     there, both runs did the same subtraction). Tolerate a small
+    //     floating-point/quantization delta.
+    CHECK(std::abs(ctrl_on - ctrl_off) < 5.0);
 }
