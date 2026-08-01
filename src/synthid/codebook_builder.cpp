@@ -63,11 +63,21 @@ BuildStats CodebookBuilder::build_from_directory(
         codebook.add_profile(profile);
         ++stats.profiles_created;
 
+        // WS2b: opt-in carrier-bin seeding, applied AFTER finalize and BEFORE
+        // save. Sets consistency_bgr = phase_consistency_bgr = 1.0 at each
+        // user-named bin so the subtractor's gate is fully open there. No-op
+        // when --carrier-grid was not passed (carrier_bins_ is empty).
+        if (!carrier_bins_.empty()) {
+            seed_carrier_bins(codebook, carrier_bins_, acc.width, acc.height);
+            ++stats.profiles_seeded;
+        }
+
         spdlog::info("Profile: {}x{} ({} samples)", acc.width, acc.height, acc.count);
     }
 
     codebook.save(output_path);
-    spdlog::info("Saved codebook: {} profiles → {}", stats.profiles_created, output_path);
+    spdlog::info("Saved codebook: {} profiles → {} ({} seeded)",
+                 stats.profiles_created, output_path, stats.profiles_seeded);
 
     return stats;
 }

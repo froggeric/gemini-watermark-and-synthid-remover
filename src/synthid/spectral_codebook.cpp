@@ -163,4 +163,97 @@ void SpectralCodebook::add_profile(const SpectralProfile& profile) {
     profiles_[{profile.height, profile.width}] = profile;
 }
 
+SpectralProfile* SpectralCodebook::find_exact_profile(int width, int height) {
+    auto it = profiles_.find({height, width});
+    if (it == profiles_.end()) return nullptr;
+    return &it->second;
+}
+
+int SpectralCodebook::merge_from(const SpectralCodebook& other) {
+    int merged = 0;
+    for (const auto& [key, other_profile] : other.profiles_) {
+        auto it = profiles_.find(key);
+        if (it == profiles_.end()) continue;  // skip foreign resolutions
+        SpectralProfile& dst = it->second;
+
+        for (int ch = 0; ch < 3; ++ch) {
+            const cv::Mat& src_mag = other_profile.magnitude_bgr[ch];
+            const cv::Mat& src_phas = other_profile.phase_bgr[ch];
+            const cv::Mat& src_cons = other_profile.consistency_bgr[ch];
+            const cv::Mat& src_pcons = other_profile.phase_consistency_bgr[ch];
+
+            cv::Mat& dst_mag = dst.magnitude_bgr[ch];
+            cv::Mat& dst_phas = dst.phase_bgr[ch];
+            cv::Mat& dst_cons = dst.consistency_bgr[ch];
+            cv::Mat& dst_pcons = dst.phase_consistency_bgr[ch];
+
+            // Element-wise max, gated on shape match (defensive: a foreign
+            // resolution that happens to share a key but was built with a
+            // different FFT layout should not be touched).
+            if (!src_mag.empty() && src_mag.size() == dst_mag.size()) {
+                cv::max(dst_mag, src_mag, dst_mag);
+            }
+            if (!src_phas.empty() && src_phas.size() == dst_phas.size()) {
+                cv::max(dst_phas, src_phas, dst_phas);
+            }
+            if (!src_cons.empty() && src_cons.size() == dst_cons.size()) {
+                cv::max(dst_cons, src_cons, dst_cons);
+            }
+            if (!src_pcons.empty() && src_pcons.size() == dst_pcons.size()) {
+                cv::max(dst_pcons, src_pcons, dst_pcons);
+            }
+        }
+        ++merged;
+    }
+    return merged;
+}
+
+void seed_carrier_bins(SpectralCodebook& cb,
+                       const std::vector<std::pair<int,int>>& bins,
+                       int width, int height) {
+    SpectralProfile* profile = cb.find_exact_profile(width, height);
+    if (!profile) {
+        spdlog::warn("seed_carrier_bins: no exact {}x{} profile in codebook; "
+                     "seeding skipped (would be a silent no-op on a foreign "
+                     "resolution).", width, height);
+        return;
+    }
+
+    // Profile planes are rows x cols = height x width.
+    const int rows = profile->height;
+    const int cols = profile->width;
+    if (rows <= 0 || cols <= 0) {
+        spdlog::warn("seed_carrier_bins: {}x{} profile has non-positive extents",
+                     width, height);
+        return;
+    }
+
+    int seeded = 0;
+    int clamped = 0;
+    for (const auto& [x, y] : bins) {
+        int cx = x;
+        int cy = y;
+        if (cx < 0 || cx >= cols || cy < 0 || cy >= rows) {
+            spdlog::warn("seed_carrier_bins: bin ({},{}) out of {}x{} grid; "
+                         "clamped", x, y, cols, rows);
+            cx = std::clamp(cx, 0, cols - 1);
+            cy = std::clamp(cy, 0, rows - 1);
+            ++clamped;
+        }
+        for (int ch = 0; ch < 3; ++ch) {
+            if (!profile->consistency_bgr[ch].empty()) {
+                profile->consistency_bgr[ch].at<float>(cy, cx) = 1.0f;
+            }
+            if (!profile->phase_consistency_bgr[ch].empty()) {
+                profile->phase_consistency_bgr[ch].at<float>(cy, cx) = 1.0f;
+            }
+        }
+        ++seeded;
+    }
+
+    spdlog::debug("seed_carrier_bins: {}x{} profile, {} bin(s) seeded "
+                  "({} clamped), consistency + phase_consistency set to 1.0",
+                  width, height, seeded, clamped);
+}
+
 } // namespace wmr

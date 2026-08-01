@@ -3,6 +3,7 @@
 #include <string>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "core/types.hpp"
 #include "core/inpaint.hpp"
@@ -60,6 +61,11 @@ struct CliOptions {
     float denoise_sigma = 50.0f;        // --sigma 1-150
     float denoise_strength_pct = 120.0f; // --strength 0-300 (percent; /100 internally)
     int denoise_radius = 10;            // --radius 1-25
+
+    // build-codebook: opt-in carrier-bin seeding. Parsed from --carrier-grid
+    // "x1,y1;x2,y2;..." (FFT-bin coords on the per-profile rows x cols grid).
+    // Empty (flag absent) = no seeding = today's behavior.
+    std::string carrier_grid_str;
 };
 
 // Resolve the still-image profile variant from CLI flags.
@@ -78,6 +84,12 @@ bool resolve_inpaint_config(const CliOptions& opts, InpaintConfig& out);
 // Parse a "x,y,w,h" rect string. Returns nullopt for an empty OR malformed string;
 // the caller distinguishes the two (empty = no flag, malformed = error).
 std::optional<cv::Rect> parse_rect(const std::string& s);
+
+// Parse a "x1,y1;x2,y2;..." carrier-bin list (FFT-bin coords on the per-profile
+// rows x cols grid). Returns nullopt for an empty OR malformed string; the
+// caller distinguishes the two (empty = no flag, malformed = user error). Empty
+// entries (e.g. trailing ';') are tolerated.
+std::optional<std::vector<std::pair<int,int>>> parse_bin_list(const std::string& s);
 
 // Build the still-image geometry override from CLI opts. Returns false (with a
 // logged error) when --rect was given but malformed.

@@ -2,8 +2,10 @@
 
 #include "synthid/spectral_codebook.hpp"
 #include <opencv2/core.hpp>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <vector>
 
 using namespace wmr;
 
@@ -136,4 +138,158 @@ TEST_CASE("SpectralCodebook loads v1 (WMRCB01) and defaults phase_consistency to
     REQUIRE(max_err < 1e-6);
 
     std::filesystem::remove(path);
+}
+
+TEST_CASE("seed_carrier_bins sets BOTH consistency and phase_consistency at seeded bins",
+          "[codebook]") {
+    // WS2b: the post-WS2a subtractor gates on BOTH consistency_bgr (floor-remap)
+    // AND phase_consistency_bgr (direct multiply). Seeding only one plane is a
+    // silent no-op. Verify seed_carrier_bins sets BOTH at every seeded bin and
+    // leaves a non-seeded bin untouched.
+    constexpr int W = 64, H = 64;
+    SpectralCodebook cb;
+    SpectralProfile p;
+    p.width = W;
+    p.height = H;
+    p.sample_count = 4;
+    for (int ch = 0; ch < 3; ++ch) {
+        // Start both gates fully CLOSED: consistency low, phase_consistency low.
+        p.consistency_bgr[ch] = cv::Mat::ones(H, W, CV_32FC1) * 0.10f;
+        p.phase_consistency_bgr[ch] = cv::Mat::ones(H, W, CV_32FC1) * 0.05f;
+        // Magnitude / phase planes can stay empty; seed_carrier_bins doesn't
+        // touch them.
+    }
+    cb.add_profile(p);
+
+    const std::vector<std::pair<int,int>> bins = {{10, 4}, {31, 22}};
+    REQUIRE_NOTHROW(seed_carrier_bins(cb, bins, W, H));
+
+    auto& prof = cb.get_profile(W, H);
+
+    // Every seeded bin: BOTH planes must read 1.0 (post-seed effective gate
+    // weight = 1.0 across all 3 BGR channels).
+    for (const auto& [x, y] : bins) {
+        for (int ch = 0; ch < 3; ++ch) {
+            INFO("seeded bin (" << x << "," << y << ") ch=" << ch
+                 << " consistency=" << prof.consistency_bgr[ch].at<float>(y, x)
+                 << " phase_consistency=" << prof.phase_consistency_bgr[ch].at<float>(y, x));
+            REQUIRE(prof.consistency_bgr[ch].at<float>(y, x) == 1.0f);
+            REQUIRE(prof.phase_consistency_bgr[ch].at<float>(y, x) == 1.0f);
+        }
+    }
+
+    // A non-seeded bin must be UNTOUCHED (still the original low value).
+    const std::pair<int,int> ctrl = {5, 5};
+    for (int ch = 0; ch < 3; ++ch) {
+        INFO("control bin (" << ctrl.first << "," << ctrl.second << ") ch=" << ch);
+        REQUIRE(prof.consistency_bgr[ch].at<float>(ctrl.second, ctrl.first) == 0.10f);
+        REQUIRE(prof.phase_consistency_bgr[ch].at<float>(ctrl.second, ctrl.first) == 0.05f);
+    }
+}
+
+TEST_CASE("seed_carrier_bins is a no-op when no exact profile matches", "[codebook]") {
+    // Seeding a foreign resolution would be a silent no-op through the nearest-
+    // resolution fallback in get_profile; seed_carrier_bins must refuse instead.
+    SpectralCodebook cb;
+    SpectralProfile p;
+    p.width = 64;
+    p.height = 64;
+    p.sample_count = 1;
+    for (int ch = 0; ch < 3; ++ch) {
+        p.consistency_bgr[ch] = cv::Mat::zeros(64, 64, CV_32FC1);
+        p.phase_consistency_bgr[ch] = cv::Mat::zeros(64, 64, CV_32FC1);
+    }
+    cb.add_profile(p);
+
+    // 128x128 has no exact profile; seeding must do nothing.
+    REQUIRE_NOTHROW(seed_carrier_bins(cb, {{10, 10}}, 128, 128));
+
+    // The 64x64 profile's planes must be unchanged.
+    auto& prof = cb.get_profile(64, 64);
+    double cons_max = 0, pcons_max = 0;
+    cv::minMaxLoc(prof.consistency_bgr[0], nullptr, &cons_max);
+    cv::minMaxLoc(prof.phase_consistency_bgr[0], nullptr, &pcons_max);
+    REQUIRE(cons_max == 0.0);
+    REQUIRE(pcons_max == 0.0);
+}
+
+TEST_CASE("SpectralCodebook::merge_from takes per-bin max on shared profile keys",
+          "[codebook]") {
+    // WS2b: merge_from is the external-seed injection point. Per-bin max means
+    // a foreign seed raises consistency / phase_consistency to 1.0 at its bins
+    // without lowering any measured value elsewhere. Foreign-only keys are
+    // SKIPPED (never silently inserted).
+    constexpr int W = 32, H = 32;
+
+    // Destination: a measured-style profile with consistency = 0.4 everywhere
+    // and phase_consistency = 0.3 everywhere, except a "measured high" bin at
+    // (8, 6) where consistency = 0.95 (must NOT be clobbered by a lower seed).
+    SpectralCodebook dst;
+    {
+        SpectralProfile p;
+        p.width = W; p.height = H; p.sample_count = 5;
+        for (int ch = 0; ch < 3; ++ch) {
+            p.consistency_bgr[ch] = cv::Mat::ones(H, W, CV_32FC1) * 0.40f;
+            p.phase_consistency_bgr[ch] = cv::Mat::ones(H, W, CV_32FC1) * 0.30f;
+            p.magnitude_bgr[ch] = cv::Mat::ones(H, W, CV_32FC1) * 0.5f;
+            p.phase_bgr[ch] = cv::Mat::zeros(H, W, CV_32FC1);
+            p.consistency_bgr[ch].at<float>(6, 8) = 0.95f;  // measured-high bin
+        }
+        dst.add_profile(p);
+    }
+
+    // Source: a seed profile (same key). At (2,3) the seed raises both gates
+    // to 1.0. At (8,6) ("measured-high" in dst) the seed does NOT touch the
+    // bin (leaves src's 0.0 there), so dst's 0.95 must survive the per-bin max
+    // (a lower src value must not clobber a higher measured dst value).
+    SpectralCodebook src;
+    {
+        SpectralProfile p;
+        p.width = W; p.height = H; p.sample_count = 1;
+        for (int ch = 0; ch < 3; ++ch) {
+            p.consistency_bgr[ch] = cv::Mat::zeros(H, W, CV_32FC1);
+            p.phase_consistency_bgr[ch] = cv::Mat::zeros(H, W, CV_32FC1);
+            p.magnitude_bgr[ch] = cv::Mat::zeros(H, W, CV_32FC1);
+            p.phase_bgr[ch] = cv::Mat::zeros(H, W, CV_32FC1);
+            // Seed raises both gates to 1.0 ONLY at (2,3). (8,6) stays at src's
+            // 0.0 so dst's higher measured value wins the per-bin max there.
+            p.consistency_bgr[ch].at<float>(3, 2) = 1.0f;
+            p.phase_consistency_bgr[ch].at<float>(3, 2) = 1.0f;
+        }
+        src.add_profile(p);
+    }
+
+    // Also add a foreign-only profile to src; it must NOT appear in dst.
+    {
+        SpectralProfile foreign;
+        foreign.width = 99; foreign.height = 99; foreign.sample_count = 1;
+        for (int ch = 0; ch < 3; ++ch) {
+            foreign.consistency_bgr[ch] = cv::Mat::ones(99, 99, CV_32FC1);
+            foreign.phase_consistency_bgr[ch] = cv::Mat::ones(99, 99, CV_32FC1);
+            foreign.magnitude_bgr[ch] = cv::Mat::ones(99, 99, CV_32FC1);
+            foreign.phase_bgr[ch] = cv::Mat::zeros(99, 99, CV_32FC1);
+        }
+        src.add_profile(foreign);
+    }
+
+    const int merged = dst.merge_from(src);
+    REQUIRE(merged == 1);  // only the 32x32 key was shared
+
+    REQUIRE(dst.has_profile(W, H));
+    REQUIRE_FALSE(dst.has_profile(99, 99));  // foreign key was skipped
+
+    auto& prof = dst.get_profile(W, H);
+
+    // (2, 3): src raised both gates from 0 -> 1.0; per-bin max gives 1.0.
+    REQUIRE(prof.consistency_bgr[0].at<float>(3, 2) == 1.0f);
+    REQUIRE(prof.phase_consistency_bgr[0].at<float>(3, 2) == 1.0f);
+
+    // (8, 6): dst's measured 0.95 must beat src's 0.0 (a lower src value must
+    // NOT clobber a higher measured dst value at the same bin).
+    REQUIRE(prof.consistency_bgr[0].at<float>(6, 8) == 0.95f);
+    REQUIRE(prof.phase_consistency_bgr[0].at<float>(6, 8) == 0.30f);  // dst baseline
+
+    // A bin neither covers stays at dst's baseline (0.40 / 0.30).
+    REQUIRE(prof.consistency_bgr[0].at<float>(15, 15) == 0.40f);
+    REQUIRE(prof.phase_consistency_bgr[0].at<float>(15, 15) == 0.30f);
 }

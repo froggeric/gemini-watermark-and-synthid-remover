@@ -86,6 +86,38 @@ std::optional<cv::Rect> parse_rect(const std::string& s) {
     return std::nullopt;
 }
 
+// Parse a "x1,y1;x2,y2;..." carrier-bin list (FFT-bin coords on the per-profile
+// rows x cols grid). Returns nullopt for an empty OR malformed string; the
+// caller distinguishes the two. Empty entries (e.g. a trailing ';') are tolerated.
+// Each bin must parse as two non-negative integers separated by ','.
+std::optional<std::vector<std::pair<int,int>>> parse_bin_list(const std::string& s) {
+    if (s.empty()) return std::nullopt;
+    std::vector<std::pair<int,int>> bins;
+
+    // Split on ';' manually (no whitespace trimming: FFT bins are exact integer
+    // coords; a stray space is a user typo we want to surface, not silently fix).
+    size_t i = 0;
+    while (i < s.size()) {
+        size_t j = s.find(';', i);
+        if (j == std::string::npos) j = s.size();
+        if (j > i) {  // skip empty entries (consecutive ';' or trailing)
+            const std::string token = s.substr(i, j - i);
+            int x, y;
+            char sep;
+            std::istringstream ss(token);
+            if (ss >> x >> sep >> y && sep == ',' && x >= 0 && y >= 0) {
+                bins.emplace_back(x, y);
+            } else {
+                return std::nullopt;  // malformed entry → user error
+            }
+        }
+        i = (j == s.size()) ? j : j + 1;
+    }
+
+    if (bins.empty()) return std::nullopt;  // only ';' entries → treat as malformed
+    return bins;
+}
+
 // Build the still-image geometry override from CLI opts. Returns false (with a logged
 // error) when --rect was given but malformed.
 bool resolve_still_geometry_override(const CliOptions& opts, StillGeometryOverride& out) {
@@ -360,6 +392,20 @@ static int process_build_codebook(const CliOptions& opts) {
     FftContext fft;
     CodebookBuilder builder(fft);
 
+    // Parse --carrier-grid (opt-in carrier-bin seeding). Empty = no seeding
+    // (today's behavior). Malformed = user error.
+    if (!opts.carrier_grid_str.empty()) {
+        auto bins = parse_bin_list(opts.carrier_grid_str);
+        if (!bins) {
+            spdlog::error("Invalid --carrier-grid format. Expected: x1,y1;x2,y2;... "
+                         "(e.g. --carrier-grid 84,0;168,0)");
+            return 1;
+        }
+        builder.set_carrier_bins(*bins);
+        spdlog::info("Carrier-bin seeding: {} bin(s) will be applied to every fresh profile",
+                     bins->size());
+    }
+
     auto stats = builder.build_from_directory(opts.input_path, opts.output_path);
 
     spdlog::info("Build complete: {} images → {} profiles ({} low-sample)",
@@ -587,6 +633,12 @@ int run_cli(int argc, char* argv[]) {
         ->check(CLI::ExistingDirectory);
     build_cmd->add_option("-o,--output", opts.output_path, "Output codebook path")
         ->required();
+    build_cmd->add_option("--carrier-grid", opts.carrier_grid_str,
+                           "Seed candidate SynthID carrier bins in every fresh profile. "
+                           "Format: \"x1,y1;x2,y2;...\" (FFT-bin coords on the per-profile "
+                           "rows x cols grid). Sets consistency + phase_consistency = 1.0 "
+                           "at each bin so the subtractor acts there. Opt-in; absent = no "
+                           "seeding (default).");
     add_common(build_cmd);
 
     // --- video ---

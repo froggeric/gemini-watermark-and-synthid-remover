@@ -4,6 +4,7 @@
 #include <map>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace wmr {
 
@@ -26,6 +27,20 @@ public:
     bool has_profile(int width, int height) const;
     void add_profile(const SpectralProfile& profile);
 
+    // Mutable exact-match access, for external bin seeding. Returns nullptr
+    // when no exact (width,height) profile exists (no nearest-resolution
+    // fallback: seeding a foreign resolution would be a silent no-op).
+    SpectralProfile* find_exact_profile(int width, int height);
+
+    // Per-bin max-merge of another codebook's profiles into *this. For each
+    // profile key present in BOTH *this and other, every per-bin plane takes
+    // the element-wise max (so external carrier bins raise consistency /
+    // phase_consistency / magnitude without clobbering measured values that
+    // are already higher). Profile keys present only in other are SKIPPED
+    // (never silently insert a foreign resolution into *this). Returns the
+    // number of profile keys merged.
+    int merge_from(const SpectralCodebook& other);
+
     int profile_count() const { return static_cast<int>(profiles_.size()); }
 
 private:
@@ -36,5 +51,19 @@ private:
     static constexpr const char* kLegacyMagic = "WMRCB01";  // v1: no phase_consistency (defaults to ones)
     static constexpr int kMagicLen = 7;
 };
+
+// Seed candidate SynthID carrier bins in a codebook profile. For the profile
+// matching {width,height} (exact match only; if no exact match, logs a warning
+// and returns without mutation), set BOTH consistency_bgr[ch].at<float>(y,x) =
+// 1.0f AND phase_consistency_bgr[ch].at<float>(y,x) = 1.0f for every (x,y) in
+// bins and all 3 BGR channels. CRITICAL: the subtractor gates on BOTH planes
+// (consistency_bgr via the floor-remap, phase_consistency_bgr via a direct
+// multiply), so seeding only consistency_bgr is a SILENT NO-OP. A fully-seeded
+// bin has effective gate weight 1.0 (gate fully open: subtractor acts there).
+// Bins are (col,row) = (x,y) into the profile's rows x cols = height x width
+// FFT grid; out-of-range bins are clamped to the grid and logged.
+void seed_carrier_bins(SpectralCodebook& cb,
+                       const std::vector<std::pair<int,int>>& bins,
+                       int width, int height);
 
 } // namespace wmr
