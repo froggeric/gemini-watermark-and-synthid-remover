@@ -170,6 +170,18 @@ SpectralProfile* SpectralCodebook::find_exact_profile(int width, int height) {
 }
 
 int SpectralCodebook::merge_from(const SpectralCodebook& other) {
+    // Combines the carrier-ACTIVATION planes (consistency_bgr,
+    // phase_consistency_bgr) and magnitude_bgr via per-bin cv::max, so an
+    // external seed raises those gates / magnitude without clobbering measured
+    // values that are already higher. phase_bgr is INTENTIONALLY NOT MERGED:
+    // phase is a circular quantity (atan2), and element-wise max of two
+    // phases is meaningless (e.g. max(-1.0, 0.0) = 0.0 would replace a
+    // measured phase of -1.0 with 0.0). The subtractor builds its watermark
+    // estimate via FftContext::from_polar(subtract_mag, prof_phase), so a
+    // wrong phase subtracts in the wrong direction (it can ADD the watermark
+    // instead of removing it). The left-hand codebook's phase is preserved
+    // as-is; callers wanting a unified phase should rebuild the codebook
+    // rather than merge. Returns the number of shared profile keys merged.
     int merged = 0;
     for (const auto& [key, other_profile] : other.profiles_) {
         auto it = profiles_.find(key);
@@ -178,23 +190,18 @@ int SpectralCodebook::merge_from(const SpectralCodebook& other) {
 
         for (int ch = 0; ch < 3; ++ch) {
             const cv::Mat& src_mag = other_profile.magnitude_bgr[ch];
-            const cv::Mat& src_phas = other_profile.phase_bgr[ch];
             const cv::Mat& src_cons = other_profile.consistency_bgr[ch];
             const cv::Mat& src_pcons = other_profile.phase_consistency_bgr[ch];
 
             cv::Mat& dst_mag = dst.magnitude_bgr[ch];
-            cv::Mat& dst_phas = dst.phase_bgr[ch];
             cv::Mat& dst_cons = dst.consistency_bgr[ch];
             cv::Mat& dst_pcons = dst.phase_consistency_bgr[ch];
 
-            // Element-wise max, gated on shape match (defensive: a foreign
+            // Per-bin max, gated on shape match (defensive: a foreign
             // resolution that happens to share a key but was built with a
             // different FFT layout should not be touched).
             if (!src_mag.empty() && src_mag.size() == dst_mag.size()) {
                 cv::max(dst_mag, src_mag, dst_mag);
-            }
-            if (!src_phas.empty() && src_phas.size() == dst_phas.size()) {
-                cv::max(dst_phas, src_phas, dst_phas);
             }
             if (!src_cons.empty() && src_cons.size() == dst_cons.size()) {
                 cv::max(dst_cons, src_cons, dst_cons);
@@ -202,6 +209,7 @@ int SpectralCodebook::merge_from(const SpectralCodebook& other) {
             if (!src_pcons.empty() && src_pcons.size() == dst_pcons.size()) {
                 cv::max(dst_pcons, src_pcons, dst_pcons);
             }
+            // phase_bgr[ch]: deliberately untouched (see the function comment).
         }
         ++merged;
     }

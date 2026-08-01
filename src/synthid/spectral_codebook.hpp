@@ -32,13 +32,20 @@ public:
     // fallback: seeding a foreign resolution would be a silent no-op).
     SpectralProfile* find_exact_profile(int width, int height);
 
-    // Per-bin max-merge of another codebook's profiles into *this. For each
-    // profile key present in BOTH *this and other, every per-bin plane takes
-    // the element-wise max (so external carrier bins raise consistency /
-    // phase_consistency / magnitude without clobbering measured values that
-    // are already higher). Profile keys present only in other are SKIPPED
-    // (never silently insert a foreign resolution into *this). Returns the
-    // number of profile keys merged.
+    // Per-bin max-merge of another codebook's carrier-ACTIVATION planes and
+    // magnitude into *this. For each profile key present in BOTH *this and
+    // other: cv::max of consistency_bgr, phase_consistency_bgr, and
+    // magnitude_bgr (so external carrier bins raise those gates / magnitude
+    // without clobbering measured values that are already higher). phase_bgr
+    // is INTENTIONALLY NOT MERGED: phase is a circular quantity (atan2) and
+    // element-wise max of two phases is meaningless (it would replace a
+    // measured phase of -1.0 with 0.0); the subtractor builds its estimate
+    // via from_polar(subtract_mag, prof_phase), so a wrong phase subtracts in
+    // the wrong direction and can ADD the watermark instead of removing it.
+    // The left-hand codebook's phase is preserved as-is; callers wanting a
+    // unified phase should rebuild the codebook rather than merge. Profile
+    // keys present only in other are SKIPPED (never silently insert a foreign
+    // resolution into *this). Returns the count of shared keys merged.
     int merge_from(const SpectralCodebook& other);
 
     int profile_count() const { return static_cast<int>(profiles_.size()); }

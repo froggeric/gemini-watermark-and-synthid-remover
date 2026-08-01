@@ -213,17 +213,27 @@ TEST_CASE("seed_carrier_bins is a no-op when no exact profile matches", "[codebo
     REQUIRE(pcons_max == 0.0);
 }
 
-TEST_CASE("SpectralCodebook::merge_from takes per-bin max on shared profile keys",
+TEST_CASE("SpectralCodebook::merge_from: max on activation + magnitude, preserves dst phase",
           "[codebook]") {
-    // WS2b: merge_from is the external-seed injection point. Per-bin max means
-    // a foreign seed raises consistency / phase_consistency to 1.0 at its bins
-    // without lowering any measured value elsewhere. Foreign-only keys are
-    // SKIPPED (never silently inserted).
+    // WS2b: merge_from is the external-seed injection point. Per-bin cv::max
+    // applies to the carrier-ACTIVATION planes (consistency_bgr,
+    // phase_consistency_bgr) AND magnitude_bgr, so a foreign seed raises
+    // those gates / magnitude without clobbering measured values that are
+    // already higher. phase_bgr is INTENTIONALLY NOT MERGED: phase is a
+    // circular quantity (atan2), and per-bin max of two phases is meaningless
+    // (a measured phase of -1.0 would be replaced by max(-1.0, 0.5) = 0.5);
+    // the subtractor builds its watermark estimate via
+    // FftContext::from_polar(subtract_mag, prof_phase), so a wrong phase
+    // subtracts in the wrong direction (can ADD the watermark). The left
+    // codebook's phase must survive the merge. Foreign-only keys are SKIPPED
+    // (never silently inserted).
     constexpr int W = 32, H = 32;
 
     // Destination: a measured-style profile with consistency = 0.4 everywhere
     // and phase_consistency = 0.3 everywhere, except a "measured high" bin at
     // (8, 6) where consistency = 0.95 (must NOT be clobbered by a lower seed).
+    // phase_bgr is set to a non-trivial pattern (including a NEGATIVE value
+    // at (2,3)) so a buggy max-merge of phase would visibly corrupt it.
     SpectralCodebook dst;
     {
         SpectralProfile p;
@@ -231,9 +241,11 @@ TEST_CASE("SpectralCodebook::merge_from takes per-bin max on shared profile keys
         for (int ch = 0; ch < 3; ++ch) {
             p.consistency_bgr[ch] = cv::Mat::ones(H, W, CV_32FC1) * 0.40f;
             p.phase_consistency_bgr[ch] = cv::Mat::ones(H, W, CV_32FC1) * 0.30f;
-            p.magnitude_bgr[ch] = cv::Mat::ones(H, W, CV_32FC1) * 0.5f;
-            p.phase_bgr[ch] = cv::Mat::zeros(H, W, CV_32FC1);
-            p.consistency_bgr[ch].at<float>(6, 8) = 0.95f;  // measured-high bin
+            p.magnitude_bgr[ch] = cv::Mat::ones(H, W, CV_32FC1) * 0.50f;
+            p.phase_bgr[ch] = cv::Mat::ones(H, W, CV_32FC1) * 0.40f;
+            p.consistency_bgr[ch].at<float>(6, 8) = 0.95f;   // measured-high bin
+            p.phase_bgr[ch].at<float>(3, 2) = -0.7f;         // negative phase
+            p.phase_bgr[ch].at<float>(6, 8) = 1.2f;          // distinct positive
         }
         dst.add_profile(p);
     }
@@ -242,6 +254,8 @@ TEST_CASE("SpectralCodebook::merge_from takes per-bin max on shared profile keys
     // to 1.0. At (8,6) ("measured-high" in dst) the seed does NOT touch the
     // bin (leaves src's 0.0 there), so dst's 0.95 must survive the per-bin max
     // (a lower src value must not clobber a higher measured dst value).
+    // src's phase_bgr is set to DIFFERENT values (most higher than dst's) so
+    // a buggy max-merge of phase would visibly corrupt dst's phase.
     SpectralCodebook src;
     {
         SpectralProfile p;
@@ -250,11 +264,15 @@ TEST_CASE("SpectralCodebook::merge_from takes per-bin max on shared profile keys
             p.consistency_bgr[ch] = cv::Mat::zeros(H, W, CV_32FC1);
             p.phase_consistency_bgr[ch] = cv::Mat::zeros(H, W, CV_32FC1);
             p.magnitude_bgr[ch] = cv::Mat::zeros(H, W, CV_32FC1);
-            p.phase_bgr[ch] = cv::Mat::zeros(H, W, CV_32FC1);
+            p.phase_bgr[ch] = cv::Mat::ones(H, W, CV_32FC1) * 0.90f;  // > dst's 0.40
             // Seed raises both gates to 1.0 ONLY at (2,3). (8,6) stays at src's
             // 0.0 so dst's higher measured value wins the per-bin max there.
             p.consistency_bgr[ch].at<float>(3, 2) = 1.0f;
             p.phase_consistency_bgr[ch].at<float>(3, 2) = 1.0f;
+            // phase values at the assertion bins, picked HIGHER than dst's so
+            // max-merge would corrupt: (2,3) 0.5 > dst's -0.7; (8,6) 1.5 > 1.2.
+            p.phase_bgr[ch].at<float>(3, 2) = 0.5f;
+            p.phase_bgr[ch].at<float>(6, 8) = 1.5f;
         }
         src.add_profile(p);
     }
@@ -283,13 +301,19 @@ TEST_CASE("SpectralCodebook::merge_from takes per-bin max on shared profile keys
     // (2, 3): src raised both gates from 0 -> 1.0; per-bin max gives 1.0.
     REQUIRE(prof.consistency_bgr[0].at<float>(3, 2) == 1.0f);
     REQUIRE(prof.phase_consistency_bgr[0].at<float>(3, 2) == 1.0f);
+    // phase at (2,3) MUST be dst's original -0.7, NOT max(-0.7, 0.5) = 0.5.
+    // A buggy max-merge of phase would set this to 0.5 (wrong direction).
+    REQUIRE(prof.phase_bgr[0].at<float>(3, 2) == -0.7f);
 
     // (8, 6): dst's measured 0.95 must beat src's 0.0 (a lower src value must
     // NOT clobber a higher measured dst value at the same bin).
     REQUIRE(prof.consistency_bgr[0].at<float>(6, 8) == 0.95f);
     REQUIRE(prof.phase_consistency_bgr[0].at<float>(6, 8) == 0.30f);  // dst baseline
+    // phase at (8,6) MUST be dst's original 1.2, NOT max(1.2, 1.5) = 1.5.
+    REQUIRE(prof.phase_bgr[0].at<float>(6, 8) == 1.2f);
 
-    // A bin neither covers stays at dst's baseline (0.40 / 0.30).
+    // A bin neither covers stays at dst's baseline values (0.40 / 0.30 / 0.40).
     REQUIRE(prof.consistency_bgr[0].at<float>(15, 15) == 0.40f);
     REQUIRE(prof.phase_consistency_bgr[0].at<float>(15, 15) == 0.30f);
+    REQUIRE(prof.phase_bgr[0].at<float>(15, 15) == 0.40f);  // NOT src's 0.90
 }
