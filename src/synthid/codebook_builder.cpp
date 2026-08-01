@@ -106,13 +106,31 @@ void CodebookBuilder::accumulate(
 
         if (acc.count == 0) {
             acc.mag_sum[ch] = cv::Mat::zeros(mag.size(), CV_32FC1);
-            acc.phase_sum[ch] = cv::Mat::zeros(ph.size(), CV_32FC1);
+            acc.cos_sum[ch] = cv::Mat::zeros(ph.size(), CV_32FC1);
+            acc.sin_sum[ch] = cv::Mat::zeros(ph.size(), CV_32FC1);
             acc.mag_sq_sum[ch] = cv::Mat::zeros(mag.size(), CV_32FC1);
+        }
+
+        // Circular phase accumulation. The previous arithmetic mean of phase was
+        // wrong across the -pi/pi wraparound; storing cos/sin lets finalize compute
+        // both the correct mean direction (atan2) and the phase coherence (mean
+        // resultant length) used to gate the subtractor.
+        cv::Mat cos_mat(ph.size(), CV_32FC1);
+        cv::Mat sin_mat(ph.size(), CV_32FC1);
+        for (int y = 0; y < ph.rows; ++y) {
+            const float* phr = ph.ptr<float>(y);
+            float* cr = cos_mat.ptr<float>(y);
+            float* sr = sin_mat.ptr<float>(y);
+            for (int x = 0; x < ph.cols; ++x) {
+                cr[x] = std::cos(phr[x]);
+                sr[x] = std::sin(phr[x]);
+            }
         }
 
         acc.mag_sum[ch] += mag;
         acc.mag_sq_sum[ch] += mag.mul(mag);
-        acc.phase_sum[ch] += ph;
+        acc.cos_sum[ch] += cos_mat;
+        acc.sin_sum[ch] += sin_mat;
     }
 
     ++acc.count;
@@ -130,8 +148,12 @@ SpectralProfile CodebookBuilder::finalize(const ProfileAccumulator& acc) const {
         // Average magnitude
         profile.magnitude_bgr[ch] = acc.mag_sum[ch] / n;
 
-        // Average phase
-        profile.phase_bgr[ch] = acc.phase_sum[ch] / n;
+        // Circular mean phase + phase consistency (mean resultant length in [0,1]).
+        // phase = atan2(sin_mean, cos_mean); consistency = sqrt(cos_mean^2 + sin_mean^2).
+        cv::Mat cos_mean = acc.cos_sum[ch] / n;
+        cv::Mat sin_mean = acc.sin_sum[ch] / n;
+        cv::phase(cos_mean, sin_mean, profile.phase_bgr[ch], /*angleInDegrees=*/false);
+        cv::magnitude(cos_mean, sin_mean, profile.phase_consistency_bgr[ch]);
 
         // Consistency: inverse of normalized magnitude variability.
         // Carrier bins have LOW std_dev (stable across images) → HIGH consistency.

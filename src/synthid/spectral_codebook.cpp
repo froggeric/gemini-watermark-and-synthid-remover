@@ -17,7 +17,9 @@ void SpectralCodebook::load(const std::string& path) {
 
     char magic[kMagicLen];
     file.read(magic, kMagicLen);
-    if (std::memcmp(magic, kMagic, kMagicLen) != 0) {
+    const bool is_v2 = (std::memcmp(magic, kMagic, kMagicLen) == 0);
+    const bool is_v1 = (std::memcmp(magic, kLegacyMagic, kMagicLen) == 0);
+    if (!is_v2 && !is_v1) {
         throw std::runtime_error("Invalid codebook format (bad magic)");
     }
 
@@ -53,6 +55,16 @@ void SpectralCodebook::load(const std::string& path) {
             profile.consistency_bgr[ch] = cv::Mat(rows, cols, CV_32FC1);
             file.read(reinterpret_cast<char*>(profile.consistency_bgr[ch].data),
                       rows * cols * sizeof(float));
+
+            if (is_v2) {
+                profile.phase_consistency_bgr[ch] = cv::Mat(rows, cols, CV_32FC1);
+                file.read(reinterpret_cast<char*>(profile.phase_consistency_bgr[ch].data),
+                          rows * cols * sizeof(float));
+            } else {
+                // v1 codebooks have no phase-consistency plane; default to all-ones
+                // so the subtractor's soft gate is a no-op (preserves v1 behavior).
+                profile.phase_consistency_bgr[ch] = cv::Mat::ones(rows, cols, CV_32FC1);
+            }
         }
 
         profiles_[{profile.height, profile.width}] = std::move(profile);
@@ -90,6 +102,16 @@ void SpectralCodebook::save(const std::string& path) const {
             file.write(reinterpret_cast<const char*>(profile.phase_bgr[ch].data),
                        rows * cols * sizeof(float));
             file.write(reinterpret_cast<const char*>(profile.consistency_bgr[ch].data),
+                       rows * cols * sizeof(float));
+
+            // phase_consistency (v2). Fall back to ones if the in-memory profile
+            // didn't populate it (e.g. hand-built in a test) so serialization stays
+            // well-formed; all-ones is a no-op gate.
+            cv::Mat pcons = profile.phase_consistency_bgr[ch];
+            if (pcons.size() != profile.magnitude_bgr[ch].size()) {
+                pcons = cv::Mat::ones(profile.magnitude_bgr[ch].size(), CV_32FC1);
+            }
+            file.write(reinterpret_cast<const char*>(pcons.data),
                        rows * cols * sizeof(float));
         }
     }

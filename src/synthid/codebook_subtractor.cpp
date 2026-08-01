@@ -137,15 +137,19 @@ void CodebookSubtractor::remove_synthid(
 
         for (int ch = 0; ch < 3; ++ch) {
             // Resize profile to match image if needed
-            cv::Mat prof_mag, prof_phase, prof_cons;
+            cv::Mat prof_mag, prof_phase, prof_cons, prof_pcons;
             if (needs_resize) {
                 cv::resize(profile.magnitude_bgr[ch], prof_mag, {w, h}, 0, 0, cv::INTER_LINEAR);
                 cv::resize(profile.phase_bgr[ch], prof_phase, {w, h}, 0, 0, cv::INTER_LINEAR);
                 cv::resize(profile.consistency_bgr[ch], prof_cons, {w, h}, 0, 0, cv::INTER_LINEAR);
+                if (!profile.phase_consistency_bgr[ch].empty()) {
+                    cv::resize(profile.phase_consistency_bgr[ch], prof_pcons, {w, h}, 0, 0, cv::INTER_LINEAR);
+                }
             } else {
                 prof_mag = profile.magnitude_bgr[ch];
                 prof_phase = profile.phase_bgr[ch];
                 prof_cons = profile.consistency_bgr[ch];
+                prof_pcons = profile.phase_consistency_bgr[ch];
             }
 
             cv::Mat img_fft = fft_.forward(channels[ch]);
@@ -156,6 +160,7 @@ void CodebookSubtractor::remove_synthid(
             ch_profile.magnitude_bgr[0] = prof_mag;
             ch_profile.phase_bgr[0] = prof_phase;
             ch_profile.consistency_bgr[0] = prof_cons;
+            ch_profile.phase_consistency_bgr[0] = prof_pcons;
 
             if (use_conjugate) {
                 // Conjugate subtraction: reduce magnitude only, keep image phase
@@ -301,6 +306,13 @@ cv::Mat CodebookSubtractor::estimate_watermark_fft(
     cv::max(cons_weight, 0.0, cons_weight);
     cv::min(cons_weight, 1.0, cons_weight);
 
+    // Phase-consistency soft gate: attenuate bins whose phase is incoherent across
+    // captures (mean resultant length << 1). All-ones (v1 codebooks / uniform) is a no-op.
+    cv::Mat prof_pcons = profile.phase_consistency_bgr[0];
+    if (!prof_pcons.empty()) {
+        cons_weight = cons_weight.mul(prof_pcons);
+    }
+
     // Subtract magnitude scaled by consistency and channel weight
     cv::Mat subtract_mag = prof_mag.mul(cons_weight) * removal_factor * ch_weight;
 
@@ -355,6 +367,12 @@ cv::Mat CodebookSubtractor::compute_subtract_magnitude(
     cv::divide(cons_weight, (1.0f - cons_floor + 1e-9f), cons_weight);
     cv::max(cons_weight, 0.0, cons_weight);
     cv::min(cons_weight, 1.0, cons_weight);
+
+    // Phase-consistency soft gate (mirror estimate_watermark_fft).
+    cv::Mat prof_pcons = profile.phase_consistency_bgr[0];
+    if (!prof_pcons.empty()) {
+        cons_weight = cons_weight.mul(prof_pcons);
+    }
 
     cv::Mat subtract_mag = prof_mag.mul(cons_weight) * removal_factor * ch_weight;
     subtract_mag = subtract_mag.mul(dc_ramp);
