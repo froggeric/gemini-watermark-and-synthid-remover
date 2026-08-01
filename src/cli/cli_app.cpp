@@ -33,7 +33,7 @@ void print_header(std::ostream& os) {
     os << "--------------------------------------------\n"
         << "  wmr v" APP_VERSION " — watermark remover\n"
         << "  Remove Gemini/Veo visible watermarks\n"
-        << "  and SynthID invisible watermarks\n"
+        << "  and suppress SynthID invisible watermarks (heuristic)\n"
         << "  https://github.com/froggeric/gemini-watermark-and-synthid-remover\n"
         << "  Copyright 2026 Frederic Guigand\n"
         << "--------------------------------------------\n\n";
@@ -281,7 +281,7 @@ static int process_single_image(const CliOptions& opts) {
     if (opts.mode == CliMode::SynthidOnly ||
         (opts.mode == CliMode::AutoRemove && opts.synthid)) {
         if (opts.codebook_path.empty() && !opts.codebook_free) {
-            spdlog::error("SynthID removal requires --codebook <path> or --codebook-free");
+            spdlog::error("SynthID suppression requires --codebook <path> or --codebook-free");
             return 1;
         }
 
@@ -300,11 +300,11 @@ static int process_single_image(const CliOptions& opts) {
                 if (!det.detected) {
                     spdlog::debug("No SynthID detected ({:.1f}%)", det.confidence * 100.0f);
                     if (opts.mode == CliMode::SynthidOnly) {
-                        spdlog::warn("No SynthID detected. Use --force to remove anyway.");
+                        spdlog::warn("No SynthID detected. Use --force to suppress anyway.");
                         return 2;
                     }
                 } else {
-                    spdlog::info("SynthID detected ({:.1f}%), removing...",
+                    spdlog::info("SynthID detected ({:.1f}%), suppressing carrier...",
                                  det.confidence * 100.0f);
                 }
             }
@@ -312,12 +312,12 @@ static int process_single_image(const CliOptions& opts) {
             CodebookSubtractor subtractor(fft);
             subtractor.remove_synthid(image, codebook, config);
         } else {
-            spdlog::info("Using codebook-free removal (noise residual estimation)");
+            spdlog::info("Using codebook-free suppression (noise residual estimation)");
             NoiseResidualSubtractor subtractor(fft);
             subtractor.remove_synthid(image, config);
         }
 
-        spdlog::info("SynthID removal complete");
+        spdlog::info("SynthID suppression complete (frequency-domain heuristic; not a verifiable removal)");
         did_work = true;
     }
 
@@ -514,12 +514,12 @@ int run_cli(int argc, char* argv[]) {
                          "Use legacy Gemini (pre-3.5) V1 watermark profile");
     remove_cmd->add_flag("--no-legacy", opts.still_no_legacy,
                          "Pin current (Gemini 3.5+) V2 profile; disable auto fallback");
-    remove_cmd->add_flag("--synthid", opts.synthid, "Also remove SynthID");
+    remove_cmd->add_flag("--synthid", opts.synthid, "Also suppress SynthID carrier");
     remove_cmd->add_option("--codebook", opts.codebook_path, "Spectral codebook path (.wcb)");
     remove_cmd->add_flag("--codebook-free", opts.codebook_free,
                           "Estimate carrier from noise residual (no codebook needed)");
     remove_cmd->add_option("--synthid-strength", opts.synthid_strength,
-                           "SynthID removal strength 0.0-2.0")
+                           "SynthID suppression strength 0.0-2.0")
         ->check(CLI::Range(0.0f, 2.0f));
     remove_cmd->add_option("--inpaint-strength", opts.inpaint_strength,
                            "Inpaint strength 0.0-1.0")
@@ -564,7 +564,7 @@ int run_cli(int argc, char* argv[]) {
     add_common(visible_cmd);
 
     // --- synthid ---
-    auto* synthid_cmd = app.add_subcommand("synthid", "Remove SynthID watermark only");
+    auto* synthid_cmd = app.add_subcommand("synthid", "Suppress SynthID invisible watermark (frequency-domain heuristic; not a verifiable removal)");
     synthid_cmd->add_option("input", opts.input_path, "Input image")
         ->required()
         ->check(CLI::ExistingFile);
@@ -575,7 +575,7 @@ int run_cli(int argc, char* argv[]) {
     synthid_cmd->add_flag("--phase-adaptive", opts.phase_adaptive,
                           "Use image's own phase for uniform images (conjugate subtraction)");
     synthid_cmd->add_option("--synthid-strength", opts.synthid_strength,
-                            "SynthID removal strength 0.0-2.0")
+                            "SynthID suppression strength 0.0-2.0")
         ->check(CLI::Range(0.0f, 2.0f));
     synthid_cmd->add_option("-o,--output", opts.output_path, "Output path (required)");
     add_common(synthid_cmd);

@@ -61,10 +61,10 @@ void NoiseResidualSubtractor::remove_synthid(
     if (is_content_image) {
         spdlog::info("Content image detected (std={:.4f}): spectral disruption (carrier <0.1% of energy).", avg_std);
     } else {
-        spdlog::info("Uniform image detected (std={:.4f}): direct carrier removal.", avg_std);
+        spdlog::info("Uniform image detected (std={:.4f}): direct carrier suppression.", avg_std);
     }
 
-    spdlog::info("Codebook-free SynthID removal: {}x{}, strength={}, content={}",
+    spdlog::info("Codebook-free SynthID suppression: {}x{}, strength={}, content={}",
                  w, h, static_cast<int>(base_strength), is_content_image);
 
     // For uniform images (std < 0.05): the carrier IS the only spectral content.
@@ -273,7 +273,7 @@ void NoiseResidualSubtractor::remove_synthid(
     merged = cv::min(merged, 1.0);
     merged.convertTo(image, CV_8UC3, 255.0);
 
-    spdlog::debug("Codebook-free SynthID removal complete");
+    spdlog::debug("Codebook-free SynthID suppression complete");
 }
 
 cv::Mat NoiseResidualSubtractor::compute_dc_ramp(int rows, int cols, float radius) {

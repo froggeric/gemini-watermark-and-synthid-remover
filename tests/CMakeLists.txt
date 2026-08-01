@@ -11,6 +11,7 @@ set(TEST_SOURCES
     unit/notebooklm_gates_test.cpp
     unit/geometry_detector_test.cpp
     unit/still_geometry_test.cpp
+    unit/synthid_wording_test.cpp
     integration/visible_pipeline_test.cpp
 )
 

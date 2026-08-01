@@ -124,7 +124,7 @@ void CodebookSubtractor::remove_synthid(
         num_passes = 0;
     }
 
-    spdlog::info("SynthID removal: {}x{} image, {} passes, base_strength={}, conjugate={}, content={}",
+    spdlog::info("SynthID suppression: {}x{} image, {} passes, base_strength={}, conjugate={}, content={}",
                  w, h, num_passes, static_cast<int>(base_strength), use_conjugate, is_content_image);
 
     for (int pass = 0; pass < num_passes; ++pass) {
@@ -260,7 +260,7 @@ void CodebookSubtractor::remove_synthid(
     merged = cv::min(merged, 1.0);
     merged.convertTo(image, CV_8UC3, 255.0);
 
-    spdlog::debug("SynthID removal complete: {} passes", num_passes);
+    spdlog::debug("SynthID suppression complete: {} passes", num_passes);
 }
 
 cv::Mat CodebookSubtractor::estimate_watermark_fft(
