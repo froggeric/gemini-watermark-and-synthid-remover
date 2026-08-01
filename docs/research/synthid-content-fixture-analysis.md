@@ -315,27 +315,248 @@ content fixtures the data does not justify changing `{B:0.85, G:1.0, R:0.70}`.
 
 ---
 
-## 6. Reproduction
+## 6. Phase 0.5: fixed-metric re-measure (the DC-normalization bug fix)
+
+**Date:** 2026-08-01
+**Context:** the section-1.2 headline finding proved `consistency_bgr` was
+non-discriminative by construction (global-max normalization saturated it at
+`~0.99` because DC, the per-image mean brightness, has the largest cross-capture
+std of any bin). The fix excludes a small square (radius 4) around DC and its
+3 wraparound grid corners from the `cv::minMaxLoc` normalization in
+`CodebookBuilder::finalize` (commit `fix(synthid): exclude DC from consistency
+normalization...`). With DC excluded, `max_std` reflects the strongest CONTENT
+bin and the magnitude-variability gate separates stable from variable bins.
+This section re-measures both fixture sets with the FIXED metric on a SynthID-
+positive / visible-mark-negative set (the set that can actually isolate the
+invisible carrier), which section 4 explicitly named as the one scenario that
+would justify revisiting the verdict.
+
+### 6.1 Why a second fixture set
+
+Section 4's caveat was explicit: on the content set the broadband visible
+diamond dominates phase everywhere, which can mask a weak carrier at the same
+bins. The content set cannot separate "no carrier" from "carrier hidden under
+diamond leakage." The cleaned set (`test-images/gemini-3.1-pro/2400x1792/pure-black-cleaned/`,
+30 PNGs) is SynthID-positive (real Gemini 3.1 Pro captures) AND visible-mark-
+negative (the 48px diamond already removed by the exact reverse-alpha blend),
+so there is no diamond phase-pinning. If the published grid is a real invisible
+carrier it must surface here; if it stays at the random phase floor the grid is
+not a resolvable carrier.
+
+### 6.2 Methodology
+
+Three codebooks per set, built with the fixed `wmr build-codebook`:
+
+| set | codebook | N | resolution | pcons floor `1/sqrt(N)` |
+|---|---|---|---|---|
+| cleaned | `clean_all` / `clean_a` / `clean_b` | 30 / 15 / 15 | 2400x1792 (landscape) | 0.183 / 0.258 / 0.258 |
+| content | `cont_all` / `cont_a` / `cont_b` | 10 / 5 / 5 | 896x1200 (portrait) | 0.316 / 0.447 / 0.447 |
+
+`clean_a` / `clean_b` partition the 30 cleaned images into two disjoint halves
+(15 + 15); `cont_a` / `cont_b` reuse the section-1 5+5 partition. A real signal
+reproduces on both halves; a fluke does not.
+
+Grid bins scale per-axis from the published 512 grid to image coords
+(`col_img = round(col_512 * W/512)`, `row_img = round(row_512 * H/512)`). At
+2400x1792 the 5 unique positive bins map to: `(48,0)->(225,0)`,
+`(96,0)->(450,0)`, `(0,88)->(0,308)`, `(48,88)->(225,308)`,
+`(96,88)->(450,308)`. Carrier bar (per the task): `consistency_bgr > 0.6 AND
+phase_consistency_bgr > 0.6 AND magnitude > local 9x9 median`, per BGR channel.
+
+### 6.3 Q1 raw per-bin measurements, FIXED metric, cleaned set (no diamond)
+
+Format per bin: `mag B/G/R`, `cons B/G/R`, `pcons B/G/R`. The 5 unique positive
+grid bins, then the 8 off-grid controls, on `clean_all` (N=30, floor 0.183):
+
+| bin 512 -> img | kind | magnitude B/G/R | consistency B/G/R | pcons B/G/R |
+|---|---|---|---|---|
+| (48,0) -> (225,0)    | grid row=0  | 17.2 / 28.6 / 18.6  | 0.979 / 0.975 / 0.979 | 0.155 / 0.086 / 0.179 |
+| (96,0) -> (450,0)    | grid row=0  | 78.4 / 108.3 / 110.7 | 0.924 / 0.937 / 0.900 | 0.616 / 0.576 / 0.661 |
+| (0,88) -> (0,308)    | grid col=0  | 120.5 / 129.1 / 113.5 | 0.893 / 0.926 / 0.919 | 0.932 / 0.854 / 0.955 |
+| (48,88) -> (225,308) | grid off-axis | 2.3 / 3.7 / 3.1    | 0.998 / 0.998 / 0.997 | 0.100 / 0.068 / 0.059 |
+| (96,88) -> (450,308) | grid off-axis | 4.7 / 7.4 / 6.9    | 0.994 / 0.995 / 0.993 | 0.316 / 0.206 / 0.227 |
+| controls (8 bins)    | ctrl        | 2.0-3.0 each        | 0.996-0.999 each      | 0.06-0.50 each         |
+
+Controls: `cons > 0.6` 8/8, `pcons > 0.6` **0/8**, full carrier bar **0/8**.
+Grid: `cons > 0.6` 10/10, `pcons > 0.6` **2/10** (only the `(96,0)` and `(0,88)`
+positive mirrors), full carrier bar **4/10** (the same 2 unique bins x 2 mirrors,
+with `(96,0)` passing only on B/R, `(0,88)` passing BGR).
+
+Carrier-bar pass/fail per unique grid bin, across the disjoint split
+(BGR = passes all 3; BR = B and R only; fail = none):
+
+| bin | clean_all | clean_a | clean_b | reproducible? |
+|---|---|---|---|---|
+| (48,0) row=0     | fail | fail | fail | yes (always fails) |
+| (96,0) row=0     | BR   | BGR  | fail | NO (flips) |
+| (0,88) col=0     | BGR  | BGR  | BGR | YES (stable) |
+| (48,88) off-axis | fail | fail | fail | yes (always fails) |
+| (96,88) off-axis | fail | fail | fail | yes (always fails) |
+
+### 6.4 Q1 verdict (cleaned set): STILL not a resolvable carrier (off-axis bins fail)
+
+The fixed metric + the cleaned fixture together give a MUCH sharper discriminator
+than the content set: on the cleaned set **0 of 8 off-grid controls pass the
+carrier bar** (vs 5-6 of 8 on the content set, section 6.6 below), and only the
+two grid AXIS bins pass at all. But this is not a clean carrier emergence:
+
+1. The 3 grid bins that would be the clean carrier candidates (the off-axis
+   `(48,88)`, `(96,88)`, and the on-row `(48,0)`) **fail on all three codebooks**:
+   their `pcons` sits at the random floor (0.06-0.33 vs floor 0.183). Their phase
+   is incoherent across captures. They are indistinguishable from off-grid
+   controls.
+2. The only bin that passes the carrier bar reproducibly across the disjoint
+   split is `(0,88)`, and it sits on `col=0`, the DC column (`F(0,y) = sum_x
+   image`, amplified by W=2400). Section 3.2 already established col=0 as a
+   column-sum artifact axis, not a carrier candidate. Its high `pcons` reflects
+   a stable horizontal structure amplified by the column sum, not a grid carrier.
+3. The other axis bin `(96,0)` (row=0) passes only on `clean_all`/`clean_a` and
+   FAILS on `clean_b` (its `pcons` drops to 0.46-0.54 there). Row=0 is the
+   horizontal-frequency axis (carries the row-average profile), also an artifact
+   axis. Not reproducible.
+
+So the cleaned set strengthens section 4's conclusion rather than flipping it:
+with the diamond removed, the broadband phase stability collapses to the floor
+and the published grid does NOT light up as a coherent carrier. The two axis
+bins that pass are exactly the artifact-suspect bins. **Q1 verdict: NO, the
+(48,96) grid does not emerge as a real carrier on the cleaned set.** WS2b's
+inert default-seeding path should remain inert.
+
+This is a stronger result than section 4: section 4 could only say "not above
+the diamond baseline." Section 6 removes the diamond and the grid still does not
+surface (except on the artifact axes).
+
+### 6.5 Sharpness: cleaned set vs content set (expected: yes; measured: yes)
+
+The cleaned set is decisively sharper than the content set, exactly as section 4
+hypothesized. On the content set (with diamond) the carrier bar is still broad:
+5-6 of 8 controls pass and 6 of 10 grid bins pass, because the diamond pins phase
+broadband. On the cleaned set (no diamond) the bar is tight: 0 of 8 controls pass
+and only the 2 axis grid bins pass. The fixed `consistency_bgr` contributes to
+this (it now varies meaningfully, 0.89-0.998 across grid bins instead of
+saturating at 0.99 everywhere), but the dominant sharpener is removing the
+diamond. This confirms section 1.2's attribution of the broadband `pcons` to the
+fixed-position visible diamond, not to a carrier.
+
+### 6.6 Q2 carrier-bar-restricted per-channel split (both sets, both splits)
+
+Restricted to grid bins that pass the carrier bar in the named channel, reported
+as % of the B+G+R total. Two aggregation methods (power = sum `|FFT|^2`;
+magnitude = sum `|FFT|`):
+
+| codebook | passing grid bins / 10 | power split B/G/R (%) | mag split B/G/R (%) | ordering |
+|---|---|---|---|---|
+| **cleaned set (no diamond)** | | | | |
+| clean_all | 4 (B,R), 2 (G) | 33.07 / 26.68 / 40.25 | 36.02 / 23.38 / 40.61 | R > B > G |
+| clean_a   | 4 (all ch)      | 28.05 / 38.47 / 33.47 | 30.07 / 35.96 / 33.98 | G > R > B |
+| clean_b   | 2 (all ch)      | 32.59 / 34.67 / 32.74 | 32.96 / 34.00 / 33.04 | G > R > B |
+| **content set (with diamond)** | | | | |
+| cont_all  | 6 (all ch)      | 33.11 / 27.54 / 39.35 | 33.38 / 30.61 / 36.01 | R > B > G |
+| cont_a    | 6 (all ch)      | 33.57 / 27.97 / 38.46 | 33.54 / 30.79 / 35.68 | R > B > G |
+| cont_b    | 6 (all ch)      | 32.63 / 27.10 / 40.27 | 33.22 / 30.42 / 36.36 | R > B > G |
+
+Reference weights `{B:0.85, G:1.0, R:0.70}` are `B=33.3% / G=39.2% / R=27.5%`
+(`G > B > R`).
+
+For contrast, the all-10-grid-bins magnitude split (NOT carrier-bar-restricted,
+so it includes the off-axis bins that fail the bar) on the cleaned set reads
+`G > B > R` consistently: clean_all `B=32.06 / G=36.97 / R=30.96`, clean_a
+`B=31.93 / G=38.82 / R=29.25`, clean_b `B=32.25 / G=34.36 / R=33.39`.
+
+### 6.7 Q2 verdict: weakly supports the current weights, does not justify changing them
+
+1. **The content set (with diamond) reads `R > B > G`, stably across all three
+   codebooks, on both the carrier-bar-restricted and all-bins splits.** This
+   matches section 5 and is consistent with the diamond's R-tilted spectral
+   signature (the visible mark is rendered near-neutral with a slight red tilt),
+   not the carrier.
+2. **The cleaned set (no diamond) all-bins magnitude split reads `G > B > R`**,
+   matching the documented ordering and the `{B:0.85, G:1.0, R:0.70}` weights
+   (G strongest, R weakest). This is the first content-independent measurement
+   consistent with the weights: with the diamond removed, the R-heavy bias
+   disappears and G emerges as the strongest grid-bin channel. This weakly
+   supports keeping the weights as-is.
+3. **BUT the carrier-bar-restricted split on the cleaned set is NOT stable across
+   the disjoint split** (clean_all reads `R > B > G` because the `(96,0)` bin
+   passes only on B/R there and its R=110.7 dominates; clean_a/clean_b read
+   `G > R > B` once `(96,0)` drops out or passes BGR). The instability is driven
+   by the artifact-axis bin `(96,0)` flipping pass/fail, not by a clean carrier
+   signal. The off-axis grid bins (the ones that would give a trustworthy
+   per-channel carrier measurement) do not pass the bar at all.
+4. The single stable passing bin `(0,88)` reads `G > B > R` on all three cleaned
+   codebooks (mag 120.5/129.1/113.5 etc.), but being the DC-column artifact bin,
+   its per-channel split reflects the column-sum composition, not necessarily the
+   carrier.
+
+**Q2 verdict: the cleaned set's `G > B > R` all-bins split is consistent with the
+current weights and opposite to the diamond-biased content set, so the weights
+`{B:0.85, G:1.0, R:0.70}` should NOT be changed on this evidence (nothing here
+contradicts them, and the one content-independent measurement agrees). But the
+carrier-bar-restricted split is too unstable (artifact-axis-driven) to re-derive
+weights from. A verified SynthID-positive / diamond-negative fixture with a known
+published transform remains the only way to re-derive weights cleanly.**
+
+### 6.8 Recommendation to the controller (not applied here)
+
+- **WS2b default-seeding path: keep inert.** Q1 did not flip (the grid is not a
+  resolvable carrier on the cleaned set; the off-axis bins fail, only artifact-
+  axis bins pass and only one of those reproducibly). Do not enable `(48,96)`
+  default-seeding for 2400x1792 or 896x1200.
+- **Channel weights: keep `{B:0.85, G:1.0, R:0.70}`.** Q2 is consistent with
+  them on the cleaned set and contradictory on the content set (which is
+  diamond-biased). No change.
+- **The metric fix itself is safe to ship:** no shipped default codebook exists
+  (`--codebook <path>` is the only load path, user-supplied), so the fix changes
+  only codebooks rebuilt after the fix. The default SynthID path
+  (NoiseResidualSubtractor, no codebook) is unaffected. The 56-test suite stays
+  green; no existing test asserts `consistency_bgr` values from a built codebook,
+  so no test numbers shift (the one fixture-built codebook test asserts
+  `magnitude_bgr` means only, which the fix does not touch).
+- **Open item:** a SynthID-positive / diamond-negative fixture pair with a
+  published transform is still the only thing that could flip Q1 or re-derive Q2
+  cleanly. The cleaned set here is the closest available, and it confirms (does
+  not refute) the inert default.
+
+---
+
+## 7. Reproduction
 
 ```sh
-# Build the three codebooks (no --carrier-grid: raw measured profiles).
+# Build the codebooks (no --carrier-grid: raw measured profiles).
+
+# Content set (section 1-5): 10 content images + 5+5 disjoint split.
 mkdir -p /tmp/sub10 /tmp/sub5_a /tmp/sub5_b
-# (symlink the 10 fixtures into /tmp/sub10, and the two disjoint 5-sets into
-#  /tmp/sub5_a, /tmp/sub5_b)
+# (symlink the 10 fixtures from reference-images/896x1200-gemini36/ into
+#  /tmp/sub10, and the two disjoint 5-sets into /tmp/sub5_a, /tmp/sub5_b)
 ./build/wmr build-codebook /tmp/sub10  -o /tmp/content10.wcb
 ./build/wmr build-codebook /tmp/sub5_a -o /tmp/content5a.wcb
 ./build/wmr build-codebook /tmp/sub5_b -o /tmp/content5b.wcb
 
-# Raw per-bin reads + per-channel split (Q1 + Q2 tables).
-python3 docs/research/synthid_content_probe.py \
-    /tmp/content10.wcb /tmp/content5a.wcb /tmp/content5b.wcb
+# Cleaned set (section 6, Phase 0.5): 30 diamond-removed captures + 15+15 split.
+mkdir -p /tmp/clean_all /tmp/clean_a /tmp/clean_b
+# (symlink the 30 PNGs from test-images/gemini-3.1-pro/2400x1792/pure-black-cleaned/
+#  into /tmp/clean_all; split sorted into first-15 /tmp/clean_a, last-15 /tmp/clean_b)
+./build/wmr build-codebook /tmp/clean_all -o /tmp/clean_all.wcb
+./build/wmr build-codebook /tmp/clean_a   -o /tmp/clean_a.wcb
+./build/wmr build-codebook /tmp/clean_b   -o /tmp/clean_b.wcb
 
-# Discriminators (global histogram, radial profile, radius-matched ring).
+# Raw per-bin reads + per-channel split (Q1 + Q2 tables). Run one codebook per
+# invocation: the probe pairs paths with hardcoded labels, so multi-arg runs
+# mislabel (the path is printed inside each block).
+for cb in /tmp/clean_all /tmp/clean_a /tmp/clean_b /tmp/content10 /tmp/content5a /tmp/content5b; do
+  python3 docs/research/synthid_content_probe.py "$cb.wcb"
+done
+
+# Discriminators (global histogram, radial profile, radius-matched ring),
+# content set only (the ring probe assumes one profile; both sets work).
 for cb in /tmp/content10.wcb /tmp/content5a.wcb /tmp/content5b.wcb; do
   python3 docs/research/synthid_content_ring_probe.py "$cb" "$(basename $cb .wcb)"
 done
 ```
 
-The fixture set is `reference-images/896x1200-gemini36/` (10 PNGs, all
+The content fixture set is `reference-images/896x1200-gemini36/` (10 PNGs, all
 `1200x896` portrait, SynthID-bearing, with the visible 48 px diamond at
-margin `(96, 96)`).
+margin `(96, 96)`). The cleaned fixture set is
+`test-images/gemini-3.1-pro/2400x1792/pure-black-cleaned/` (30 PNGs, all
+`1792x2400` landscape, SynthID-bearing, visible diamond already removed by the
+exact reverse-alpha blend).

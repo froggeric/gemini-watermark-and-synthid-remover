@@ -106,7 +106,6 @@ def measure_codebook(path, label):
     print(f"codebook: {path}")
     print(f"profile: width={w} height={h} samples={N}  "
           f"(random-phase pcons floor ~ 1/sqrt(N) = {1.0/np.sqrt(N):.3f})")
-    assert w == 896 and h == 1200, f"unexpected dims w={w} h={h}"
 
     rows = []
     print(f"\n  {'bin (512 -> img)':>28}  "
