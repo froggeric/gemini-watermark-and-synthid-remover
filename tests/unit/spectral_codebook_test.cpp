@@ -255,7 +255,9 @@ TEST_CASE("SpectralCodebook::merge_from: max on activation + magnitude, preserve
     // bin (leaves src's 0.0 there), so dst's 0.95 must survive the per-bin max
     // (a lower src value must not clobber a higher measured dst value).
     // src's phase_bgr is set to DIFFERENT values (most higher than dst's) so
-    // a buggy max-merge of phase would visibly corrupt dst's phase.
+    // a buggy max-merge of phase would visibly corrupt dst's phase. src's
+    // magnitude_bgr is 0.0 everywhere EXCEPT (20,10) where it is 0.80 (> dst's
+    // 0.50) so the magnitude-max path is genuinely exercised.
     SpectralCodebook src;
     {
         SpectralProfile p;
@@ -273,6 +275,10 @@ TEST_CASE("SpectralCodebook::merge_from: max on activation + magnitude, preserve
             // max-merge would corrupt: (2,3) 0.5 > dst's -0.7; (8,6) 1.5 > 1.2.
             p.phase_bgr[ch].at<float>(3, 2) = 0.5f;
             p.phase_bgr[ch].at<float>(6, 8) = 1.5f;
+            // magnitude at (20,10): src=0.80 > dst's 0.50, so a max-merge must
+            // raise dst to 0.80 here (cv::min instead of cv::max would leave
+            // dst at 0.50, failing the assertion below).
+            p.magnitude_bgr[ch].at<float>(10, 20) = 0.80f;
         }
         src.add_profile(p);
     }
@@ -311,6 +317,15 @@ TEST_CASE("SpectralCodebook::merge_from: max on activation + magnitude, preserve
     REQUIRE(prof.phase_consistency_bgr[0].at<float>(6, 8) == 0.30f);  // dst baseline
     // phase at (8,6) MUST be dst's original 1.2, NOT max(1.2, 1.5) = 1.5.
     REQUIRE(prof.phase_bgr[0].at<float>(6, 8) == 1.2f);
+
+    // Magnitude per-bin max, bidirectionally:
+    //   - At (20,10): src=0.80 > dst's 0.50, so the merged value MUST be 0.80
+    //     (cv::min instead of cv::max would leave dst at 0.50, failing here).
+    //   - At (15,15) and everywhere else: src=0.0 < dst's 0.50, so dst's
+    //     measured 0.50 survives (a lower src value must not clobber a higher
+    //     measured dst value).
+    REQUIRE(prof.magnitude_bgr[0].at<float>(10, 20) == 0.80f);
+    REQUIRE(prof.magnitude_bgr[0].at<float>(15, 15) == 0.50f);
 
     // A bin neither covers stays at dst's baseline values (0.40 / 0.30 / 0.40).
     REQUIRE(prof.consistency_bgr[0].at<float>(15, 15) == 0.40f);

@@ -89,13 +89,18 @@ std::optional<cv::Rect> parse_rect(const std::string& s) {
 // Parse a "x1,y1;x2,y2;..." carrier-bin list (FFT-bin coords on the per-profile
 // rows x cols grid). Returns nullopt for an empty OR malformed string; the
 // caller distinguishes the two. Empty entries (e.g. a trailing ';') are tolerated.
-// Each bin must parse as two non-negative integers separated by ','.
+// Each bin must parse as two non-negative integers separated by ',' (e.g.
+// "84,0;168,0"). Whitespace tolerance: std::istringstream::operator>> skips
+// leading whitespace within a token, so " 84 , 0" parses the same as "84,0".
+// Whitespace AROUND a token (after a ';') is also fine. A token with no ','
+// (e.g. "84") or non-numeric chars (e.g. "not_a_bin") is rejected as malformed.
 std::optional<std::vector<std::pair<int,int>>> parse_bin_list(const std::string& s) {
     if (s.empty()) return std::nullopt;
     std::vector<std::pair<int,int>> bins;
 
-    // Split on ';' manually (no whitespace trimming: FFT bins are exact integer
-    // coords; a stray space is a user typo we want to surface, not silently fix).
+    // Split on ';' manually. Whitespace inside a token is handled by
+    // istringstream's >> above (it skips leading ws within the token); the
+    // separator between x and y must still be a literal ','.
     size_t i = 0;
     while (i < s.size()) {
         size_t j = s.find(';', i);

@@ -46,6 +46,11 @@ public:
     // unified phase should rebuild the codebook rather than merge. Profile
     // keys present only in other are SKIPPED (never silently insert a foreign
     // resolution into *this). Returns the count of shared keys merged.
+    //
+    // No in-tree consumer yet (WS2b): reserved for future default-seeded
+    // codebook assets or external injection. Not orphaned; the WS2b leakage
+    // verdict kept the default-seeding path inert, so this is exercised by the
+    // unit test only for now.
     int merge_from(const SpectralCodebook& other);
 
     int profile_count() const { return static_cast<int>(profiles_.size()); }
@@ -67,8 +72,12 @@ private:
 // (consistency_bgr via the floor-remap, phase_consistency_bgr via a direct
 // multiply), so seeding only consistency_bgr is a SILENT NO-OP. A fully-seeded
 // bin has effective gate weight 1.0 (gate fully open: subtractor acts there).
-// Bins are (col,row) = (x,y) into the profile's rows x cols = height x width
-// FFT grid; out-of-range bins are clamped to the grid and logged.
+// Does NOT raise magnitude_bgr: the measured magnitude at the bin flows
+// through the opened gate (the seed opens the gate; it does not inject a
+// synthetic magnitude, so on a codebook with low measured magnitude at the
+// bin the subtractor still subtracts little there). Bins are (col,row) =
+// (x,y) into the profile's rows x cols = height x width FFT grid; out-of-range
+// bins are clamped to the grid and logged.
 void seed_carrier_bins(SpectralCodebook& cb,
                        const std::vector<std::pair<int,int>>& bins,
                        int width, int height);
