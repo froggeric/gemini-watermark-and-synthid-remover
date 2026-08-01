@@ -15,7 +15,7 @@ A fast command-line tool that removes **visible** watermarks from images and vid
 | Gemini sparkle logo | Gemini images | Reverse alpha-blend + AI denoise | ✅ Full |
 | Veo video watermark | Veo videos | Per-frame reverse alpha-blend | ✅ Full |
 | NotebookLM logo + wordmark | NotebookLM videos | Per-scene AI inpaint (MI-GAN) | ✅ Full |
-| SynthID (invisible) | Gemini images | Spectral subtraction | ⚠️ Heuristic: uniform images only; not a verifiable removal |
+| SynthID (invisible) | Gemini images | Spectral subtraction | ⚠️ Frequency-domain heuristic: uniform images only; not a verifiable removal |
 
 `detect` can also locate watermarks (including SynthID) without modifying the file.
 

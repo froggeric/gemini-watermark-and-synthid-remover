@@ -33,7 +33,7 @@ void print_header(std::ostream& os) {
     os << "--------------------------------------------\n"
         << "  wmr v" APP_VERSION " — watermark remover\n"
         << "  Remove Gemini/Veo visible watermarks\n"
-        << "  and suppress SynthID invisible watermarks (heuristic)\n"
+        << "  and suppress SynthID invisible watermarks (heuristic; not a verifiable removal)\n"
         << "  https://github.com/froggeric/gemini-watermark-and-synthid-remover\n"
         << "  Copyright 2026 Frederic Guigand\n"
         << "--------------------------------------------\n\n";
@@ -277,7 +277,7 @@ static int process_single_image(const CliOptions& opts) {
         }
     }
 
-    // SynthID watermark removal
+    // SynthID suppression (frequency-domain heuristic)
     if (opts.mode == CliMode::SynthidOnly ||
         (opts.mode == CliMode::AutoRemove && opts.synthid)) {
         if (opts.codebook_path.empty() && !opts.codebook_free) {

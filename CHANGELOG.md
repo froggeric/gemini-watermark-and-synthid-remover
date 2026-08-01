@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### SynthID honesty reframe + codebook phase fix
+
+- **SynthID claims softened to "suppress".** The spectral path cannot verifiably remove the invisible SynthID-Image watermark: it is a content-conditional neural watermark (arXiv:2510.09263) and Google publishes no public verifier. Every user-facing string that refers to this path now says "suppress"/"heuristic" rather than "remove": the CLI banner, the `synthid` subcommand and flag descriptions, the per-step `spdlog` lines (codebook and codebook-free paths), and the README. The VISIBLE Gemini/Veo diamond path genuinely removes (exact reverse-alpha-blend), so its "remove" wording is unchanged. A source-level Catch2 test (`tests/unit/synthid_wording_test.cpp`) locks the wording against regressions.
+- **Codebook phase-averaging fix + phase-consistency gate (WS2a).** `CodebookBuilder::finalize` averaged FFT phase arithmetically, which is wrong for a circular quantity: `cv::phase` reports negative-true-phase bins as greater than pi, so the old mean corrupted every negative-phase bin. It now accumulates cos/sin and takes the mean via atan2, and stores a phase-consistency plane (mean resultant length, 0 to 1) that soft-gates the subtractor so incoherent bins are attenuated. The `.wcb` format bumps to `WMRCB02`; v1 (`WMRCB01`) codebooks stay compatible (the new plane defaults to all-ones, a no-op).
+
 ## [1.14.2] - 2026-07-24
 
 ### Gemini 3.6 48px watermark: cleaner still + video removal
