@@ -37,6 +37,7 @@ struct CliOptions {
     bool codebook_free = false;
     bool phase_adaptive = false;
     bool lab_a = false;               // WS3 experiment: operate on LAB `a` channel only (synthid path)
+    bool no_content_guard = false;     // synthid: bypass the content-image skip so a codebook acts on content (evaluation)
     bool legacy_profile = false;       // video: Veo legacy text profile
     bool notebooklm_profile = false;    // video: NotebookLM profile
     std::string notebooklm_rect_str;     // video: manual rect override "x,y,w,h"

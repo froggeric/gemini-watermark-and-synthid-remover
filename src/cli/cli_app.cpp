@@ -327,6 +327,7 @@ static int process_single_image(const CliOptions& opts) {
         config.custom_strength = opts.synthid_strength;
         config.phase_adaptive = opts.phase_adaptive;
         config.lab_a = opts.lab_a;
+        config.no_content_guard = opts.no_content_guard;
 
         if (!opts.codebook_path.empty()) {
             SpectralCodebook codebook;
@@ -574,6 +575,8 @@ int run_cli(int argc, char* argv[]) {
                           "Estimate carrier from noise residual (no codebook needed)");
     remove_cmd->add_flag("--lab-a", opts.lab_a,
                          "WS3 experiment: suppress in the LAB `a` channel only (with --codebook-free/--codebook)");
+    remove_cmd->add_flag("--no-content-guard", opts.no_content_guard,
+                         "Bypass the content-image guard so the codebook acts on content (evaluation)");
     remove_cmd->add_option("--synthid-strength", opts.synthid_strength,
                            "SynthID suppression strength 0.0-2.0")
         ->check(CLI::Range(0.0f, 2.0f));
@@ -632,6 +635,8 @@ int run_cli(int argc, char* argv[]) {
                           "Use image's own phase for uniform images (conjugate subtraction)");
     synthid_cmd->add_flag("--lab-a", opts.lab_a,
                           "WS3 experiment: suppress in the LAB `a` channel only");
+    synthid_cmd->add_flag("--no-content-guard", opts.no_content_guard,
+                          "Bypass the content-image guard so the codebook acts on content (evaluation)");
     synthid_cmd->add_option("--synthid-strength", opts.synthid_strength,
                             "SynthID suppression strength 0.0-2.0")
         ->check(CLI::Range(0.0f, 2.0f));

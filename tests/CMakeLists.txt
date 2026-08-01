@@ -13,6 +13,7 @@ set(TEST_SOURCES
     unit/still_geometry_test.cpp
     unit/synthid_wording_test.cpp
     unit/codebook_subtractor_test.cpp
+    unit/codebook_builder_test.cpp
     unit/lab_a_experiment_test.cpp
     integration/visible_pipeline_test.cpp
 )

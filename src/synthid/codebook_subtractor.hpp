@@ -25,6 +25,13 @@ struct RemovalConfig {
     // flag makes the path measurable on our fixtures. Data-gated: ship only if it
     // measurably beats BGR (see docs/research/synthid-lab-a-experiment.md).
     bool lab_a = false;
+    // Bypass the content-image guard (is_content_image -> num_passes=0). The guard
+    // makes a codebook inert on content images (std > 0.05) because carrier
+    // subtraction mainly removes image content there. This flag is for EVALUATION:
+    // it lets a codebook act on content so the carrier attenuation (and any dot /
+    // damage imprint) is measurable. Not a default; the guard exists for good
+    // reasons on real content (see docs/research/synthid-clean-codebook-eval.md).
+    bool no_content_guard = false;
 };
 
 class CodebookSubtractor {

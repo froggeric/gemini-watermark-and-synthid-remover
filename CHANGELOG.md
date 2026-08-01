@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### SynthID codebook builder correctness (dots artifact + OOM guard)
+
+- **Discriminative carrier selection in `CodebookBuilder`.** The carrier gate `consistency_bgr` was `1 - std/max_std`, which saturated at ~0.999 across ~100% of FFT bins on near-identical captures (the per-bin magnitude std was tiny relative to the global max). The subtractor then fed the stored averaged magnitude (the visible diamond's broadband FFT) into ~97% of bins and imprinted the "dots" artifact. Replaced the magnitude-variance metric with the reference method's discriminative score `normalize(log1p(mean_magnitude) * phase_coherence)`, where phase_coherence is the cross-capture mean resultant length. The magnitude factor floors zero-magnitude background bins (pure-black captures); the phase-coherence factor drops content bins. Active-bin fraction on `gemini_black` drops from 100% to 1.1% (the diamond footprint); on content it is 0% (carrier not resolvable above the noise floor). WMRCB02 format unchanged; v1 codebooks stay compatible. Only affects codebooks rebuilt via `build-codebook`; the default codebook-free path is untouched.
+- **Degenerate-codebook OOM guard.** `CodebookSubtractor::remove_synthid` now rejects a profile whose magnitude plane is all-zero / non-finite or whose consistency is NaN (the 0/0 from byte-identical captures). Previously the NaN/zero cascade through `polarToCart` to FFT could trigger a multi-exabyte allocation (crash). Now it logs a warning and skips the codebook subtraction; the phase-noise disruption still runs.
+- **`--no-content-guard` evaluation flag.** Opt-in flag on `synthid` / `remove` that bypasses the content-image guard (`is_content_image -> num_passes=0`) so a codebook acts on content for attenuation measurement. Not a default; the guard stays on for normal use.
+- **Evaluation.** `docs/research/synthid-clean-codebook-eval.md` measures the clean codebook on real content: on `gemini_random` / 896x1200 content the codebook is effectively inert (+0.16 to +0.38% band attenuation over the phase-noise baseline, PSNR 33 to 45 dB) because the carrier is not resolvable above the content noise floor. The contaminated codebook imprints the visible diamond (bright concentration in the corner) plus a scattered dot field; the clean codebook does neither. The clean codebook is not shipped as a default.
+
 ## [1.15.0] - 2026-08-01
 
 ### SynthID Phase 0: honesty reframe + codebook correctness + verification

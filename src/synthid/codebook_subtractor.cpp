@@ -42,6 +42,56 @@ void CodebookSubtractor::remove_synthid(
 
     const auto& profile = codebook.get_profile(w, h);
 
+    // Degenerate-profile guard. A codebook whose magnitude plane is all-zero,
+    // non-finite, or otherwise carries no usable signal (e.g. built from byte-
+    // identical frames whose consistency computed as 0/0 = NaN, or an empty
+    // all-zero profile hand-built for testing) must NOT enter the subtraction
+    // math: a NaN/zero cascade through polarToCart -> cv::min -> FFT can
+    // produce non-finite intermediate Mats and, in the worst observed case, a
+    // multi-exabyte cv::Mat allocation (OOM crash). Detect it here and skip the
+    // codebook path cleanly (phase-noise disruption below still runs, which is
+    // safe and independent of the profile planes). The check is cheap: one
+    // minMaxLoc over the G magnitude plane plus an all-zero probe.
+    bool profile_degenerate = false;
+    {
+        const cv::Mat& gm = profile.magnitude_bgr[1];
+        if (gm.empty()) {
+            profile_degenerate = true;
+        } else {
+            double mn, mx;
+            cv::minMaxLoc(gm, &mn, &mx);
+            // All-near-zero (no carrier signal at all). minMaxLoc silently
+            // skips NaN entries (NaN < x is false), so it alone can't detect a
+            // NaN magnitude; the compare trick below does.
+            if (mx < 1e-6) {
+                profile_degenerate = true;
+            }
+            // NaN/inf in magnitude or consistency: NaN propagates through the
+            // gate weight and polarToCart into the FFT and can trigger a multi-
+            // exabyte allocation. cv::minMaxLoc skips NaN, so detect it with
+            // the (x != x) trick (true only for NaN). Guard on the G plane only
+            // (cheap; a codebook bad in one channel is bad in all three in
+            // practice).
+            cv::Mat nan_mask;
+            cv::compare(gm, gm, nan_mask, cv::CMP_NE);  // NaN != NaN -> 255
+            const cv::Mat& gc = profile.consistency_bgr[1];
+            if (!gc.empty()) {
+                cv::Mat gc_nan;
+                cv::compare(gc, gc, gc_nan, cv::CMP_NE);
+                cv::bitwise_or(nan_mask, gc_nan, nan_mask);
+            }
+            if (!std::isfinite(mn) || !std::isfinite(mx) ||
+                cv::countNonZero(nan_mask) > 0) {
+                profile_degenerate = true;
+            }
+        }
+    }
+    if (profile_degenerate) {
+        spdlog::warn("SynthID codebook profile is degenerate (all-zero or non-finite "
+                     "magnitude/consistency). Skipping carrier subtraction; only phase "
+                     "disruption will run. Rebuild the codebook from non-identical captures.");
+    }
+
     // Determine multi-pass schedule
     RemovalStrength base_strength = config.strength;
     if (config.custom_strength >= 0.0f) {
@@ -118,9 +168,17 @@ void CodebookSubtractor::remove_synthid(
         use_conjugate = true;
     }
 
-    if (is_content_image) {
+    if (is_content_image && !config.no_content_guard) {
         spdlog::info("Content image detected (std={:.4f}): carrier <0.1% of spectral energy. "
                      "Skipping carrier subtraction, applying spectral disruption only.", avg_std);
+        num_passes = 0;
+    }
+
+    // Degenerate-profile guard (checked above): skip the subtraction passes
+    // entirely. The phase-noise disruption section below is independent of the
+    // profile planes and still runs, so the output is never an unmodified
+    // bare-identity (which would be a silent no-op invisible to the caller).
+    if (profile_degenerate) {
         num_passes = 0;
     }
 

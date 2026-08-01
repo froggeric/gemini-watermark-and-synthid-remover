@@ -42,7 +42,6 @@ private:
         cv::Mat mag_sum[3];
         cv::Mat cos_sum[3];     // sum of cos(phase) across captures (circular)
         cv::Mat sin_sum[3];     // sum of sin(phase) across captures (circular)
-        cv::Mat mag_sq_sum[3];  // For computing std dev
     };
 
     void accumulate(const cv::Mat& image,

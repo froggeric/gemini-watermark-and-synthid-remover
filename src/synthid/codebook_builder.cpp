@@ -118,7 +118,6 @@ void CodebookBuilder::accumulate(
             acc.mag_sum[ch] = cv::Mat::zeros(mag.size(), CV_32FC1);
             acc.cos_sum[ch] = cv::Mat::zeros(ph.size(), CV_32FC1);
             acc.sin_sum[ch] = cv::Mat::zeros(ph.size(), CV_32FC1);
-            acc.mag_sq_sum[ch] = cv::Mat::zeros(mag.size(), CV_32FC1);
         }
 
         // Circular phase accumulation. The previous arithmetic mean of phase was
@@ -138,7 +137,6 @@ void CodebookBuilder::accumulate(
         }
 
         acc.mag_sum[ch] += mag;
-        acc.mag_sq_sum[ch] += mag.mul(mag);
         acc.cos_sum[ch] += cos_mat;
         acc.sin_sum[ch] += sin_mat;
     }
@@ -165,30 +163,48 @@ SpectralProfile CodebookBuilder::finalize(const ProfileAccumulator& acc) const {
         cv::phase(cos_mean, sin_mean, profile.phase_bgr[ch], /*angleInDegrees=*/false);
         cv::magnitude(cos_mean, sin_mean, profile.phase_consistency_bgr[ch]);
 
-        // Consistency: inverse of normalized magnitude variability.
-        // Carrier bins have LOW std_dev (stable across images) → HIGH consistency.
-        // Content bins have HIGH std_dev (variable) → LOW consistency.
-        cv::Mat mean_sq = profile.magnitude_bgr[ch].mul(profile.magnitude_bgr[ch]);
-        cv::Mat variance = acc.mag_sq_sum[ch] / n - mean_sq;
-        cv::Mat std_dev;
-        cv::sqrt(cv::max(variance, 0.0), std_dev);
+        // Carrier-selection consistency: a discriminative score that combines
+        // phase coherence (PRIMARY, the cross-capture mean resultant length
+        // already computed into phase_consistency_bgr) with a magnitude floor
+        // (SECONDARY, so zero-magnitude bins cannot pass on numerically-trivial
+        // phase alone).
+        //
+        // The score is  score = log1p(mean_magnitude) * phase_coherence.
+        // - log1p(magnitude) weights each bin by its (soft) magnitude, so a
+        //   zero-magnitude background bin (pure-black capture) scores ~0
+        //   regardless of its phase. This is what excludes the bulk of the
+        //   spectrum on near-identical pure-black captures.
+        // - phase_coherence drops bins whose phase is incoherent across
+        //   captures (random content, sensor noise). This is what excludes
+        //   content-driven bins on varied captures.
+        // The product is the discriminative signal the reference carrier
+        // finder (reverse-SynthID SynthIDCodebookFinder.find_fourier_carriers)
+        // uses; it is normalized to [0,1] so the subtractor's existing
+        // floor-remap gate keeps working unchanged.
+        //
+        // WHY this replaces the old 1 - std/max_std metric: that metric
+        // normalized the per-bin magnitude std by the GLOBAL max std. On
+        // near-identical images (e.g. HF gemini_black) the per-bin std is tiny
+        // EVERYWHERE, so std/max_std was ~0 everywhere and consistency
+        // saturated at ~0.999 across the whole spectrum (the builder marked
+        // ~100% of bins as carrier and captured the visible diamond's broadband
+        // FFT as if it were the invisible carrier; subtracting it imprinted the
+        // "dots" artifact). On varied content the std was noise-dominated and
+        // non-discriminative in the opposite direction (the carrier bin read
+        // LOWER consistency than off-grid content bins). The phase-coherence x
+        // magnitude product is discriminative in both regimes.
+        cv::Mat log_mag;
+        cv::log(profile.magnitude_bgr[ch] + 1.0f, log_mag);
+        cv::Mat score = log_mag.mul(profile.phase_consistency_bgr[ch]);
 
-        // max_std normalizes the per-bin std into [0,1]. It MUST exclude the DC
-        // neighborhood: DC is the per-image mean brightness, which varies more
-        // across captures than any real frequency, so a bare global max would
-        // always sit at DC and make std/max_std ~= 0 for every non-DC bin,
-        // saturating consistency at ~0.99 across the whole spectrum (a near-
-        // no-op gate where only phase_consistency discriminates; verified in
-        // docs/research/synthid-content-fixture-analysis.md). DC sits at [0,0]
-        // in the natural (non-fftshift) layout and its 3 wraparound copies at
-        // the other 3 grid corners; mask a small square (radius kDcMaskRadius)
-        // around each so max_std reflects the strongest CONTENT bin and the
-        // gate actually separates carrier bins from content bins. Do NOT
-        // simplify this back to an unmasked minMaxLoc — the saturation is
-        // silent (no existing test fails, the gate just stops discriminating).
+        // Normalize to [0,1] using the max score outside the DC neighborhood
+        // (DC's log1p(magnitude) dwarfs every real frequency; an unmasked max
+        // would shrink every other bin toward 0 the same way the old metric
+        // saturated them toward 1). DC sits at [0,0] in the natural (non-
+        // fftshift) layout plus 3 wraparound grid corners.
         constexpr int kDcMaskRadius = 4;
-        cv::Mat dc_mask = cv::Mat::ones(std_dev.size(), CV_8UC1);
-        const int rows = std_dev.rows, cols = std_dev.cols;
+        const int rows = score.rows, cols = score.cols;
+        cv::Mat dc_mask = cv::Mat::ones(score.size(), CV_8UC1);
         for (int cy : {0, rows - 1}) {
             for (int cx : {0, cols - 1}) {
                 for (int dy = -kDcMaskRadius; dy <= kDcMaskRadius; ++dy) {
@@ -203,12 +219,15 @@ SpectralProfile CodebookBuilder::finalize(const ProfileAccumulator& acc) const {
             }
         }
 
-        double max_std;
-        cv::minMaxLoc(std_dev, nullptr, &max_std, nullptr, nullptr, dc_mask);
-        if (max_std > 1e-9) {
-            profile.consistency_bgr[ch] = 1.0f - (std_dev / static_cast<float>(max_std));
+        double max_score = 0.0;
+        cv::minMaxLoc(score, nullptr, &max_score, nullptr, nullptr, dc_mask);
+        if (max_score > 1e-9) {
+            profile.consistency_bgr[ch] = score / static_cast<float>(max_score);
         } else {
-            profile.consistency_bgr[ch] = cv::Mat::ones(std_dev.size(), CV_32FC1);
+            // Degenerate: no bin carries a non-trivial coherent signal. Mark
+            // everything non-carrier (gate fully closed) rather than saturating
+            // at 1.0; the subtractor then no-ops this profile.
+            profile.consistency_bgr[ch] = cv::Mat::zeros(score.size(), CV_32FC1);
         }
     }
 
