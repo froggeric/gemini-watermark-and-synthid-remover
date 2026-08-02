@@ -316,6 +316,62 @@ if(WMR_BUILD_AI_MIGAN)
   endif()
 endif()
 
+# SynthID diffusion-regen (SDXL img2img via leejet/stable-diffusion.cpp) — opt-in.
+# OFF by default keeps the lean build stable-diffusion/ggml/curl-free. Must run
+# BEFORE add_subdirectory(tests) so the stable-diffusion target exists when the
+# tests mirror this block.
+option(WMR_BUILD_REGEN "Build SynthID diffusion-regen (stable-diffusion.cpp SDXL img2img)" OFF)
+if(WMR_BUILD_REGEN)
+    set(SD_SUBMODULE "${CMAKE_SOURCE_DIR}/external/stable-diffusion.cpp")
+    if(NOT EXISTS "${SD_SUBMODULE}/CMakeLists.txt")
+        message(FATAL_ERROR "stable-diffusion.cpp submodule missing. Run: git submodule update --init --recursive external/stable-diffusion.cpp")
+    endif()
+
+    # Pick exactly one backend per platform to COMPILE IN (each sets the matching
+    # GGML_*). The RUNTIME backend string is left EMPTY (auto): per upstream
+    # docs/backend.md, stable-diffusion.cpp then selects GPU -> integrated GPU ->
+    # CPU on its own, so a box with no usable GPU gracefully runs on CPU without us
+    # guessing a device name like "cuda0"/"vulkan0". An explicit override is handled
+    # by Task 2's resolver (regen_backend_string); the default is empty/auto.
+    if(APPLE)
+        set(SD_METAL  ON  CACHE BOOL "" FORCE)
+        set(SD_CUDA   OFF CACHE BOOL "" FORCE)
+        set(SD_VULKAN OFF CACHE BOOL "" FORCE)
+    else()
+        # linux/windows: compile CUDA if the toolkit is visible, else Vulkan.
+        find_program(NVCC nvcc)
+        if(NVCC)
+            set(SD_CUDA   ON  CACHE BOOL "" FORCE)
+            set(SD_VULKAN OFF CACHE BOOL "" FORCE)
+        else()
+            set(SD_CUDA   OFF CACHE BOOL "" FORCE)
+            set(SD_VULKAN ON  CACHE BOOL "" FORCE)
+        endif()
+        set(SD_METAL OFF CACHE BOOL "" FORCE)
+    endif()
+
+    set(SD_BUILD_EXAMPLES    OFF CACHE BOOL "" FORCE)
+    set(SD_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(SD_WEBP              OFF CACHE BOOL "" FORCE)
+    set(SD_WEBM              OFF CACHE BOOL "" FORCE)
+
+    # ggml + stable-diffusion are C11 (target_compile_features c_std_11); the
+    # top-level project() declares only CXX. enable_language(C) here (mirroring
+    # the MI-GAN block's enable_language(OBJCXX)) so the C compiler + its feature
+    # set is known before add_subdirectory pulls in ggml.
+    enable_language(C)
+
+    add_subdirectory(${SD_SUBMODULE} stable-diffusion)
+
+    find_package(CURL REQUIRED)
+    find_package(OpenSSL REQUIRED)
+    # Task 1 wires ONLY the link probe. The 4 feature sources are APPENDED one-per-task
+    # in Tasks 2-5. Do NOT list files that do not exist yet.
+    target_sources(${PROJECT_NAME} PRIVATE tests/unit/regen_link_probe.cpp)
+    target_link_libraries(${PROJECT_NAME} PRIVATE stable-diffusion CURL::libcurl OpenSSL::Crypto)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_BUILD_REGEN=1)
+endif()
+
 
 # Tests
 option(WMR_BUILD_TESTS "Build test suite" ON)

@@ -18,6 +18,7 @@
 #   BUILD_DIR=build-alt scripts/build.sh
 #   WMR_AI_DENOISE=1 scripts/build.sh  # FDnCNN AI denoise (NCNN/Vulkan)
 #   WMR_AI_MIGAN=1 scripts/build.sh    # MI-GAN NotebookLM inpainter (ONNX Runtime)
+#   WMR_BUILD_REGEN=1 scripts/build.sh # SynthID diffusion-regen (stable-diffusion.cpp)
 set -euo pipefail
 
 BUILD_TYPE="${BUILD_TYPE:-Release}"
@@ -31,6 +32,12 @@ AI_DENOISE="${WMR_AI_DENOISE:-0}"
 # No extra deps — ONNX Runtime is fetched as an official prebuilt at configure
 # time. Unset/0 keeps MI-GAN out of the build (NS-only NotebookLM path).
 AI_MIGAN="${WMR_AI_MIGAN:-0}"
+# When WMR_BUILD_REGEN=1, build SynthID diffusion-regen (leejet/stable-diffusion.cpp
+# SDXL img2img). Adds Homebrew openssl@3 to the prefix path so find_package(OpenSSL)
+# resolves the keg. The submodule init is intentionally NOT done here (Task 8) —
+# run `git submodule update --init --recursive external/stable-diffusion.cpp` first.
+# Unset/0 keeps the lean build stable-diffusion/ggml/curl-free.
+REGEN="${WMR_BUILD_REGEN:-0}"
 
 DEPS=(opencv fftw ffmpeg catch2 fmt spdlog cli11)
 
@@ -39,6 +46,13 @@ if [ "${AI_DENOISE}" = "1" ]; then
   DEPS+=(vulkan-volk vulkan-loader vulkan-headers molten-vk)
   echo ">> AI denoise mode: initialising NCNN submodule"
   git submodule update --init --recursive
+fi
+
+# Regen mode: stable-diffusion.cpp links OpenSSL (keg-only, needs the explicit
+# root) and CURL. NOTE: submodule init is deferred to Task 8 — the user must run
+# `git submodule update --init --recursive external/stable-diffusion.cpp` first.
+if [ "${REGEN}" = "1" ]; then
+  DEPS+=(openssl@3)
 fi
 
 # 1. Verify Homebrew and required formulas.
@@ -92,7 +106,8 @@ cmake -S . -B "${BUILD_DIR}" -G Ninja \
   -DFFMPEG_ROOT="$(brew --prefix ffmpeg)" \
   -DWMR_BUILD_TESTS=ON \
   $([ "${AI_DENOISE}" = "1" ] && echo "-DWMR_BUILD_AI_DENOISE=ON") \
-  $([ "${AI_MIGAN}" = "1" ] && echo "-DWMR_BUILD_AI_MIGAN=ON")
+  $([ "${AI_MIGAN}" = "1" ] && echo "-DWMR_BUILD_AI_MIGAN=ON") \
+  $([ "${REGEN}" = "1" ] && echo "-DWMR_BUILD_REGEN=ON -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)")
 
 # 4. Build.
 cmake --build "${BUILD_DIR}" --parallel
