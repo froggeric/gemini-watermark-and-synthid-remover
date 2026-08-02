@@ -56,5 +56,14 @@ private:
     std::unique_ptr<Impl, ImplDeleter> m_impl;
 };
 
+// True once an sd_ctx_t* has been successfully created this process, i.e. the ggml
+// backend (Metal/CUDA/Vulkan) is alive and its STATIC teardown at exit will abort
+// (ggml-metal: GGML_ASSERT([rsets->data count] == 0)). main() reads this after
+// run_cli() and, if true, flushes streams + std::_Exit to skip static destructors
+// (the standard llama.cpp/ggml workaround for these Metal teardown aborts). Returns
+// false in a lean build, a spectral-only run, or a regen run that never created an
+// sd_ctx (model missing / download failed) -> normal exit path.
+bool regenerator_was_used();
+
 } // namespace wmr
 #endif

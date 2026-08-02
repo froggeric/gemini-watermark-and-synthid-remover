@@ -7,6 +7,7 @@
 #include <stable-diffusion.h>
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <memory>
 #include <thread>
@@ -23,6 +24,12 @@ namespace fs = std::filesystem;
 namespace wmr {
 
 namespace {
+// Set true once new_sd_ctx succeeds + supports image generation. Read by
+// regenerator_was_used() so main() can std::_Exit before static destruction
+// (the ggml-metal static-teardown GGML_ASSERT fires regardless of whether
+// our Regenerator is leaked or freed, because it's in ggml's OWN static).
+std::atomic<bool> g_ctx_alive{false};
+
 fs::path exe_dir() {
 #ifdef _WIN32
     char buf[MAX_PATH]; HMODULE m=nullptr;
@@ -210,6 +217,7 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
         m_impl->ready = false; return false;
     }
     m_impl->ready = true;
+    g_ctx_alive.store(true);   // the ggml backend is now alive; its static teardown will abort
     spdlog::info("regen: sd_ctx ready, backend='{}', model='{}', vae='{}'",
                  backend[0] ? backend : "auto", model_s, vae_s);
     return true;
@@ -264,6 +272,8 @@ bool Regenerator::regen(cv::Mat& image, const RegenConfig& cfg) {
     blended.convertTo(image, CV_8UC3);   // output is always CV_8UC3, same w/h as input
     return true;
 }
+
+bool regenerator_was_used() { return g_ctx_alive.load(); }
 
 } // namespace wmr
 #endif
