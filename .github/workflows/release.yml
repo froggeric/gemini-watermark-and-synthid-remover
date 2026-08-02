@@ -104,7 +104,7 @@ jobs:
       - name: Configure (macOS)
         if: runner.os == 'macOS'
         run: |
-          ARGS="-DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DWMR_BUILD_TESTS=OFF -DWMR_BUILD_AI_DENOISE=ON -DWMR_BUILD_AI_MIGAN=${{ matrix.enable_migan }} -DVCPKG_MANIFEST_FEATURES=ai-denoise -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+          ARGS="-DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DWMR_BUILD_TESTS=OFF -DWMR_BUILD_AI_DENOISE=ON -DWMR_BUILD_AI_MIGAN=${{ matrix.enable_migan }} -DWMR_BUILD_REGEN=ON -DVCPKG_MANIFEST_FEATURES=ai-denoise;regen -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
           if [ "${{ matrix.macos_arch }}" = "x86_64" ]; then
             # Cross-compile Intel on Apple Silicon. NCNN's simplevk does STATIC
             # Vulkan linkage on APPLE and needs a build-time libvulkan; there is
@@ -126,7 +126,8 @@ jobs:
             -DWMR_BUILD_TESTS=OFF \
             -DWMR_BUILD_AI_DENOISE=ON \
             -DWMR_BUILD_AI_MIGAN=ON \
-            -DVCPKG_MANIFEST_FEATURES="ai-denoise" \
+            -DWMR_BUILD_REGEN=ON \
+            -DVCPKG_MANIFEST_FEATURES="ai-denoise;regen" \
             -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} \
             -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
 
@@ -149,7 +150,8 @@ jobs:
             -DWMR_BUILD_TESTS=OFF ^
             -DWMR_BUILD_AI_DENOISE=ON ^
             -DWMR_BUILD_AI_MIGAN=ON ^
-            -DVCPKG_MANIFEST_FEATURES="ai-denoise" ^
+            -DWMR_BUILD_REGEN=ON ^
+            -DVCPKG_MANIFEST_FEATURES="ai-denoise;regen" ^
             -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} ^
             -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
           cmake --build build --config ${{ env.BUILD_TYPE }}
@@ -350,13 +352,14 @@ jobs:
           runVcpkgInstall: true
           vcpkgJsonGlob: '**/vcpkg.json'
 
-      - name: Configure (tests + AI)
+      - name: Configure (tests + AI + regen)
         run: |
           cmake -B build -S . -GNinja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DWMR_BUILD_AI_DENOISE=ON \
+            -DWMR_BUILD_REGEN=ON \
             -DWMR_BUILD_TESTS=ON \
-            -DVCPKG_MANIFEST_FEATURES="ai-denoise" \
+            -DVCPKG_MANIFEST_FEATURES="ai-denoise;regen" \
             -DVCPKG_TARGET_TRIPLET=x64-linux \
             -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
 

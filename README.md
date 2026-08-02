@@ -100,13 +100,60 @@ Supported inputs: PNG / JPEG / WebP images; MP4 and other FFmpeg-supported video
 
 | Flag | Description |
 |------|-------------|
+| `--synthid-attack {off\|spectral\|regen}` | SynthID attack mode (default `spectral`). `regen` = low-strength SDXL img2img (the only validated scrub; see below). `off` skips the synthid pass |
 | `--codebook <path>` | Use a spectral codebook (`.wcb`) |
 | `--codebook-free` | Estimate the carrier from the image's noise residual (no codebook) |
 | `--phase-adaptive` | Use the image's own phase (conjugate subtraction; uniform images) |
 | `--synthid-strength` | 0.0–2.0 (default 0.50) |
 | `--synthid` (remove only) | Also attempt SynthID suppression during a `remove` pass |
+| `--regen-strength` | img2img strength, 0.01–0.30 (default 0.05; regen only) |
+| `--regen-steps` | sampler steps (default 20; regen only) |
+| `--regen-no-download` | refuse the first-run model fetch (regen only; errors if the model is absent) |
+| `--regen-no-tile` | disable tiled img2img (whole-image; fails above ~1024px on most GPUs) |
+| `--regen-model-path` / `--regen-vae-path` | point at a local model / VAE instead of the pinned download |
 
 Build a codebook from clean + watermarked reference pairs: `wmr build-codebook refs/ -o codebook.wcb`.
+
+#### `--synthid-attack regen` (the only validated SynthID scrub)
+
+The default `spectral` attack is a frequency-domain heuristic suppressor, not a verifiable
+removal (it works only on uniform images where the carrier dominates; on content the
+carrier is below the noise floor). `--synthid-attack regen` instead runs a low-strength
+SDXL img2img regeneration of the whole image via
+[stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp). This is the only
+attack the published literature reports as validated against SynthID-Image.
+
+```bash
+wmr synthid image.png --synthid-attack regen -o clean.png
+wmr remove image.png --synthid --synthid-attack regen -o clean.png   # visible diamond first, then regen
+```
+
+Be aware of the tradeoffs before you use it:
+
+- **It is lossy.** Typical output is 38 to 45 dB PSNR versus the input (a light re-render).
+  The default strength is 0.05, tuned to scrub the carrier while preserving content. Raise
+  it only if you accept more visible change.
+- **It downloads ~6.5 GB + ~335 MB on first use** (the SDXL base checkpoint and the
+  fp16-fix VAE, SHA256-pinned, cached in `~/.cache/wmr/`). The progress prints at 5%
+  milestones; it is not silent. The model and VAE are not bundled with any release.
+- **It leaves a forensic footprint.** A regen-attacked image is itself a detectable
+  diffusion output; an attacker looking for "tampering" can spot it. This is an attack on
+  the watermark, not an invisibility guarantee.
+- **No public verifier exists** for SynthID-Image, so success cannot be confirmed locally.
+  The "validated" claim rests on published third-party measurements, not a check `wmr` can
+  run for you.
+- **It does NOT remove the visible Gemini diamond.** At strength 0.05 the img2img pass
+  leaves the visible mark largely intact. Run `wmr remove` (the reverse-blend) first, or
+  use `wmr remove --synthid --synthid-attack regen` which runs the visible removal before
+  regen. `wmr synthid --synthid-attack regen` (SynthidOnly mode) operates on the image as
+  given.
+- **Up to 4K is preserved** via tiled img2img (default on; `--regen-no-tile` disables it).
+  Tiles overlap and are cosine-feathered, so seams are not visible at typical viewing
+  distances.
+
+This mode is behind the `WMR_BUILD_REGEN` build flag. Release binaries ship it enabled; a
+lean local build (`scripts/build.sh` without `WMR_BUILD_REGEN=1`) is regen-free and will
+print a "rebuild with `WMR_BUILD_REGEN=1`" hint if you pass `--synthid-attack regen`.
 
 ### Video flags
 
@@ -164,7 +211,7 @@ The watermark's size depends on the output resolution: **48×48** for small imag
 
 **NotebookLM** marks are semi-transparent and color-adaptive (not a reversible alpha overlay), so they're removed by **AI inpainting** rather than reverse-blending. [MI-GAN](https://github.com/Picsart-AI-Research/MI-GAN) (MIT, ICCV 2023) synthesizes the missing region; on Apple Silicon it runs on the Neural Engine (~28 ms/frame), elsewhere on ONNX Runtime CPU, falling back to Navier-Stokes. The mark is auto-detected per video via template matching (polarity-invariant, stable across scene cuts). On Apple Silicon every scene uses MI-GAN by default; elsewhere a complexity gate picks MI-GAN for textured backgrounds and NS for uniform ones. `--notebooklm-method` overrides.
 
-**SynthID** invisible watermarks live in the frequency domain. wmr attempts to **suppress** the carrier (a frequency-domain heuristic, not a verifiable removal): it estimates the carrier signal and subtracts it, either from a prebuilt spectral codebook (`--codebook`) or from the image's own noise residual (`--codebook-free`). Google provides no public SynthID verifier, so success cannot be confirmed. *Limitation:* effective only on uniform/dark images where the carrier dominates; on content-rich images the carrier is <0.1% of spectral energy, so reliable suppression isn't currently possible.
+**SynthID** invisible watermarks live in the frequency domain. wmr attempts to **suppress** the carrier (a frequency-domain heuristic, not a verifiable removal): it estimates the carrier signal and subtracts it, either from a prebuilt spectral codebook (`--codebook`) or from the image's own noise residual (`--codebook-free`). Google provides no public SynthID verifier, so success cannot be confirmed. *Limitation:* effective only on uniform/dark images where the carrier dominates; on content-rich images the carrier is <0.1% of spectral energy, so reliable suppression isn't currently possible. For content-rich images, `--synthid-attack regen` (low-strength SDXL img2img, the only validated SynthID scrub in the literature) is the alternative; see the [SynthID flags](#synthid-flags) section for its tradeoffs (lossy, ~6.5 GB download, leaves a forensic footprint).
 
 ## Performance
 

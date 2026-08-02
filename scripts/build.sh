@@ -34,9 +34,9 @@ AI_DENOISE="${WMR_AI_DENOISE:-0}"
 AI_MIGAN="${WMR_AI_MIGAN:-0}"
 # When WMR_BUILD_REGEN=1, build SynthID diffusion-regen (leejet/stable-diffusion.cpp
 # SDXL img2img). Adds Homebrew openssl@3 to the prefix path so find_package(OpenSSL)
-# resolves the keg. The submodule init is intentionally NOT done here (Task 8) —
-# run `git submodule update --init --recursive external/stable-diffusion.cpp` first.
-# Unset/0 keeps the lean build stable-diffusion/ggml/curl-free.
+# resolves the keg (libcurl comes from the system on macOS). Inits the
+# stable-diffusion.cpp submodule (+ its ggml submodule). Unset/0 keeps the lean
+# build stable-diffusion/ggml/curl-free.
 REGEN="${WMR_BUILD_REGEN:-0}"
 
 DEPS=(opencv fftw ffmpeg catch2 fmt spdlog cli11)
@@ -49,10 +49,14 @@ if [ "${AI_DENOISE}" = "1" ]; then
 fi
 
 # Regen mode: stable-diffusion.cpp links OpenSSL (keg-only, needs the explicit
-# root) and CURL. NOTE: submodule init is deferred to Task 8 — the user must run
-# `git submodule update --init --recursive external/stable-diffusion.cpp` first.
+# root so find_package(OpenSSL) resolves it) and libcurl. macOS ships libcurl
+# system-wide (/usr/lib/libcurl.dylib), so find_package(CURL) resolves it
+# without a Homebrew prefix; the Homebrew `curl` formula is keg-only and NOT
+# required. The submodule (+ its ggml submodule) must be present.
 if [ "${REGEN}" = "1" ]; then
   DEPS+=(openssl@3)
+  echo ">> Regen mode: initialising stable-diffusion.cpp submodule"
+  git submodule update --init --recursive external/stable-diffusion.cpp
 fi
 
 # 1. Verify Homebrew and required formulas.

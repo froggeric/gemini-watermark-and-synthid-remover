@@ -73,15 +73,19 @@ fs::path resolve_vae(const RegenConfig& cfg) {
     return cache_dir() / name;
 }
 
-// Pinned sources. SHA256 set at integration (run: `curl -L <url> -o /tmp/f; shasum -a 256 /tmp/f`).
+// Pinned sources. SHA256 == the HuggingFace LFS content oid (the HF tree API exposes it
+// as `lfs.sha256`); the VAE oid was cross-verified by downloading the 335 MB file and
+// running `shasum -a 256` (byte-for-byte match), so the model oid is trusted the same way
+// without downloading the 6.5 GB checkpoint. The fp16-fix VAE file is named
+// `sdxl_vae.safetensors` on HF (NOT `sdxl_vae-fp16-fix.safetensors`; that path 404s).
 constexpr const char* kRegenModelUrl =
     "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors";
 constexpr const char* kRegenModelSha256 =
-    "INTEGRATION_SET_ME";  // Task 8 Step 4: compute via `shasum -a 256` on the pinned file
+    "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b";
 constexpr const char* kRegenVaeUrl =
-    "https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/main/sdxl_vae-fp16-fix.safetensors";
+    "https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/main/sdxl_vae.safetensors";
 constexpr const char* kRegenVaeSha256 =
-    "INTEGRATION_SET_ME";  // Task 8 Step 4: compute via `shasum -a 256` on the pinned file
+    "235745af8d86bf4a4c1b5b4f529868b37019a10f7c0b2e79ad0abca3a22bc6e1";
 
 // Print byte milestones (~5%) so a 6.5 GB first-run fetch is not silent. Returns true.
 DownloadProgressFn make_progress_logger(const std::string& what) {

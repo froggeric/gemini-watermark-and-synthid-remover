@@ -17,6 +17,13 @@
       "dependencies": [
         "volk"
       ]
+    },
+    "regen": {
+      "description": "SynthID diffusion-regeneration (SDXL img2img via leejet/stable-diffusion.cpp). Adds curl (the SHA256-pinned model downloader) and openssl (the integrity gate). Requires the stable-diffusion.cpp submodule.",
+      "dependencies": [
+        "curl",
+        "openssl"
+      ]
     }
   }
 }
