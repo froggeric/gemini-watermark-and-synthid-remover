@@ -12,6 +12,12 @@ TEST_CASE("regen dispatch graceful fallback", "[regen][dispatch]") {
 #ifdef WMR_BUILD_REGEN
     cfg.method = InpaintMethod::DiffusionRegen;
     cfg.regen_allow_download = false;   // force "no model" -> regen fails -> graceful
+    // Point at a guaranteed-missing file so initialize ALWAYS takes the
+    // "model absent + download disabled -> return false" path, WITHOUT creating
+    // an sd_ctx / Metal device (which would abort the test-exe at exit via the
+    // ggml-metal static teardown). Cache-independent: passes whether or not the
+    // real SDXL model is cached in ~/.cache/wmr/.
+    cfg.regen_model_path = "/nonexistent/wmr-regen-no-model-test.safetensors";
 #endif
     DetectionResult dr{}; dr.confidence = 0.0f; dr.detected = false;  // no visible mark; regen runs on whole image regardless
     // The bool return surfaces a failed/no-op regen to the exit code: a failing regen
