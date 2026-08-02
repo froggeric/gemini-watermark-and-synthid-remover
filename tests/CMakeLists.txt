@@ -94,9 +94,11 @@ if(WMR_BUILD_REGEN)
         ${CMAKE_SOURCE_DIR}/src/core/regen_backend.cpp
         ${CMAKE_SOURCE_DIR}/src/core/regen_tiling.cpp
         ${CMAKE_SOURCE_DIR}/src/core/model_downloader.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/regenerator.cpp
         unit/regen_backend_test.cpp
         unit/regen_tiling_test.cpp
         unit/regen_downloader_test.cpp
+        unit/regen_smoke_test.cpp
     )
     target_link_libraries(wmr_tests PRIVATE stable-diffusion CURL::libcurl OpenSSL::Crypto)
     target_compile_definitions(wmr_tests PRIVATE WMR_BUILD_REGEN=1)

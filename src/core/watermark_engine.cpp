@@ -437,4 +437,14 @@ NcnnDenoiser& WatermarkEngine::denoiser() {
 }
 #endif
 
+#ifdef WMR_BUILD_REGEN
+Regenerator& WatermarkEngine::regenerator() {
+    // Intentionally leaked: stable-diffusion's GGML backend races global device
+    // teardown during static destruction (same hazard as ncnn/Vulkan). Never delete.
+    static Regenerator* s = nullptr;
+    if (!s) s = new Regenerator();   // raw new, never freed
+    return *s;
+}
+#endif
+
 } // namespace wmr

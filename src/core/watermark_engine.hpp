@@ -11,6 +11,9 @@
 #ifdef WMR_AI_DENOISE
 #include "core/ai_denoise.hpp"
 #endif
+#ifdef WMR_BUILD_REGEN
+#include "core/regenerator.hpp"
+#endif
 
 namespace wmr {
 
@@ -145,6 +148,9 @@ private:
     cv::Mat create_interpolated_alpha(int width, int height, WatermarkSize size) const;
 #ifdef WMR_AI_DENOISE
     static NcnnDenoiser& denoiser();  // process-wide lazy singleton (model loads once)
+#endif
+#ifdef WMR_BUILD_REGEN
+    static Regenerator& regenerator();  // intentionally-leaked process singleton
 #endif
     void init_alpha_maps();
 };
