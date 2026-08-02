@@ -290,13 +290,13 @@ void WatermarkEngine::remove_watermark(cv::Mat& image,
     remove_watermark_alpha_blend(image, alpha, pos, logo_value_);
 }
 
-void WatermarkEngine::remove_watermark_detected(
+bool WatermarkEngine::remove_watermark_detected(
     cv::Mat& image,
     const DetectionResult& detection,
     const InpaintConfig& cfg,
     const cv::Mat* custom_alpha)
 {
-    if (image.empty()) return;
+    if (image.empty()) return false;
 
     if (image.channels() == 4) {
         cv::cvtColor(image, image, cv::COLOR_BGRA2BGR);
@@ -309,7 +309,8 @@ void WatermarkEngine::remove_watermark_detected(
     // content, so the visible-mark alpha-blend + residual cleanup below never run).
     // On any failure (no model/backend, regen error) this is an honest no-op: the
     // image is returned byte-for-byte unchanged and the caller decides the fallback
-    // (the CLI chooses spectral explicitly via `--synthid-attack spectral`).
+    // (the CLI chooses spectral explicitly via `--synthid-attack spectral`). The
+    // false return lets the CLI surface the failure to a non-zero exit code.
     if (cfg.method == InpaintMethod::DiffusionRegen) {
         RegenConfig rc;
         rc.strength = cfg.regen_strength;
@@ -321,13 +322,13 @@ void WatermarkEngine::remove_watermark_detected(
         Regenerator& reg = regenerator();
         if (!reg.is_ready() && !reg.initialize(rc)) {
             spdlog::warn("SynthID regen unavailable (no model/backend); image unchanged.");
-            return;  // graceful: caller may fall back to spectral
+            return false;  // graceful: caller may fall back to spectral
         }
         if (!reg.regen(image, rc)) {
             spdlog::warn("SynthID regen failed on this image; image left unchanged.");
-            return;
+            return false;
         }
-        return;  // regen replaced the whole image; skip alpha-blend + residual cleanup
+        return true;  // regen replaced the whole image; skip alpha-blend + residual cleanup
     }
 #endif
 
@@ -348,16 +349,17 @@ void WatermarkEngine::remove_watermark_detected(
         if (d.is_ready()) {
             d.denoise(image, detection.region, alpha_map,
                       cfg.sigma, cfg.strength, cfg.padding);
-            return;  // AI did the cleanup; skip software inpaint
+            return true;  // AI did the cleanup; skip software inpaint
         }
         spdlog::warn("AI denoise unavailable - falling back to Gaussian");
         InpaintConfig fallback = cfg;
         fallback.method = InpaintMethod::Gaussian;
         inpaint_residual(image, detection.region, fallback, custom_alpha);
-        return;
+        return true;
     }
 #endif
     inpaint_residual(image, detection.region, cfg, custom_alpha);
+    return true;
 }
 
 void WatermarkEngine::remove_watermark_alpha_only(
@@ -468,8 +470,11 @@ NcnnDenoiser& WatermarkEngine::denoiser() {
 Regenerator& WatermarkEngine::regenerator() {
     // Intentionally leaked: stable-diffusion's GGML backend races global device
     // teardown during static destruction (same hazard as ncnn/Vulkan). Never delete.
-    static Regenerator* s = nullptr;
-    if (!s) s = new Regenerator();   // raw new, never freed
+    // Magic-statics init (same pattern as denoiser() above): function-scope `static`
+    // init is thread-safe in C++11+, closing the read-write race the prior
+    // "if (!s) s = new ..." form had under concurrent first-use. regen() itself
+    // remains NOT thread-safe (documented in the header).
+    static Regenerator* s = new Regenerator();   // process-wide; model loads on first use
     return *s;
 }
 #endif

@@ -106,7 +106,7 @@ Supported inputs: PNG / JPEG / WebP images; MP4 and other FFmpeg-supported video
 | `--phase-adaptive` | Use the image's own phase (conjugate subtraction; uniform images) |
 | `--synthid-strength` | 0.0–2.0 (default 0.50) |
 | `--synthid` (remove only) | Also attempt SynthID suppression during a `remove` pass |
-| `--regen-strength` | img2img strength, 0.01–0.30 (default 0.05; regen only) |
+| `--regen-strength` | img2img strength, 0.02–0.15 (default 0.05; regen only) |
 | `--regen-steps` | sampler steps (default 20; regen only) |
 | `--regen-no-download` | refuse the first-run model fetch (regen only; errors if the model is absent) |
 | `--regen-no-tile` | disable tiled img2img (whole-image; fails above ~1024px on most GPUs) |

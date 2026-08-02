@@ -38,7 +38,14 @@ public:
     // Reverse alpha blend + residual cleanup using a full InpaintConfig (method,
     // strength, sigma, radius, padding). The CLI/batch path uses this overload
     // to select the cleanup method (AI / Gaussian / NS / Telea / off).
-    void remove_watermark_detected(cv::Mat& image,
+    //
+    // Returns true when the requested operation produced output (the normal
+    // visible-removal/cleanup path always does). Returns false when the regen
+    // (DiffusionRegen) path no-op'd: no model/backend available, or the regen
+    // itself failed — in both cases the image is returned byte-for-byte unchanged
+    // and a scripted caller can detect the failure from the exit code. Non-regen
+    // paths always return true.
+    bool remove_watermark_detected(cv::Mat& image,
                                    const DetectionResult& detection,
                                    const InpaintConfig& cfg,
                                    const cv::Mat* custom_alpha = nullptr);
@@ -46,13 +53,13 @@ public:
     // Convenience overload: builds an InpaintConfig from a strength fraction and
     // forwards (preserves existing callers — video path, tests). The cleanup
     // method defaults to AiDenoise when built (engine config default), else Gaussian.
-    void remove_watermark_detected(cv::Mat& image,
+    bool remove_watermark_detected(cv::Mat& image,
                                    const DetectionResult& detection,
                                    float inpaint_strength = 0.85f,
                                    const cv::Mat* custom_alpha = nullptr) {
         InpaintConfig cfg;
         cfg.strength = inpaint_strength;
-        remove_watermark_detected(image, detection, cfg, custom_alpha);
+        return remove_watermark_detected(image, detection, cfg, custom_alpha);
     }
 
     // Alpha blend only — no inpaint. Caller handles residual cleanup.

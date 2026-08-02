@@ -110,7 +110,7 @@ inline std::string synthid_attack_help_text() {
         "Google publishes no public verifier). "
         "regen = low-strength SDXL img2img regeneration (the only *validated* SynthID scrub "
         "in the literature; LOSSY ~38-45 dB; leaves a detectable attacked-image footprint; "
-        "downloads a ~6.5 GB model + ~250 MB VAE on first use). "
+        "downloads a ~6.5 GB model + ~335 MB VAE on first use). "
         "regen does NOT remove the VISIBLE Gemini diamond (strength ~0.05 cannot); in "
         "--synthid / SynthidOnly mode, visible-clean the image first if you need that too "
         "(AutoRemove mode runs visible removal first).";

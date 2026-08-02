@@ -14,6 +14,15 @@ TEST_CASE("regen dispatch graceful fallback", "[regen][dispatch]") {
     cfg.regen_allow_download = false;   // force "no model" -> regen fails -> graceful
 #endif
     DetectionResult dr{}; dr.confidence = 0.0f; dr.detected = false;  // no visible mark; regen runs on whole image regardless
-    REQUIRE_NOTHROW(engine.remove_watermark_detected(img, dr, cfg));
+    // The bool return surfaces a failed/no-op regen to the exit code: a failing regen
+    // (no model + allow_download=false here) MUST return false. Keep the NOTHROW check
+    // too (graceful = no throw). Needs no model — the failure is the point (SKIP-free).
+    bool ok = true;
+    REQUIRE_NOTHROW(ok = engine.remove_watermark_detected(img, dr, cfg));
+#ifdef WMR_BUILD_REGEN
+    REQUIRE_FALSE(ok);                     // regen no-op'd -> false
+#else
+    REQUIRE(ok);                            // non-regen path: alpha-blend no-op'd on no-mark, returns true
+#endif
     REQUIRE(img.size() == before.size());   // survived, sane size
 }

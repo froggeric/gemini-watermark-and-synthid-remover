@@ -1,6 +1,4 @@
 #include <catch2/catch_test_macros.hpp>
-#include <opencv2/core.hpp>
-#include <opencv2/imgcodecs.hpp>  // cv::imwrite (correction #2; core.hpp is not enough)
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -10,19 +8,24 @@
 namespace fs = std::filesystem;
 using namespace wmr;
 
-// Byte-deterministic fixture: same 64x64 Vec3b Mat + libpng default compression ->
-// same SHA256 across runs/hosts (correction #1). Pinned once via openssl dgst.
+// Byte-deterministic fixture: a FIXED-BYTE buffer written directly to a file (NOT via
+// cv::imwrite). A PNG fixture's bytes depend on the libpng version, so CI with a
+// different libpng would fail the pinned-hash check below. A raw byte sequence is
+// stable regardless of which image libs are linked. Pinned via shasum -a 256.
 constexpr const char* kFixtureSha256 =
-    "1924111b77ee6b7e299bb3d043a311c99825e41d47a6dc178009145ddc76e337";
+    "12f51875c1545afac5b3bd4b3fd5131a9ed9f50ff248b84b01986d0934716f68";
+constexpr size_t kFixtureLen = 4096;
 
 static fs::path make_fixture(const fs::path& dir, const std::string& name) {
     fs::create_directories(dir);
-    cv::Mat m = cv::Mat_<cv::Vec3b>(64, 64, cv::Vec3b(10, 20, 30));
-    for (int y = 0; y < 64; ++y)
-        for (int x = 0; x < 64; ++x)
-            m.at<cv::Vec3b>(y, x) = cv::Vec3b(x, y, (x + y) & 255);
+    // Deterministic byte sequence: byte[i] = (i*31 + 17) & 0xff. Pure function of i,
+    // so the file (and its SHA256) is identical on every host and every build.
+    std::vector<unsigned char> buf(kFixtureLen);
+    for (size_t i = 0; i < buf.size(); ++i)
+        buf[i] = static_cast<unsigned char>((i * 31 + 17) & 0xff);
     fs::path p = dir / name;
-    cv::imwrite(p.string(), m);
+    std::ofstream f(p, std::ios::binary);
+    f.write(reinterpret_cast<const char*>(buf.data()), buf.size());
     return p;
 }
 
@@ -30,16 +33,15 @@ TEST_CASE("regen downloader", "[regen][downloader]") {
     fs::path tmp = fs::temp_directory_path() / ("wmr_regen_dl_" + std::to_string((long long)&tmp));
     fs::remove_all(tmp);
     fs::create_directories(tmp);
-    fs::path src = make_fixture(tmp, "src.png");
+    fs::path src = make_fixture(tmp, "src.bin");
 
     std::string url = std::string("file://") + src.string();
 
     SECTION("correct hash downloads + verifies") {
-        // Real correctness gate for the OpenSSL hash wiring (correction #1): the
-        // fixture PNG is byte-stable, so its SHA256 is a hardcoded constant. If
-        // verify_sha256's OpenSSL wiring were broken (or the hash hand-rolled and
-        // buggy), this assertion would fail.
-        auto r0 = download_pinned_file(url, tmp / "out0.png", kFixtureSha256,
+        // Real correctness gate for the OpenSSL hash wiring: the fixture is a fixed
+        // byte buffer, so its SHA256 is a hardcoded constant. If verify_sha256's
+        // OpenSSL wiring were broken (or the hash hand-rolled and buggy), this would fail.
+        auto r0 = download_pinned_file(url, tmp / "out0.bin", kFixtureSha256,
                                        /*allow_download=*/true, /*allow_empty_hash=*/false);
         REQUIRE(r0.ok);
         REQUIRE(fs::exists(r0.path));
@@ -49,23 +51,23 @@ TEST_CASE("regen downloader", "[regen][downloader]") {
     }
 
     SECTION("wrong hash is rejected and cleaned") {
-        auto r = download_pinned_file(url, tmp / "out_bad.png",
+        auto r = download_pinned_file(url, tmp / "out_bad.bin",
                                       "0000000000000000000000000000000000000000000000000000000000000000",
                                       /*allow_download=*/true);
         REQUIRE_FALSE(r.ok);
-        REQUIRE_FALSE(fs::exists(tmp / "out_bad.png"));
-        REQUIRE_FALSE(fs::exists(tmp / "out_bad.png.part"));
+        REQUIRE_FALSE(fs::exists(tmp / "out_bad.bin"));
+        REQUIRE_FALSE(fs::exists(tmp / "out_bad.bin.part"));
     }
 
     SECTION("empty hash WITHOUT allow_empty_hash is refused (model-pin safety)") {
-        auto r = download_pinned_file(url, tmp / "out_nopin.png", "",
+        auto r = download_pinned_file(url, tmp / "out_nopin.bin", "",
                                       /*allow_download=*/true, /*allow_empty_hash=*/false);
         REQUIRE_FALSE(r.ok);
         REQUIRE(r.error.find("unpinned") != std::string::npos);
     }
 
     SECTION("no download allowed + absent file -> ok=false") {
-        auto r = download_pinned_file(url, tmp / "out_nodl.png", "",
+        auto r = download_pinned_file(url, tmp / "out_nodl.bin", "",
                                       /*allow_download=*/false, /*allow_empty_hash=*/true);
         REQUIRE_FALSE(r.ok);
     }
@@ -74,12 +76,12 @@ TEST_CASE("regen downloader", "[regen][downloader]") {
         // Pre-seed a .part with garbage bytes (simulating a partial/interrupted fetch).
         // file:// ignores Range -> the write callback detects 200-on-Range and truncates
         // once, so the final file is the full correct body regardless of the stale bytes.
-        fs::path stale = tmp / "out_res.png.part";
+        fs::path stale = tmp / "out_res.bin.part";
         {
             std::ofstream f(stale, std::ios::binary);
             f << "STALE_PARTIAL_BYTES";
         }
-        auto r = download_pinned_file(url, tmp / "out_res.png", kFixtureSha256,
+        auto r = download_pinned_file(url, tmp / "out_res.bin", kFixtureSha256,
                                       /*allow_download=*/true);
         REQUIRE(r.ok);
         REQUIRE(fs::exists(r.path));
@@ -98,7 +100,7 @@ TEST_CASE("regen downloader", "[regen][downloader]") {
         // file:// fetch curl still drives the xferinfo callback at least once.
         int call_count = 0;
         uint64_t last_dl = 0, last_total = 0;
-        auto r = download_pinned_file(url, tmp / "out_prog.png", kFixtureSha256,
+        auto r = download_pinned_file(url, tmp / "out_prog.bin", kFixtureSha256,
                                       /*allow_download=*/true, /*allow_empty_hash=*/false,
                                       [&](uint64_t dl, uint64_t total) {
                                           ++call_count;
@@ -108,13 +110,13 @@ TEST_CASE("regen downloader", "[regen][downloader]") {
                                       });
         REQUIRE(r.ok);
         REQUIRE(call_count > 0);
-        // Total is reported (libpng file is small but non-zero); downloaded reaches it.
+        // Total is reported (fixture is small but non-zero); downloaded reaches it.
         REQUIRE(last_total > 0);
         REQUIRE(last_dl == last_total);
     }
 
     SECTION("progress callback returning false aborts the transfer") {
-        auto r = download_pinned_file(url, tmp / "out_abort.png", kFixtureSha256,
+        auto r = download_pinned_file(url, tmp / "out_abort.bin", kFixtureSha256,
                                       /*allow_download=*/true, /*allow_empty_hash=*/false,
                                       [](uint64_t, uint64_t) { return false; });
         REQUIRE_FALSE(r.ok);

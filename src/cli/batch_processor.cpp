@@ -123,7 +123,9 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
         if (opts.synthid_attack == "regen") {
 #ifdef WMR_BUILD_REGEN
             // regen = whole-image SDXL img2img. No codebook required. On failure the
-            // engine logs and leaves the image unchanged (graceful no-op).
+            // engine returns false (logs + leaves the image unchanged). Mirror the
+            // single-image path: surface the failure so the batch loop counts this
+            // image as failed (not silently as success) and skip the misleading save.
             InpaintConfig ic;
             ic.method = InpaintMethod::DiffusionRegen;
             ic.regen_strength       = opts.regen_strength;
@@ -133,7 +135,11 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
             ic.regen_model_path     = opts.regen_model_path;
             ic.regen_vae_path       = opts.regen_vae_path;
             DetectionResult dr{};  // regen ignores visible-mark detection
-            engine.remove_watermark_detected(image, dr, ic);
+            bool ok = engine.remove_watermark_detected(image, dr, ic);
+            if (!ok) {
+                spdlog::warn("  SynthID regen did not complete (no model/backend, or it failed); output unchanged.");
+                return 1;
+            }
 #else
             spdlog::error("--synthid-attack regen: this wmr build is regen-free (WMR_BUILD_REGEN off). "
                           "Rebuild with WMR_BUILD_REGEN=1, or use --synthid-attack spectral.");

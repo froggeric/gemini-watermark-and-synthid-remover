@@ -34,7 +34,7 @@ void print_header(std::ostream& os) {
         << "  wmr v" APP_VERSION " — watermark remover\n"
         << "  Remove Gemini/Veo visible watermarks\n"
         << "  and suppress SynthID invisible watermarks (heuristic; not a verifiable removal).\n"
-        << "  --synthid-attack regen is lossy (SDXL img2img; ~6.5 GB model + ~250 MB VAE download on first use).\n"
+        << "  --synthid-attack regen is lossy (SDXL img2img; ~6.5 GB model + ~335 MB VAE download on first use).\n"
         << "  https://github.com/froggeric/gemini-watermark-and-synthid-remover\n"
         << "  Copyright 2026 Frederic Guigand\n"
         << "--------------------------------------------\n\n";
@@ -342,7 +342,15 @@ static int process_single_image(const CliOptions& opts) {
             DetectionResult dr{};  // regen ignores visible-mark detection (whole-image scrub)
             dr.detected = false;
             dr.confidence = 0.0f;
-            engine.remove_watermark_detected(image, dr, ic);  // graceful: logs + leaves image unchanged on failure
+            // engine returns false when regen no-op'd (no model/backend, or regen failed);
+            // the image is byte-for-byte unchanged in that case. Surface it to the exit
+            // code so a scripted caller can tell regen did not run, and skip the misleading
+            // "complete" line + the save of an unchanged image.
+            bool ok = engine.remove_watermark_detected(image, dr, ic);
+            if (!ok) {
+                spdlog::warn("SynthID regen did not complete (no model/backend, or it failed); output is unchanged.");
+                return 1;
+            }
             spdlog::info("SynthID regen complete (lossy; not a verifiable removal)");
             did_work = true;
 #else
