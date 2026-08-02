@@ -84,3 +84,16 @@ if(WMR_BUILD_AI_DENOISE)
     target_link_libraries(wmr_tests PRIVATE ncnn ${WMR_VOLK_TARGET})
     target_compile_definitions(wmr_tests PRIVATE WMR_AI_DENOISE=1)
 endif()
+
+# SynthID diffusion-regen (SDXL img2img via stable-diffusion.cpp) — mirrors the main
+# CMakeLists block. Like WMR_BUILD_AI_DENOISE above, target_sources mutates the
+# already-created wmr_tests target. Backend resolver (Task 2) is the first source;
+# later tasks append their own lines.
+if(WMR_BUILD_REGEN)
+    target_sources(wmr_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core/regen_backend.cpp
+        unit/regen_backend_test.cpp
+    )
+    target_link_libraries(wmr_tests PRIVATE stable-diffusion CURL::libcurl OpenSSL::Crypto)
+    target_compile_definitions(wmr_tests PRIVATE WMR_BUILD_REGEN=1)
+endif()

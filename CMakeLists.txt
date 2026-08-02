@@ -365,9 +365,10 @@ if(WMR_BUILD_REGEN)
 
     find_package(CURL REQUIRED)
     find_package(OpenSSL REQUIRED)
-    # Task 1 wires ONLY the link probe. The 4 feature sources are APPENDED one-per-task
-    # in Tasks 2-5. Do NOT list files that do not exist yet.
-    target_sources(${PROJECT_NAME} PRIVATE tests/unit/regen_link_probe.cpp)
+    # Task 1's link probe (tests/unit/regen_link_probe.cpp) proved the vendor links;
+    # it stays on disk but is no longer compiled into wmr. The 4 feature sources are
+    # APPENDED one-per-task in Tasks 2-5. Do NOT list files that do not exist yet.
+    target_sources(${PROJECT_NAME} PRIVATE src/core/regen_backend.cpp)
     target_link_libraries(${PROJECT_NAME} PRIVATE stable-diffusion CURL::libcurl OpenSSL::Crypto)
     target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_BUILD_REGEN=1)
 endif()
