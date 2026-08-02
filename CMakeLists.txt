@@ -371,6 +371,7 @@ if(WMR_BUILD_REGEN)
     target_sources(${PROJECT_NAME} PRIVATE
         src/core/regen_backend.cpp
         src/core/regen_tiling.cpp
+        src/core/model_downloader.cpp
     )
     target_link_libraries(${PROJECT_NAME} PRIVATE stable-diffusion CURL::libcurl OpenSSL::Crypto)
     target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_BUILD_REGEN=1)
