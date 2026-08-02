@@ -304,6 +304,33 @@ void WatermarkEngine::remove_watermark_detected(
         cv::cvtColor(image, image, cv::COLOR_GRAY2BGR);
     }
 
+#ifdef WMR_BUILD_REGEN
+    // SynthID diffusion-regen: SDXL img2img over the WHOLE image (regen replaces
+    // content, so the visible-mark alpha-blend + residual cleanup below never run).
+    // On any failure (no model/backend, regen error) this is an honest no-op: the
+    // image is returned byte-for-byte unchanged and the caller decides the fallback
+    // (the CLI chooses spectral explicitly via `--synthid-attack spectral`).
+    if (cfg.method == InpaintMethod::DiffusionRegen) {
+        RegenConfig rc;
+        rc.strength = cfg.regen_strength;
+        rc.steps = cfg.regen_steps;
+        rc.tile = cfg.regen_tile;
+        rc.allow_download = cfg.regen_allow_download;
+        rc.model_path = cfg.regen_model_path;
+        rc.vae_path   = cfg.regen_vae_path;   // empty -> resolve + download fp16-fix VAE
+        Regenerator& reg = regenerator();
+        if (!reg.is_ready() && !reg.initialize(rc)) {
+            spdlog::warn("SynthID regen unavailable (no model/backend); image unchanged.");
+            return;  // graceful: caller may fall back to spectral
+        }
+        if (!reg.regen(image, rc)) {
+            spdlog::warn("SynthID regen failed on this image; image left unchanged.");
+            return;
+        }
+        return;  // regen replaced the whole image; skip alpha-blend + residual cleanup
+    }
+#endif
+
     const cv::Mat& alpha_map = custom_alpha ? *custom_alpha : get_alpha_map(detection.size);
     cv::Point pos(detection.region.x, detection.region.y);
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <opencv2/core.hpp>
+#include <string>
 
 namespace wmr {
 
@@ -11,6 +12,9 @@ enum class InpaintMethod {
     ShiftMap              // opencv_contrib xphoto INPAINT_SHIFTMAP (Phase B; usable only when WMR_HAS_XPHOTO)
 #ifdef WMR_AI_DENOISE
     , AiDenoise  // FDnCNN NCNN/Vulkan AI denoise (dispatched by WatermarkEngine)
+#endif
+#ifdef WMR_BUILD_REGEN
+    , DiffusionRegen  // SDXL img2img via stable-diffusion.cpp (dispatched by WatermarkEngine)
 #endif
 };
 
@@ -26,6 +30,16 @@ struct InpaintConfig {
     int padding = 32;
     bool full_mask = false;  // use full alpha region as inpaint mask (vs gradient edges)
     float sigma = 50.0f;     // FDnCNN sigma (1-150); unused by Gaussian/Telea/NS
+#ifdef WMR_BUILD_REGEN
+    // Diffusion-regen (SynthID) knobs. Mirror `sigma` as the AI-only field pattern:
+    // these are only read when method == DiffusionRegen (guarded in WatermarkEngine).
+    float regen_strength = 0.05f;       // img2img denoising strength (valid 0.02..0.15)
+    int   regen_steps = 20;             // sample steps
+    bool  regen_tile = true;            // tiled img2img for >1024 (preserve resolution)
+    bool  regen_allow_download = true;  // false on --regen-no-download / CI smoke
+    std::string regen_model_path;       // empty = resolve+download
+    std::string regen_vae_path;         // empty = resolve+download the fp16-fix VAE
+#endif
 };
 
 void inpaint_residual(

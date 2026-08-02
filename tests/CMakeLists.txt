@@ -99,6 +99,7 @@ if(WMR_BUILD_REGEN)
         unit/regen_tiling_test.cpp
         unit/regen_downloader_test.cpp
         unit/regen_smoke_test.cpp
+        unit/regen_dispatch_test.cpp
     )
     target_link_libraries(wmr_tests PRIVATE stable-diffusion CURL::libcurl OpenSSL::Crypto)
     target_compile_definitions(wmr_tests PRIVATE WMR_BUILD_REGEN=1)
