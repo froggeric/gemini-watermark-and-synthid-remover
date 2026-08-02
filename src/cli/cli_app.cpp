@@ -33,7 +33,8 @@ void print_header(std::ostream& os) {
     os << "--------------------------------------------\n"
         << "  wmr v" APP_VERSION " — watermark remover\n"
         << "  Remove Gemini/Veo visible watermarks\n"
-        << "  and suppress SynthID invisible watermarks (heuristic; not a verifiable removal)\n"
+        << "  and suppress SynthID invisible watermarks (heuristic; not a verifiable removal).\n"
+        << "  --synthid-attack regen is lossy (SDXL img2img; ~6.5 GB model + ~250 MB VAE download on first use).\n"
         << "  https://github.com/froggeric/gemini-watermark-and-synthid-remover\n"
         << "  Copyright 2026 Frederic Guigand\n"
         << "--------------------------------------------\n\n";
@@ -314,52 +315,89 @@ static int process_single_image(const CliOptions& opts) {
         }
     }
 
-    // SynthID suppression (frequency-domain heuristic)
+    // SynthID suppression. Branches on opts.synthid_attack:
+    //   "regen"    = SDXL img2img over the WHOLE image (lossy; the only *validated*
+    //                SynthID scrub). Skips the spectral codebook path entirely.
+    //   "off"      = skip the synthid pass even with --synthid set.
+    //   "spectral" = today's frequency-domain heuristic (DEFAULT, byte-identical to
+    //                pre-regen behavior when no --synthid-attack flag is passed).
     if (opts.mode == CliMode::SynthidOnly ||
         (opts.mode == CliMode::AutoRemove && opts.synthid)) {
-        if (opts.codebook_path.empty() && !opts.codebook_free) {
-            spdlog::error("SynthID suppression requires --codebook <path> or --codebook-free");
+
+        if (opts.synthid_attack == "regen") {
+#ifdef WMR_BUILD_REGEN
+            // regen = SDXL img2img over the WHOLE image (a SynthID-only scrub). It does
+            // NOT remove the visible Gemini diamond (strength ~0.05 cannot); in AutoRemove
+            // mode the visible pass above already ran, in SynthidOnly mode the input is the
+            // user's responsibility (visible-clean first if needed). No codebook required.
+            WatermarkEngine engine;             // reaches the leaked regenerator singleton
+            InpaintConfig ic;
+            ic.method = InpaintMethod::DiffusionRegen;
+            ic.regen_strength       = opts.regen_strength;
+            ic.regen_steps          = opts.regen_steps;
+            ic.regen_tile           = !opts.regen_no_tile;
+            ic.regen_allow_download = !opts.regen_no_download;
+            ic.regen_model_path     = opts.regen_model_path;
+            ic.regen_vae_path       = opts.regen_vae_path;
+            DetectionResult dr{};  // regen ignores visible-mark detection (whole-image scrub)
+            dr.detected = false;
+            dr.confidence = 0.0f;
+            engine.remove_watermark_detected(image, dr, ic);  // graceful: logs + leaves image unchanged on failure
+            spdlog::info("SynthID regen complete (lossy; not a verifiable removal)");
+            did_work = true;
+#else
+            spdlog::error("--synthid-attack regen: this wmr build is regen-free (WMR_BUILD_REGEN off). "
+                          "Rebuild with WMR_BUILD_REGEN=1, or use --synthid-attack spectral.");
             return 1;
-        }
-
-        FftContext fft;
-        RemovalConfig config;
-        config.custom_strength = opts.synthid_strength;
-        config.phase_adaptive = opts.phase_adaptive;
-        config.lab_a = opts.lab_a;
-        config.no_content_guard = opts.no_content_guard;
-
-        if (!opts.codebook_path.empty()) {
-            SpectralCodebook codebook;
-            codebook.load(opts.codebook_path);
-
-            if (!opts.force) {
-                SynthidDetector detector(fft);
-                auto det = detector.detect(image, codebook,
-                    opts.lab_a ? SynthidDetector::ColorSpace::LabA
-                               : SynthidDetector::ColorSpace::BGR);
-                if (!det.detected) {
-                    spdlog::debug("No SynthID detected ({:.1f}%)", det.confidence * 100.0f);
-                    if (opts.mode == CliMode::SynthidOnly) {
-                        spdlog::warn("No SynthID detected. Use --force to suppress anyway.");
-                        return 2;
-                    }
-                } else {
-                    spdlog::info("SynthID detected ({:.1f}%), suppressing carrier...",
-                                 det.confidence * 100.0f);
-                }
+#endif
+        } else if (opts.synthid_attack == "off") {
+            spdlog::info("SynthID attack is 'off'; skipping the synthid pass");
+        } else {
+            // ---- DEFAULT "spectral": today's frequency-domain path (codebook/codebook-free) ----
+            if (opts.codebook_path.empty() && !opts.codebook_free) {
+                spdlog::error("SynthID suppression requires --codebook <path> or --codebook-free");
+                return 1;
             }
 
-            CodebookSubtractor subtractor(fft);
-            subtractor.remove_synthid(image, codebook, config);
-        } else {
-            spdlog::info("Using codebook-free suppression (noise residual estimation)");
-            NoiseResidualSubtractor subtractor(fft);
-            subtractor.remove_synthid(image, config);
-        }
+            FftContext fft;
+            RemovalConfig config;
+            config.custom_strength = opts.synthid_strength;
+            config.phase_adaptive = opts.phase_adaptive;
+            config.lab_a = opts.lab_a;
+            config.no_content_guard = opts.no_content_guard;
 
-        spdlog::info("SynthID suppression complete (frequency-domain heuristic; not a verifiable removal)");
-        did_work = true;
+            if (!opts.codebook_path.empty()) {
+                SpectralCodebook codebook;
+                codebook.load(opts.codebook_path);
+
+                if (!opts.force) {
+                    SynthidDetector detector(fft);
+                    auto det = detector.detect(image, codebook,
+                        opts.lab_a ? SynthidDetector::ColorSpace::LabA
+                                   : SynthidDetector::ColorSpace::BGR);
+                    if (!det.detected) {
+                        spdlog::debug("No SynthID detected ({:.1f}%)", det.confidence * 100.0f);
+                        if (opts.mode == CliMode::SynthidOnly) {
+                            spdlog::warn("No SynthID detected. Use --force to suppress anyway.");
+                            return 2;
+                        }
+                    } else {
+                        spdlog::info("SynthID detected ({:.1f}%), suppressing carrier...",
+                                     det.confidence * 100.0f);
+                    }
+                }
+
+                CodebookSubtractor subtractor(fft);
+                subtractor.remove_synthid(image, codebook, config);
+            } else {
+                spdlog::info("Using codebook-free suppression (noise residual estimation)");
+                NoiseResidualSubtractor subtractor(fft);
+                subtractor.remove_synthid(image, config);
+            }
+
+            spdlog::info("SynthID suppression complete (frequency-domain heuristic; not a verifiable removal)");
+            did_work = true;
+        }
     }
 
     if (!did_work) {
@@ -557,6 +595,42 @@ int run_cli(int argc, char* argv[]) {
 #endif
     };
 
+    // SynthID-attack selection + regen knobs, shared by remove + synthid. The
+    // --synthid-attack description is the exported honesty-lock string (the wording
+    // test asserts on it). The regen flags are always bound (even on a regen-free
+    // lean build) so `--synthid-attack regen` parses, then the dispatch path
+    // rejects it with a clear error rather than failing at CLI parse time.
+    auto add_synthid_attack = [&](CLI::App* cmd) {
+        cmd->add_option("--synthid-attack", opts.synthid_attack,
+                        synthid_attack_help_text())
+            ->capture_default_str()
+            ->check(CLI::IsMember({"off", "spectral", "regen"}));
+        cmd->add_option("--regen-strength", opts.regen_strength,
+                        "regen img2img denoising strength 0.02-0.15 "
+                        "(lower = closer to original, weaker scrub)")
+            ->capture_default_str()
+            ->check(CLI::Range(0.02f, 0.15f));
+        cmd->add_option("--regen-steps", opts.regen_steps,
+                        "regen sample steps (fewer is faster; ~8-30)")
+            ->capture_default_str()
+            ->check(CLI::Range(1, 100));
+        cmd->add_flag("--regen-no-download", opts.regen_no_download,
+                      "regen: never touch the network; error if the model is absent "
+                      "(offline/air-gapped use)");
+        cmd->add_flag("--regen-no-tile", opts.regen_no_tile,
+                      "regen: disable tiled img2img; aspect-fit to <=1024 then resize "
+                      "back (faster, lower fidelity)");
+        cmd->add_option("--regen-model-path", opts.regen_model_path,
+                        "regen: path to an SDXL .safetensors; overrides the model "
+                        "download/cache resolution")
+            ->check(CLI::ExistingPath);
+        cmd->add_option("--regen-vae-path", opts.regen_vae_path,
+                        "regen: path to an SDXL VAE .safetensors; overrides the "
+                        "fp16-fix VAE download/cache. Point at the embedded VAE only "
+                        "for experiments (it NaNs in fp16)")
+            ->check(CLI::ExistingPath);
+    };
+
     // --- remove (default) ---
     auto* remove_cmd = app.add_subcommand("remove", "Auto-detect and remove watermarks");
     remove_cmd->add_option("input", opts.input_path, "Input image or directory")
@@ -584,6 +658,7 @@ int run_cli(int argc, char* argv[]) {
                            "Inpaint strength 0.0-1.0")
         ->check(CLI::Range(0.0f, 1.0f));
     add_denoise(remove_cmd);
+    add_synthid_attack(remove_cmd);
     remove_cmd->add_flag("-r,--recursive", opts.recursive, "Process directories recursively");
     remove_cmd->add_option("-o,--output", opts.output_path, "Output path (required for files; batch defaults to cleaned/)");
     add_still_geometry(remove_cmd);
@@ -641,6 +716,7 @@ int run_cli(int argc, char* argv[]) {
                             "SynthID suppression strength 0.0-2.0")
         ->check(CLI::Range(0.0f, 2.0f));
     synthid_cmd->add_option("-o,--output", opts.output_path, "Output path (required)");
+    add_synthid_attack(synthid_cmd);
     add_common(synthid_cmd);
 
     // --- build-codebook ---

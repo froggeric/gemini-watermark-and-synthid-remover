@@ -116,23 +116,48 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
         }
     }
 
-    // SynthID processing
+    // SynthID processing. Mirrors process_single_image's synthid branch: regen runs
+    // a whole-image SDXL scrub (skipping the spectral path), off skips entirely, and
+    // spectral (default) is today's codebook/codebook-free path (byte-identical).
     if ((opts.mode == CliMode::AutoRemove && opts.synthid) || opts.mode == CliMode::SynthidOnly) {
-        RemovalConfig config;
-        config.custom_strength = opts.synthid_strength;
-        config.phase_adaptive = opts.phase_adaptive;
-        config.lab_a = opts.lab_a;
+        if (opts.synthid_attack == "regen") {
+#ifdef WMR_BUILD_REGEN
+            // regen = whole-image SDXL img2img. No codebook required. On failure the
+            // engine logs and leaves the image unchanged (graceful no-op).
+            InpaintConfig ic;
+            ic.method = InpaintMethod::DiffusionRegen;
+            ic.regen_strength       = opts.regen_strength;
+            ic.regen_steps          = opts.regen_steps;
+            ic.regen_tile           = !opts.regen_no_tile;
+            ic.regen_allow_download = !opts.regen_no_download;
+            ic.regen_model_path     = opts.regen_model_path;
+            ic.regen_vae_path       = opts.regen_vae_path;
+            DetectionResult dr{};  // regen ignores visible-mark detection
+            engine.remove_watermark_detected(image, dr, ic);
+#else
+            spdlog::error("--synthid-attack regen: this wmr build is regen-free (WMR_BUILD_REGEN off). "
+                          "Rebuild with WMR_BUILD_REGEN=1, or use --synthid-attack spectral.");
+            return 1;
+#endif
+        } else if (opts.synthid_attack == "off") {
+            spdlog::info("SynthID attack is 'off'; skipping the synthid pass");
+        } else {
+            RemovalConfig config;
+            config.custom_strength = opts.synthid_strength;
+            config.phase_adaptive = opts.phase_adaptive;
+            config.lab_a = opts.lab_a;
 
-        if (!opts.codebook_path.empty()) {
-            FftContext fft;
-            SpectralCodebook codebook;
-            codebook.load(opts.codebook_path);
-            CodebookSubtractor subtractor(fft);
-            subtractor.remove_synthid(image, codebook, config);
-        } else if (opts.codebook_free) {
-            FftContext fft;
-            NoiseResidualSubtractor subtractor(fft);
-            subtractor.remove_synthid(image, config);
+            if (!opts.codebook_path.empty()) {
+                FftContext fft;
+                SpectralCodebook codebook;
+                codebook.load(opts.codebook_path);
+                CodebookSubtractor subtractor(fft);
+                subtractor.remove_synthid(image, codebook, config);
+            } else if (opts.codebook_free) {
+                FftContext fft;
+                NoiseResidualSubtractor subtractor(fft);
+                subtractor.remove_synthid(image, config);
+            }
         }
     }
 

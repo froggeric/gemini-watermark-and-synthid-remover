@@ -12,6 +12,7 @@ set(TEST_SOURCES
     unit/geometry_detector_test.cpp
     unit/still_geometry_test.cpp
     unit/synthid_wording_test.cpp
+    unit/synthid_attack_cli_test.cpp
     unit/codebook_subtractor_test.cpp
     unit/codebook_builder_test.cpp
     unit/lab_a_experiment_test.cpp
