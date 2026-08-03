@@ -110,6 +110,39 @@ DownloadProgressFn make_progress_logger(const std::string& what) {
 }
 
 int round_down_8(int n) { return std::max(8, (n / 8) * 8); }
+
+// Check if CoreML SDXL models are present at the resolved models directory.
+// Returns true only if BOTH at least one .mlpackage (unet/VAE/encoder) AND empty_prompt_embeds.bin exist.
+// This allows Auto to fall back to CPU on mac when the 6.5 GB models are absent.
+bool coreml_models_present() {
+    fs::path models_dir;
+    const char* env_dir = std::getenv("WMR_COREML_SD_MODELS_DIR");
+    if (env_dir && env_dir[0]) {
+        models_dir = fs::path(env_dir);
+    } else {
+        fs::path exe = exe_dir();
+        fs::path share = exe / ".." / "share" / "wmr" / "coreml-sdxl";
+        if (fs::exists(share)) {
+            models_dir = share;
+        } else if (fs::exists(exe / "coreml-sdxl")) {
+            models_dir = exe / "coreml-sdxl";
+        } else {
+            models_dir = cache_dir() / "coreml-sdxl";
+        }
+    }
+    // Check for the embeds binary first (quick check)
+    fs::path embeds_bin = models_dir / "empty_prompt_embeds.bin";
+    if (!fs::exists(embeds_bin)) return false;
+    // Check for at least one .mlpackage (unet, VAE, or text_encoder)
+    // The .mlpackage directories have the full HuggingFace-prefixed names
+    for (const auto& entry : fs::directory_iterator(models_dir)) {
+        if (entry.is_directory() && entry.path().extension() == ".mlpackage") {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 struct Regenerator::Impl {
@@ -219,20 +252,32 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
         if (!r.ok) { spdlog::warn("regen: fp16-fix VAE download failed: {}", r.error); return false; }
     }
 
-    // 3) Backend: resolve cfg.backend ("auto"/"cpu"/"metal"/"vulkan"/"coreml"). On Apple Silicon
-    //    Auto is forced to CPU, because the Metal backend produces garbage output for SDXL
-    //    img2img (upstream leejet/stable-diffusion.cpp / ggml bug; CPU produces correct
-    //    output). Override with --regen-backend. Per upstream docs/backend.md, an empty
-    //    backend (Auto, non-Apple) makes stable-diffusion.cpp auto-select GPU -> integrated
-    //    GPU -> CPU, so it never fails for lack of a device and needs no manual
-    //    sd_list_devices probe. The resolved string is a const char* literal (static
-    //    storage), safe to assign directly to cp.backend.
+    // 3) Backend: resolve cfg.backend ("auto"/"cpu"/"metal"/"vulkan"/"coreml").
+    //    On Apple Silicon, Auto prefers CoreML (fast, correct) if the 6.5 GB .mlpackage
+    //    models are present, else falls back to CPU (so a user without models still gets
+    //    working CPU regen, not a silent skip). Metal is broken (upstream sdcpp/ggml bug).
+    //    Override with --regen-backend. Per upstream docs/backend.md, an empty backend
+    //    (Auto, non-Apple) makes stable-diffusion.cpp auto-select GPU -> integrated GPU ->
+    //    CPU, so it never fails for lack of a device and needs no manual sd_list_devices
+    //    probe. The resolved string is a const char* literal (static storage), safe to
+    //    assign directly to cp.backend.
     RegenBackend b = regen_backend_from_string(cfg.backend);  // ""/auto->Auto, cpu/metal/vulkan/coreml
     if (b == RegenBackend::Auto) {
-#if defined(__APPLE__)
-        // Metal produces garbage output for SDXL img2img on Apple Silicon (upstream
-        // sdcpp/ggml bug; the CPU backend produces correct output). Default to CPU until
-        // a Vulkan/MoltenVK path is verified. Override with --regen-backend.
+#if defined(__APPLE__) && defined(WMR_BUILD_AI_COREML_SD)
+        // On macOS with CoreML build: Auto prefers CoreML if models are present,
+        // else falls back to CPU (slow but correct).
+        if (coreml_models_present()) {
+            b = RegenBackend::CoreML;
+            spdlog::info("regen: CoreML models detected, using CoreML backend (fast, correct). "
+                         "Override with --regen-backend cpu.");
+        } else {
+            b = RegenBackend::Cpu;
+            spdlog::info("regen: CoreML models not found, using CPU backend (slow, ~3 min for 4K). "
+                         "For fast regen, download the .mlpackage models to ~/.cache/wmr/coreml-sdxl "
+                         "or set WMR_COREML_SD_MODELS_DIR. Override with --regen-backend.");
+        }
+#elif defined(__APPLE__)
+        // macOS without CoreML build: CPU only (Metal is broken).
         b = RegenBackend::Cpu;
         spdlog::warn("regen: Metal backend is broken on Apple Silicon (upstream sdcpp/ggml bug); "
                      "using CPU (~3x slower, impractical for 4K tiled). Override with "
@@ -242,8 +287,7 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
 
 #ifdef WMR_BUILD_AI_COREML_SD
     // CoreML backend: use the native CoreML pipeline instead of sdcpp.
-    // This is opt-in only (--regen-backend coreml); Auto never routes to CoreML
-    // (that is Task 5).
+    // Auto routes to CoreML on mac when models are present (Task 5).
     if (b == RegenBackend::CoreML) {
         m_impl->coreml_pipeline = std::make_unique<CoreMLSDPipeline>();
         // Resolve models directory: env var, exe-dir/../share/wmr/coreml-sdxl,
