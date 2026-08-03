@@ -123,15 +123,18 @@ std::vector<int> CoreMLSDEulerScheduler::img2img_timesteps(
 
 void CoreMLSDEulerScheduler::add_noise(const float* sample, const float* noise,
                                       int timestep, float* out, size_t n) const {
-    // Find sigma for this timestep
-    // Matches diffusers index_for_timestep logic: find first match in timesteps
-    int sigma_idx = -1;
-    for (size_t i = 0; i < timesteps_.size(); ++i) {
+    // Match diffusers index_for_timestep: when a timestep value appears at more
+    // than one position in the schedule, diffusers returns the SECOND occurrence
+    // (pos = 1 if len(indices) > 1 else 0) so a mid-schedule sigma is not skipped.
+    // SDXL's integer step_ratio rarely produces duplicates, but match it for safety.
+    int first = -1, second = -1;
+    for (int i = 0; i < static_cast<int>(timesteps_.size()); ++i) {
         if (timesteps_[i] == timestep) {
-            sigma_idx = static_cast<int>(i);
-            break;
+            if (first < 0) first = i;
+            else if (second < 0) { second = i; break; }
         }
     }
+    int sigma_idx = second >= 0 ? second : first;
 
     // If not found in inference timesteps, fall back to train sigmas
     float sigma;
