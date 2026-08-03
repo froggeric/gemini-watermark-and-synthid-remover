@@ -80,7 +80,8 @@ float box_muller(uint32_t& state) {
     state = state * 1664525u + 1013904223u;
     float u2 = (state & 0xFFFFFFu) / 16777216.0f;
     const float pi = 3.14159265358979323846f;
-    float r = std::sqrt(-2.0f * std::max(1e-6f, u1));
+    // Box-Muller: r = sqrt(-2 * ln(u1)), theta = 2 * pi * u2
+    float r = std::sqrt(-2.0f * std::log(std::max(1e-6f, u1)));
     float theta = 2.0f * pi * u2;
     return r * std::cos(theta);
 }
@@ -93,7 +94,8 @@ void fill_std_normal(float* buf, size_t n, uint32_t& state) {
         float u2 = (state & 0xFFFFFFu) / 16777216.0f;
         state = state * 1664525u + 1013904223u;
         const float pi = 3.14159265358979323846f;
-        float r = std::sqrt(-2.0f * std::max(1e-6f, u1));
+        // Box-Muller: r = sqrt(-2 * ln(u1)), theta = 2 * pi * u2
+        float r = std::sqrt(-2.0f * std::log(std::max(1e-6f, u1)));
         float theta = 2.0f * pi * u2;
         buf[i] = r * std::cos(theta);
         if (i + 1 < n) buf[i + 1] = r * std::sin(theta);
@@ -250,11 +252,19 @@ cv::Mat CoreMLSDPipeline::img2img(const cv::Mat& tile_bgr, float strength, int s
         rgb.convertTo(rgb_float, CV_32F, 1.0 / 127.5, -1.0);  // [0,255] -> [-1,1]
 
         // --- Step 2: VAE encode -> latent distribution ---
-        // Build input: (1,3,1024,1024) fp16
+        // Build input: (1,3,1024,1024) fp16 PLANAR. rgb_float is interleaved HWC
+        // (CV_32FC3); de-interleave so each channel plane is contiguous (matches the
+        // MLMultiArray NCHW layout the encoder expects). A plain element-wise copy
+        // would shuffle spatial + channel data and garble the encode.
         std::vector<__fp16> vae_enc_input(3 * kTileSize * kTileSize);
-        const float* src = rgb_float.ptr<float>();
-        for (size_t i = 0; i < 3 * kTileSize * kTileSize; ++i) {
-            vae_enc_input[i] = static_cast<__fp16>(src[i]);
+        const int H = kTileSize, W = kTileSize;
+        for (int c = 0; c < 3; ++c) {
+            for (int h = 0; h < H; ++h) {
+                const cv::Vec3f* row = rgb_float.ptr<cv::Vec3f>(h);
+                __fp16* dst_plane = vae_enc_input.data() + static_cast<size_t>(c) * H * W
+                                 + static_cast<size_t>(h) * W;
+                for (int w = 0; w < W; ++w) dst_plane[w] = static_cast<__fp16>(row[w][c]);
+            }
         }
 
         NSError* err = nil;
@@ -306,16 +316,21 @@ cv::Mat CoreMLSDPipeline::img2img(const cv::Mat& tile_bgr, float strength, int s
             return {};
         }
 
-        // Split mean and logvar
-        std::vector<float> mean(kLatentSize * kLatentSize * 4);
-        std::vector<float> logvar(kLatentSize * kLatentSize * 4);
+        // Split mean (channels 0-3) and logvar (channels 4-7) from the planar
+        // (1,8,128,128) encoder output, storing each as planar (4,128,128). The
+        // elementwise latent ops + UNet (planar (2,4,128,128)) + VAE decoder then
+        // share one consistent layout. Indexing the planar source as interleaved
+        // (i*8+c) would shuffle channels and garble the latent.
+        constexpr size_t kLatentPlane = static_cast<size_t>(kLatentSize) * kLatentSize;  // 128*128
+        std::vector<float> mean(4 * kLatentPlane);
+        std::vector<float> logvar(4 * kLatentPlane);
         const float* src_latent = latent_full.data();
         float* dst_mean = mean.data();
         float* dst_logvar = logvar.data();
-        for (size_t i = 0; i < kLatentSize * kLatentSize; ++i) {
-            for (int c = 0; c < 4; ++c) {
-                dst_mean[i * 4 + c] = src_latent[i * 8 + c];
-                dst_logvar[i * 4 + c] = src_latent[i * 8 + 4 + c];
+        for (int c = 0; c < 4; ++c) {
+            for (size_t i = 0; i < kLatentPlane; ++i) {
+                dst_mean[c * kLatentPlane + i]   = src_latent[c * kLatentPlane + i];
+                dst_logvar[c * kLatentPlane + i] = src_latent[(4 + c) * kLatentPlane + i];
             }
         }
 
@@ -333,8 +348,9 @@ cv::Mat CoreMLSDPipeline::img2img(const cv::Mat& tile_bgr, float strength, int s
         vDSP_vsmul(latent.data(), 1, &kVAEScalingFactor, latent.data(), 1, latent.size());
 
         // --- Step 3: Euler scheduler setup ---
-        m_impl->scheduler.set_timesteps(steps);
-        auto timesteps = m_impl->scheduler.img2img_timesteps(steps, strength);
+        // Use set_timesteps_img2img to set up the truncated schedule directly
+        m_impl->scheduler.set_timesteps_img2img(steps, strength);
+        const auto& timesteps = m_impl->scheduler.timesteps();
         if (timesteps.empty()) {
             spdlog::warn("CoreML SDXL img2img: no timesteps for strength={}, steps={}", strength, steps);
             return {};
@@ -346,7 +362,8 @@ cv::Mat CoreMLSDPipeline::img2img(const cv::Mat& tile_bgr, float strength, int s
         fill_std_normal(noise.data(), noise.size(), rng_state);
 
         std::vector<float> noisy_latent(kLatentSize * kLatentSize * 4);
-        m_impl->scheduler.add_noise(latent.data(), noise.data(), timesteps[0],
+        // Use the first timestep from the truncated schedule
+        m_impl->scheduler.add_noise(latent.data(), noise.data(), timesteps.front(),
                                     noisy_latent.data(), latent.size());
 
         // --- Step 5: Denoise loop ---

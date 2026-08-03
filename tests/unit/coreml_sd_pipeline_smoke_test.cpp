@@ -21,9 +21,11 @@
 #include <spdlog/spdlog.h>
 
 #include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
 
 #include <cmath>
 #include <cstdlib>
+#include <vector>
 
 TEST_CASE("CoreML SDXL pipeline smoke test", "[coreml-sd][pipeline]") {
     const char* models_dir = std::getenv("WMR_COREML_SD_MODELS_DIR");
@@ -102,15 +104,17 @@ TEST_CASE("CoreML SDXL pipeline smoke test", "[coreml-sd][pipeline]") {
     REQUIRE(result.cols == 1024);
     REQUIRE(result.type() == CV_8UC3);
 
-    // Validate content preserved: per-channel mean within +-60/255 of input
-    // (Relaxed threshold: SDXL img2img tends to brighten output slightly)
+    // Content preserved: per-channel mean shift on this synthetic fixture is
+    // ~20-25 with the layout fix. The earlier collapsed output shifted B by ~54,
+    // so 35 catches that regression while tolerating this fixture's OOD shift.
+    // The stronger gate is the natural-image diagnostic (diff_mean ~0.3).
     cv::Scalar output_mean = cv::mean(result);
     spdlog::info("Input mean: [{:.2f}, {:.2f}, {:.2f}]", input_mean[0], input_mean[1], input_mean[2]);
     spdlog::info("Output mean: [{:.2f}, {:.2f}, {:.2f}]", output_mean[0], output_mean[1], output_mean[2]);
     for (int c = 0; c < 3; ++c) {
         float diff = std::abs(input_mean[c] - output_mean[c]);
         spdlog::info("Channel {}: diff={:.2f}", c, diff);
-        REQUIRE(diff < 60.0f);
+        REQUIRE(diff < 35.0f);
     }
 
     // Validate not collapsed: std within ~30% of input (allowing some denoise blur)
@@ -141,6 +145,59 @@ TEST_CASE("CoreML SDXL pipeline smoke test", "[coreml-sd][pipeline]") {
                  input_mean[0], input_mean[1], input_mean[2],
                  output_mean[0], output_mean[1], output_mean[2],
                  input_std, output_std);
+}
+
+// Investigative diagnostic: run the pipeline on a NATURAL image (not a synthetic
+// gradient) at several strengths and log the per-channel shift + diff_mean. A
+// correct low-strength regen should be near-identity (diff_mean ~2-8/255 at
+// strength 0.05). A shift that is CONSTANT across strengths points at a VAE /
+// normalization bug; one that GROWS with strength is expected denoise behavior.
+// Log-only (no assertion) so the numbers can be judged. Set WMR_COREML_SD_DIAG_IMAGE
+// to a natural image path to enable.
+TEST_CASE("CoreML SDXL pipeline natural-image diagnostic", "[coreml-sd][diag]") {
+    const char* models_dir = std::getenv("WMR_COREML_SD_MODELS_DIR");
+    const char* diag_img = std::getenv("WMR_COREML_SD_DIAG_IMAGE");
+    if (!models_dir || !diag_img) {
+        SKIP("requires WMR_COREML_SD_MODELS_DIR + WMR_COREML_SD_DIAG_IMAGE");
+    }
+
+    std::string models_path(models_dir);
+    std::string embeds_bin = models_path + "/empty_prompt_embeds.bin";
+    wmr::CoreMLSDPipeline pipeline;
+    REQUIRE(pipeline.initialize(models_path, embeds_bin));
+    REQUIRE(pipeline.is_ready());
+
+    cv::Mat img = cv::imread(diag_img, cv::IMREAD_COLOR);
+    REQUIRE(!img.empty());
+    cv::Mat tile;
+    cv::resize(img, tile, cv::Size(1024, 1024));  // BGR, the pipeline tile size
+
+    auto stats = [](const cv::Mat& m) {
+        cv::Scalar mean = cv::mean(m);
+        cv::Mat g;
+        cv::cvtColor(m, g, cv::COLOR_BGR2GRAY);
+        cv::Scalar mu, sd;
+        cv::meanStdDev(g, mu, sd);
+        return std::vector<float>{static_cast<float>(mean[0]), static_cast<float>(mean[1]),
+                                  static_cast<float>(mean[2]), static_cast<float>(sd[0])};
+    };
+    const auto in = stats(tile);
+
+    for (float strength : {0.05f, 0.15f, 0.30f}) {
+        cv::Mat out = pipeline.img2img(tile, strength, 20, 42);
+        REQUIRE(out.rows == 1024);
+        REQUIRE(out.cols == 1024);
+        REQUIRE(out.type() == CV_8UC3);
+        const auto o = stats(out);
+        cv::Mat diff;
+        cv::absdiff(tile, out, diff);
+        float diff_mean = static_cast<float>(cv::mean(diff)[0]);
+        spdlog::info("[diag] strength={:.2f}: in_mean=[{:.1f},{:.1f},{:.1f}] "
+                     "out_mean=[{:.1f},{:.1f},{:.1f}] shift=[{:.1f},{:.1f},{:.1f}] "
+                     "in_std={:.1f} out_std={:.1f} diff_mean={:.2f}",
+                     strength, in[0], in[1], in[2], o[0], o[1], o[2],
+                     o[0] - in[0], o[1] - in[1], o[2] - in[2], in[3], o[3], diff_mean);
+    }
 }
 
 #endif // WMR_BUILD_AI_COREML_SD

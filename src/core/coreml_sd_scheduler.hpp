@@ -54,6 +54,12 @@ public:
     // Computes inference sigmas (length num_steps+1, last = 0) and timesteps.
     void set_timesteps(int num_inference_steps);
 
+    // Set img2img timesteps for denoising loop.
+    // Computes truncated timesteps based on strength and sets sigmas_/timesteps_
+    // to the truncated schedule. Use this for img2img so the denoise loop can
+    // iterate step_index 0..(k-1) over the correct sigmas.
+    void set_timesteps_img2img(int num_inference_steps, float strength);
+
     // Get img2img truncated timesteps for a given strength.
     // diffusers: t_start = num_inference_steps - int(num_inference_steps * strength)
     // Returns timesteps[t_start:]

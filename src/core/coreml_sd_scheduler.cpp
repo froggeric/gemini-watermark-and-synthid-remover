@@ -123,6 +123,37 @@ std::vector<int> CoreMLSDEulerScheduler::img2img_timesteps(
     return result;
 }
 
+void CoreMLSDEulerScheduler::set_timesteps_img2img(int num_inference_steps, float strength) {
+    // First, compute the full timesteps to get the truncated subset
+    auto truncated_ts = img2img_timesteps(num_inference_steps, strength);
+    if (truncated_ts.empty()) {
+        // Fall back to single-step schedule if empty
+        truncated_ts = {1};
+    }
+
+    // Set num_inference_steps_ to the truncated size
+    num_inference_steps_ = static_cast<int>(truncated_ts.size());
+    step_index_ = 0;
+
+    // Set timesteps_ to the truncated values
+    timesteps_ = truncated_ts;
+
+    // Compute sigmas_ for the truncated timesteps
+    sigmas_.resize(num_inference_steps_ + 1);
+    for (int i = 0; i < num_inference_steps_; ++i) {
+        int t = timesteps_[i];
+        // Find the index in train_sigmas that corresponds to this timestep
+        int idx = kNumTrainTimesteps - 1 - t;
+        if (idx >= 0 && idx < kNumTrainTimesteps) {
+            sigmas_[i] = train_sigmas_[idx];
+        } else {
+            sigmas_[i] = train_sigmas_[std::max(0, std::min(idx, kNumTrainTimesteps))];
+        }
+    }
+    // Final sigma is 0
+    sigmas_[num_inference_steps_] = 0.0f;
+}
+
 void CoreMLSDEulerScheduler::add_noise(const float* sample, const float* noise,
                                       int timestep, float* out, size_t n) const {
     // Match diffusers index_for_timestep: when a timestep value appears at more
