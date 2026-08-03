@@ -378,21 +378,26 @@ if(WMR_BUILD_REGEN)
     target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_BUILD_REGEN=1)
 endif()
 
-# CoreML SDXL img2img (Euler scheduler, macOS only) — opt-in. OFF by
+# CoreML SDXL img2img (Euler scheduler + pipeline, macOS only) — opt-in. OFF by
 # default keeps the lean build Accelerate-free (the flag requires APPLE).
 # Runs BEFORE add_subdirectory(tests) so the tests mirror block sees the flag.
-option(WMR_BUILD_AI_COREML_SD "Build CoreML SDXL img2img scheduler (macOS only)" OFF)
+option(WMR_BUILD_AI_COREML_SD "Build CoreML SDXL img2img pipeline (macOS only)" OFF)
 if(WMR_BUILD_AI_COREML_SD)
     if(NOT APPLE)
         message(FATAL_ERROR "WMR_BUILD_AI_COREML_SD is macOS-only (requires Accelerate framework)")
     endif()
 
-    # Find Accelerate framework
+    # Find frameworks
     find_library(ACCELERATE_LIB Accelerate REQUIRED)
+    find_library(COREML_LIB CoreML REQUIRED)
+    find_library(FOUNDATION_LIB Foundation REQUIRED)
+
+    enable_language(OBJCXX)
     target_sources(${PROJECT_NAME} PRIVATE
         src/core/coreml_sd_scheduler.cpp
+        src/core/coreml_sd_pipeline.mm
     )
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${ACCELERATE_LIB})
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${ACCELERATE_LIB} ${COREML_LIB} ${FOUNDATION_LIB})
     target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_BUILD_AI_COREML_SD=1)
 endif()
 

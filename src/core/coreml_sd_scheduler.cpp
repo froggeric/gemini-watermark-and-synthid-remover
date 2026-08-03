@@ -107,7 +107,9 @@ void CoreMLSDEulerScheduler::set_timesteps(int num_inference_steps) {
 std::vector<int> CoreMLSDEulerScheduler::img2img_timesteps(
     int num_inference_steps, float strength) const {
     // diffusers: t_start = num_inference_steps - int(num_inference_steps * strength)
+    // Clamp to at least 1 timestep (strength close to 0 still needs to denoise once)
     int t_start = num_inference_steps - static_cast<int>(num_inference_steps * strength);
+    t_start = std::min(t_start, num_inference_steps - 1);  // Ensure at least 1 step
 
     // Need to compute the timesteps for the full inference first
     CoreMLSDEulerScheduler temp;
