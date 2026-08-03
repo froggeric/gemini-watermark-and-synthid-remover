@@ -11,6 +11,7 @@ TEST_CASE("regen backend resolver", "[regen][backend]") {
         REQUIRE(regen_backend_string(RegenBackend::Metal)  == "metal");
         REQUIRE(regen_backend_string(RegenBackend::Cuda)   == "cuda0");
         REQUIRE(regen_backend_string(RegenBackend::Vulkan) == "vulkan0");
+        REQUIRE(regen_backend_string(RegenBackend::CoreML) == "coreml");
     }
     SECTION("parse") {
         REQUIRE(regen_backend_from_string("")        == RegenBackend::Auto);
@@ -22,6 +23,7 @@ TEST_CASE("regen backend resolver", "[regen][backend]") {
         REQUIRE(regen_backend_from_string("vulkan0") == RegenBackend::Vulkan);
         REQUIRE(regen_backend_from_string("cuda")    == RegenBackend::Cuda);    // CLI --regen-backend string
         REQUIRE(regen_backend_from_string("vulkan")  == RegenBackend::Vulkan);  // CLI --regen-backend string
+        REQUIRE(regen_backend_from_string("coreml")  == RegenBackend::CoreML);  // CLI --regen-backend string
     }
     SECTION("default is Auto (empty = sdcpp auto GPU->CPU)") {
         REQUIRE(default_regen_backend() == RegenBackend::Auto);

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(wmr VERSION 1.15.0 LANGUAGES CXX)
+project(wmr VERSION 1.15.0 LANGUAGES CXX OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -392,7 +392,6 @@ if(WMR_BUILD_AI_COREML_SD)
     find_library(COREML_LIB CoreML REQUIRED)
     find_library(FOUNDATION_LIB Foundation REQUIRED)
 
-    enable_language(OBJCXX)
     target_sources(${PROJECT_NAME} PRIVATE
         src/core/coreml_sd_scheduler.cpp
         src/core/coreml_sd_pipeline.mm

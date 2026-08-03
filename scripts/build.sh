@@ -38,6 +38,9 @@ AI_MIGAN="${WMR_AI_MIGAN:-0}"
 # stable-diffusion.cpp submodule (+ its ggml submodule). Unset/0 keeps the lean
 # build stable-diffusion/ggml/curl-free.
 REGEN="${WMR_BUILD_REGEN:-0}"
+# When WMR_BUILD_AI_COREML_SD=1, build CoreML SDXL img2img pipeline (macOS only).
+# Requires Accelerate framework (system). Unset/0 keeps the lean build without CoreML.
+COREML_SD="${WMR_BUILD_AI_COREML_SD:-0}"
 
 DEPS=(opencv fftw ffmpeg catch2 fmt spdlog cli11)
 
@@ -111,7 +114,8 @@ cmake -S . -B "${BUILD_DIR}" -G Ninja \
   -DWMR_BUILD_TESTS=ON \
   $([ "${AI_DENOISE}" = "1" ] && echo "-DWMR_BUILD_AI_DENOISE=ON") \
   $([ "${AI_MIGAN}" = "1" ] && echo "-DWMR_BUILD_AI_MIGAN=ON") \
-  $([ "${REGEN}" = "1" ] && echo "-DWMR_BUILD_REGEN=ON -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)")
+  $([ "${REGEN}" = "1" ] && echo "-DWMR_BUILD_REGEN=ON -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)") \
+  $([ "${COREML_SD}" = "1" ] && echo "-DWMR_BUILD_AI_COREML_SD=ON -DCMAKE_OBJCXX_COMPILE_OBJECT='\''<CMAKE_OBJCXX_COMPILER> <DEFINES> <INCLUDES> <FLAGS> -o <OBJECT> -c <SOURCE>'\''")
 
 # 4. Build.
 cmake --build "${BUILD_DIR}" --parallel

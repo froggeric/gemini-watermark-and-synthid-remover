@@ -15,6 +15,7 @@ RegenBackend regen_backend_from_string(std::string_view s) {
     // accepting "vulkan" here it fell through to Auto -> Cpu on Apple Silicon,
     // silently never using the Vulkan backend.
     if (s == "vulkan0" || s == "vulkan") return RegenBackend::Vulkan;
+    if (s == "coreml") return RegenBackend::CoreML;
     return RegenBackend::Auto;  // unknown -> auto default
 }
 
@@ -25,6 +26,7 @@ const char* regen_backend_string(RegenBackend b) {
         case RegenBackend::Metal:  return "metal";
         case RegenBackend::Cuda:   return "cuda0";
         case RegenBackend::Vulkan: return "vulkan0";
+        case RegenBackend::CoreML: return "coreml";
     }
     return "";
 }

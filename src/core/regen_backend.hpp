@@ -9,7 +9,7 @@ namespace wmr {
 // cuda0 / vulkan0, and an EMPTY string ("") selects the default = GPU -> integrated
 // GPU -> CPU (auto, never fails for lack of a device). Auto is our runtime default;
 // the others are for an explicit --regen-backend override (Task 7).
-enum class RegenBackend { Auto, Cpu, Cuda, Vulkan, Metal };
+enum class RegenBackend { Auto, Cpu, Cuda, Vulkan, Metal, CoreML };
 
 // Runtime default: Auto (empty backend string -> sdcpp picks GPU then CPU). Pure.
 RegenBackend default_regen_backend();

@@ -3,6 +3,9 @@
 #include "core/model_downloader.hpp"
 #include "core/regen_tiling.hpp"
 #include "core/regen_backend.hpp"
+#ifdef WMR_BUILD_AI_COREML_SD
+#include "core/coreml_sd_pipeline.hpp"
+#endif
 #include <spdlog/spdlog.h>
 #include <stable-diffusion.h>
 #include <opencv2/imgproc.hpp>
@@ -114,10 +117,37 @@ struct Regenerator::Impl {
     RegenConfig cfg{};
     fs::path vae_path_resolved;
     bool ready = false;
+#ifdef WMR_BUILD_AI_COREML_SD
+    std::unique_ptr<CoreMLSDPipeline> coreml_pipeline;
+#endif
     ~Impl() { /* intentionally NOT freeing ctx here; see header + ImplDeleter */ }
     void destroy() { if (ctx) { free_sd_ctx(ctx); ctx = nullptr; } }
 
     bool img2img_tile(const cv::Mat& bgr_tile, cv::Mat& out_tile, const RegenConfig& c) {
+#ifdef WMR_BUILD_AI_COREML_SD
+        if (coreml_pipeline && coreml_pipeline->is_ready()) {
+            // CoreML path: run one 1024x1024 tile. The caller's tiled dispatch (regen())
+            // already handles >1024 images by calling img2img_tile per tile.
+            // Resize input to 1024x1024 (CoreML requirement), then resize output back.
+            cv::Mat resized_1024;
+            cv::Size original_size = bgr_tile.size();
+            if (bgr_tile.size() != cv::Size(1024, 1024)) {
+                cv::resize(bgr_tile, resized_1024, cv::Size(1024, 1024), 0, 0, cv::INTER_AREA);
+            } else {
+                resized_1024 = bgr_tile;
+            }
+            uint64_t seed = 42;  // TODO: make configurable via --regen-seed
+            cv::Mat result = coreml_pipeline->img2img(resized_1024, c.strength, c.steps, seed);
+            if (result.empty()) return false;
+            // Resize output back to original tile size
+            if (result.size() != original_size) {
+                cv::resize(result, out_tile, original_size, 0, 0, cv::INTER_LANCZOS4);
+            } else {
+                out_tile = result;
+            }
+            return true;
+        }
+#endif
         // Caller (regen()) guarantees bgr_tile is CV_8UC3.
         cv::Mat rgb; cv::cvtColor(bgr_tile, rgb, cv::COLOR_BGR2RGB);
 
@@ -189,7 +219,7 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
         if (!r.ok) { spdlog::warn("regen: fp16-fix VAE download failed: {}", r.error); return false; }
     }
 
-    // 3) Backend: resolve cfg.backend ("auto"/"cpu"/"metal"/"vulkan"). On Apple Silicon
+    // 3) Backend: resolve cfg.backend ("auto"/"cpu"/"metal"/"vulkan"/"coreml"). On Apple Silicon
     //    Auto is forced to CPU, because the Metal backend produces garbage output for SDXL
     //    img2img (upstream leejet/stable-diffusion.cpp / ggml bug; CPU produces correct
     //    output). Override with --regen-backend. Per upstream docs/backend.md, an empty
@@ -197,7 +227,7 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
     //    GPU -> CPU, so it never fails for lack of a device and needs no manual
     //    sd_list_devices probe. The resolved string is a const char* literal (static
     //    storage), safe to assign directly to cp.backend.
-    RegenBackend b = regen_backend_from_string(cfg.backend);  // ""/auto->Auto, cpu/metal/vulkan
+    RegenBackend b = regen_backend_from_string(cfg.backend);  // ""/auto->Auto, cpu/metal/vulkan/coreml
     if (b == RegenBackend::Auto) {
 #if defined(__APPLE__)
         // Metal produces garbage output for SDXL img2img on Apple Silicon (upstream
@@ -209,6 +239,46 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
                      "--regen-backend {metal,vulkan} at your own risk.");
 #endif
     }
+
+#ifdef WMR_BUILD_AI_COREML_SD
+    // CoreML backend: use the native CoreML pipeline instead of sdcpp.
+    // This is opt-in only (--regen-backend coreml); Auto never routes to CoreML
+    // (that is Task 5).
+    if (b == RegenBackend::CoreML) {
+        m_impl->coreml_pipeline = std::make_unique<CoreMLSDPipeline>();
+        // Resolve models directory: env var, exe-dir/../share/wmr/coreml-sdxl,
+        // exe-dir/coreml-sdxl, or ~/.cache/wmr/coreml-sdxl.
+        fs::path models_dir;
+        const char* env_dir = std::getenv("WMR_COREML_SD_MODELS_DIR");
+        if (env_dir && env_dir[0]) {
+            models_dir = fs::path(env_dir);
+        } else {
+            fs::path exe = exe_dir();
+            fs::path share = exe / ".." / "share" / "wmr" / "coreml-sdxl";
+            if (fs::exists(share)) {
+                models_dir = share;
+            } else if (fs::exists(exe / "coreml-sdxl")) {
+                models_dir = exe / "coreml-sdxl";
+            } else {
+                models_dir = cache_dir() / "coreml-sdxl";
+            }
+        }
+        fs::path embeds_bin = models_dir / "empty_prompt_embeds.bin";
+        if (!m_impl->coreml_pipeline->initialize(models_dir.string(), embeds_bin.string())) {
+            spdlog::warn("regen: CoreML pipeline initialization failed (models_dir='{}'). "
+                         "Ensure the converted .mlpackage files and empty_prompt_embeds.bin are present. "
+                         "Falling back to spectral.", models_dir.string());
+            return false;
+        }
+        if (!m_impl->coreml_pipeline->is_ready()) {
+            spdlog::warn("regen: CoreML pipeline not ready after initialization. Falling back to spectral.");
+            return false;
+        }
+        m_impl->ready = true;
+        spdlog::info("regen: CoreML SDXL pipeline ready, models_dir='{}'", models_dir.string());
+        return true;
+    }
+#endif
     const char* backend = regen_backend_string(b);  // "" (non-mac auto), "cpu", "metal", "vulkan0"
 
     // 4) Create the ctx. SDXL: clip_l/clip_g are embedded in the base checkpoint, so they

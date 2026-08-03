@@ -641,9 +641,10 @@ int run_cli(int argc, char* argv[]) {
         cmd->add_option("--regen-backend", opts.regen_backend,
                         "regen runtime backend: auto (default; CPU on Apple Silicon "
                         "where Metal is broken, GPU elsewhere), cpu, metal (Apple GPU; "
-                        "currently produces garbage on Apple Silicon), or vulkan.")
+                        "currently produces garbage on Apple Silicon), vulkan, or coreml "
+                        "(Apple Silicon native CoreML SDXL; opt-in only).")
             ->capture_default_str()
-            ->check(CLI::IsMember({"auto", "cpu", "metal", "vulkan"}));
+            ->check(CLI::IsMember({"auto", "cpu", "metal", "vulkan", "coreml"}));
     };
 
     // --- remove (default) ---
