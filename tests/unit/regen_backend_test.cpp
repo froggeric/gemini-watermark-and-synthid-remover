@@ -20,6 +20,8 @@ TEST_CASE("regen backend resolver", "[regen][backend]") {
         REQUIRE(regen_backend_from_string("metal")   == RegenBackend::Metal);
         REQUIRE(regen_backend_from_string("cuda0")   == RegenBackend::Cuda);
         REQUIRE(regen_backend_from_string("vulkan0") == RegenBackend::Vulkan);
+        REQUIRE(regen_backend_from_string("cuda")    == RegenBackend::Cuda);    // CLI --regen-backend string
+        REQUIRE(regen_backend_from_string("vulkan")  == RegenBackend::Vulkan);  // CLI --regen-backend string
     }
     SECTION("default is Auto (empty = sdcpp auto GPU->CPU)") {
         REQUIRE(default_regen_backend() == RegenBackend::Auto);

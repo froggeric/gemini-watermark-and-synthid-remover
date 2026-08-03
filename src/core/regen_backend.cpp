@@ -9,8 +9,12 @@ RegenBackend regen_backend_from_string(std::string_view s) {
     if (s == "auto")    return RegenBackend::Auto;
     if (s == "cpu")     return RegenBackend::Cpu;
     if (s == "metal")   return RegenBackend::Metal;
-    if (s == "cuda0")   return RegenBackend::Cuda;
-    if (s == "vulkan0") return RegenBackend::Vulkan;
+    if (s == "cuda0" || s == "cuda")   return RegenBackend::Cuda;
+    // Accept both the CLI-facing "vulkan" and the sdcpp device string "vulkan0".
+    // The CLI --regen-backend IsMember set is {auto,cpu,metal,vulkan}; without
+    // accepting "vulkan" here it fell through to Auto -> Cpu on Apple Silicon,
+    // silently never using the Vulkan backend.
+    if (s == "vulkan0" || s == "vulkan") return RegenBackend::Vulkan;
     return RegenBackend::Auto;  // unknown -> auto default
 }
 
