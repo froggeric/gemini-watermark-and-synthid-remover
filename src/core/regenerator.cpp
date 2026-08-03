@@ -189,12 +189,27 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
         if (!r.ok) { spdlog::warn("regen: fp16-fix VAE download failed: {}", r.error); return false; }
     }
 
-    // 3) Backend: default is empty/auto (regen_backend_string(default_regen_backend()) == "").
-    //    Per upstream docs/backend.md, an empty backend makes stable-diffusion.cpp auto-
-    //    select GPU -> integrated GPU -> CPU, so it never fails for lack of a device and
-    //    needs no manual sd_list_devices probe. The string is a const char* literal (static
-    //    storage), safe to assign directly.
-    const char* backend = regen_backend_string(default_regen_backend());  // "" (auto)
+    // 3) Backend: resolve cfg.backend ("auto"/"cpu"/"metal"/"vulkan"). On Apple Silicon
+    //    Auto is forced to CPU, because the Metal backend produces garbage output for SDXL
+    //    img2img (upstream leejet/stable-diffusion.cpp / ggml bug; CPU produces correct
+    //    output). Override with --regen-backend. Per upstream docs/backend.md, an empty
+    //    backend (Auto, non-Apple) makes stable-diffusion.cpp auto-select GPU -> integrated
+    //    GPU -> CPU, so it never fails for lack of a device and needs no manual
+    //    sd_list_devices probe. The resolved string is a const char* literal (static
+    //    storage), safe to assign directly to cp.backend.
+    RegenBackend b = regen_backend_from_string(cfg.backend);  // ""/auto->Auto, cpu/metal/vulkan
+    if (b == RegenBackend::Auto) {
+#if defined(__APPLE__)
+        // Metal produces garbage output for SDXL img2img on Apple Silicon (upstream
+        // sdcpp/ggml bug; the CPU backend produces correct output). Default to CPU until
+        // a Vulkan/MoltenVK path is verified. Override with --regen-backend.
+        b = RegenBackend::Cpu;
+        spdlog::warn("regen: Metal backend is broken on Apple Silicon (upstream sdcpp/ggml bug); "
+                     "using CPU (~3x slower, impractical for 4K tiled). Override with "
+                     "--regen-backend {metal,vulkan} at your own risk.");
+#endif
+    }
+    const char* backend = regen_backend_string(b);  // "" (non-mac auto), "cpu", "metal", "vulkan0"
 
     // 4) Create the ctx. SDXL: clip_l/clip_g are embedded in the base checkpoint, so they
     //    stay nullptr. wtype left at the init default (auto-detect from the file).

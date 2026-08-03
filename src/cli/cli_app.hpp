@@ -75,6 +75,7 @@ struct CliOptions {
     bool  regen_no_tile = false;
     std::string regen_model_path;
     std::string regen_vae_path;
+    std::string regen_backend = "auto";   // auto|cpu|metal|vulkan (auto->CPU on Apple Silicon)
 
     // build-codebook: opt-in carrier-bin seeding. Parsed from --carrier-grid
     // "x1,y1;x2,y2;..." (FFT-bin coords on the per-profile rows x cols grid).

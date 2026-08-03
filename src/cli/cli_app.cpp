@@ -339,6 +339,7 @@ static int process_single_image(const CliOptions& opts) {
             ic.regen_allow_download = !opts.regen_no_download;
             ic.regen_model_path     = opts.regen_model_path;
             ic.regen_vae_path       = opts.regen_vae_path;
+            ic.regen_backend        = opts.regen_backend;
             DetectionResult dr{};  // regen ignores visible-mark detection (whole-image scrub)
             dr.detected = false;
             dr.confidence = 0.0f;
@@ -637,6 +638,12 @@ int run_cli(int argc, char* argv[]) {
                         "fp16-fix VAE download/cache. Point at the embedded VAE only "
                         "for experiments (it NaNs in fp16)")
             ->check(CLI::ExistingPath);
+        cmd->add_option("--regen-backend", opts.regen_backend,
+                        "regen runtime backend: auto (default; CPU on Apple Silicon "
+                        "where Metal is broken, GPU elsewhere), cpu, metal (Apple GPU; "
+                        "currently produces garbage on Apple Silicon), or vulkan.")
+            ->capture_default_str()
+            ->check(CLI::IsMember({"auto", "cpu", "metal", "vulkan"}));
     };
 
     // --- remove (default) ---

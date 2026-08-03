@@ -134,6 +134,7 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
             ic.regen_allow_download = !opts.regen_no_download;
             ic.regen_model_path     = opts.regen_model_path;
             ic.regen_vae_path       = opts.regen_vae_path;
+            ic.regen_backend        = opts.regen_backend;
             DetectionResult dr{};  // regen ignores visible-mark detection
             bool ok = engine.remove_watermark_detected(image, dr, ic);
             if (!ok) {

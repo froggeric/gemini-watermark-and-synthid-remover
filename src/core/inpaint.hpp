@@ -39,6 +39,7 @@ struct InpaintConfig {
     bool  regen_allow_download = true;  // false on --regen-no-download / CI smoke
     std::string regen_model_path;       // empty = resolve+download
     std::string regen_vae_path;         // empty = resolve+download the fp16-fix VAE
+    std::string regen_backend = "auto"; // auto|cpu|metal|vulkan (auto -> CPU on Apple Silicon)
 #endif
 };
 

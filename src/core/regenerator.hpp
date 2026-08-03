@@ -18,6 +18,8 @@ struct RegenConfig {
     std::string vae_path;         // override; empty = resolve + download the pinned fp16-fix VAE
                                   // (REQUIRED for SDXL fp16; the embedded VAE produces black/NaN output).
     std::string prompt;           // empty by default (no conditioning bias)
+    std::string backend = "auto"; // auto|cpu|metal|vulkan (auto = sdcpp picks; forced to cpu on
+                                  // Apple Silicon because Metal is broken for SDXL img2img)
 };
 
 // SDXL img2img regenerator over leejet/stable-diffusion.cpp. Holds one sd_ctx_t*
