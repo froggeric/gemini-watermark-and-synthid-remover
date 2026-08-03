@@ -105,3 +105,18 @@ if(WMR_BUILD_REGEN)
     target_link_libraries(wmr_tests PRIVATE stable-diffusion CURL::libcurl OpenSSL::Crypto)
     target_compile_definitions(wmr_tests PRIVATE WMR_BUILD_REGEN=1)
 endif()
+
+# CoreML SDXL img2img (Euler scheduler) — mirrors the main CMakeLists block.
+if(WMR_BUILD_AI_COREML_SD)
+    if(NOT APPLE)
+        message(FATAL_ERROR "WMR_BUILD_AI_COREML_SD is macOS-only (requires Accelerate framework)")
+    endif()
+
+    find_library(ACCELERATE_LIB Accelerate REQUIRED)
+    target_sources(wmr_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core/coreml_sd_scheduler.cpp
+        unit/coreml_sd_scheduler_test.cpp
+    )
+    target_link_libraries(wmr_tests PRIVATE ${ACCELERATE_LIB})
+    target_compile_definitions(wmr_tests PRIVATE WMR_BUILD_AI_COREML_SD=1)
+endif()
