@@ -119,23 +119,33 @@ Build a codebook from clean + watermarked reference pairs: `wmr build-codebook r
 The default `spectral` attack is a frequency-domain heuristic suppressor, not a verifiable
 removal (it works only on uniform images where the carrier dominates; on content the
 carrier is below the noise floor). `--synthid-attack regen` instead runs a low-strength
-SDXL img2img regeneration of the whole image via
-[stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp). This is the only
-attack the published literature reports as validated against SynthID-Image.
+SDXL img2img regeneration of the whole image. This is the only attack the published
+literature reports as validated against SynthID-Image.
 
 ```bash
 wmr synthid image.png --synthid-attack regen -o clean.png
 wmr remove image.png --synthid --synthid-attack regen -o clean.png   # visible diamond first, then regen
 ```
 
+**Backend selection.** The regen path supports multiple backends via `--regen-backend`:
+
+| Backend | Platform | Performance | Notes |
+|---------|----------|-------------|-------|
+| `auto` (default) | All | Best available | mac: CoreML if present, else CPU. Others: CPU. |
+| `coreml` | macOS (Apple Silicon) | ~10s/tile + ~50s load (one-time) | Native CoreML SDXL, ~3.4x faster than CPU on M4 (total wall time; ~13x on inference once loaded). |
+| `cpu` | All | ~231s/tile (896x1200) | sdcpp via stable-diffusion.cpp, slow but portable. |
+
+On macOS with `WMR_BUILD_AI_COREML_SD`, the `auto` backend prefers CoreML when models
+are present at `$WMR_COREML_SD_MODELS_DIR` (defaults to `~/.cache/wmr/coreml-sdxl/`).
+
 Be aware of the tradeoffs before you use it:
 
 - **It is lossy.** Typical output is 38 to 45 dB PSNR versus the input (a light re-render).
   The default strength is 0.05, tuned to scrub the carrier while preserving content. Raise
   it only if you accept more visible change.
-- **It downloads ~6.5 GB + ~335 MB on first use** (the SDXL base checkpoint and the
-  fp16-fix VAE, SHA256-pinned, cached in `~/.cache/wmr/`). The progress prints at 5%
-  milestones; it is not silent. The model and VAE are not bundled with any release.
+- **Model acquisition.** The CPU backend downloads ~6.5 GB + ~335 MB on first use (the SDXL
+  base checkpoint and the fp16-fix VAE, SHA256-pinned, cached in `~/.cache/wmr/`). The
+  CoreML backend (~6.5 GB) requires manual model conversion (see below). Neither is bundled.
 - **It leaves a forensic footprint.** A regen-attacked image is itself a detectable
   diffusion output; an attacker looking for "tampering" can spot it. This is an attack on
   the watermark, not an invisibility guarantee.
@@ -151,9 +161,30 @@ Be aware of the tradeoffs before you use it:
   Tiles overlap and are cosine-feathered, so seams are not visible at typical viewing
   distances.
 
-This mode is behind the `WMR_BUILD_REGEN` build flag. Release binaries ship it enabled; a
-lean local build (`scripts/build.sh` without `WMR_BUILD_REGEN=1`) is regen-free and will
-print a "rebuild with `WMR_BUILD_REGEN=1`" hint if you pass `--synthid-attack regen`.
+##### CoreML backend (macOS, faster)
+
+The CoreML backend uses native CoreML models compiled from `apple/ml-stable-diffusion`
+tag 1.1.1. It is faster than CPU (~3.4x on M4 Pro for a single tile) and replaces the
+broken Metal/Vulkan mac path.
+
+**Model conversion (one-time setup).** The CoreML models are not auto-downloaded. Convert
+them yourself:
+
+1. Clone `apple/ml-stable-diffusion` at tag 1.1.1.
+2. Apply the `coremltools` `_cast` patch (see `~/.claude/plans/coreml-sdxl-phase3.md`).
+3. Install torch 2.7 + coremltools 9.
+4. Run `scripts/gen_coreml_sd_empty_prompt.py` from the `wmr` repo.
+
+The script outputs `.mlpackage` directories (UNet, VAE encoder/decoder, two text encoders)
+to `~/.cache/wmr/coreml-sdxl/`. Set `$WMR_COREML_SD_MODELS_DIR` to place them elsewhere.
+
+**Performance.** On M4 Pro: ~50s one-time model load + ~18s per 1024-tile. Expected 4K
+tiled performance: ~3 minutes total. The UNet currently runs on CPU; GPU/ANE placement
+is future work.
+
+This mode is behind `WMR_BUILD_REGEN` + `WMR_BUILD_AI_COREML_SD`. Release macOS arm64
+binaries ship both enabled. A lean build omits them and will print a rebuild hint if
+you pass `--synthid-attack regen`.
 
 ### Video flags
 

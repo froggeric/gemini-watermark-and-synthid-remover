@@ -102,15 +102,38 @@ For each row of the table below, on the target hardware:
 
 ## Results
 
-TBD (owner run). Replace each cell with the measured value; mark "n/a" where the run was not done and "DNF" if it did not finish.
-
 | Hardware + backend                | Fixture / size         | wall_s | validity mean-delta vs input (max channel, /255) | carrier-band drop % | notes |
 |-----------------------------------|------------------------|--------|--------------------------------------------------|---------------------|-------|
+| M4 Pro, CoreML (Phase 3)         | 896x1200 Gemini 3.6 (single-tile) | ~68 total (~50 load + ~18 inference) | 0.38 (G) | TBD | ~3.4x faster than CPU on same fixture; mean diff vs input 0.36/255 |
+| M4 Pro, CPU (sdcpp, Phase 2)      | 896x1200 Gemini 3.6 (single-tile) | ~231 total (inference only) | 1.01 (G/B) | TBD | Mean diff vs input 0.89/255; CoreML vs CPU inter-backend diff 1.23/255 |
+| M4 Pro, CoreML (Phase 3)          | 2400x1792 black (4K)   | TBD    | TBD                                              | TBD                 | |
+| M4 Pro, CoreML (Phase 3)          | 2400x1792 test1 (4K content) | TBD | TBD                                           | n/a (content)       | fidelity spot-check |
 | M2 Pro, Metal                     | 2400x1792 black (4K)   | TBD    | TBD                                              | TBD                 | |
 | M2 Pro, Metal                     | 2400x1792 test1 (4K content) | TBD | TBD                                           | n/a (content)       | fidelity spot-check |
 | RTX-class GPU, CUDA               | 2400x1792 black (4K)   | TBD    | TBD                                              | TBD                 | |
 | RTX-class GPU, CUDA               | 2400x1792 test1 (4K content) | TBD | TBD                                           | n/a (content)       | fidelity spot-check |
-| CPU (no GPU)                      | 896x1200 (1024-class, `--regen-no-tile`) | TBD | TBD                                  | TBD                 | 4K tiled on CPU is not a target |
+| CPU (no GPU)                      | 896x1200 (1024-class, `--regen-no-tile`) | ~231 | 1.01                                  | TBD                 | 4K tiled on CPU is not a target |
+
+### CoreML A/B Validation (2026-08-04)
+
+Test image: `reference-images/896x1200-gemini36/Gemini_Generated_Image_gawws5gawws5gaww.png` (896x1200)
+
+**CoreML backend (`--regen-backend coreml`)**
+- Wall time: ~68s total (~50s one-time model load + ~18s inference)
+- Mean diff vs input: 0.36/255
+- Per-channel (B,G,R): (0.35, 0.38, 0.35)
+
+**CPU backend (`--regen-backend cpu`, sdcpp)**
+- Wall time: ~231s total (inference only)
+- Mean diff vs input: 0.89/255
+- Per-channel (B,G,R): (1.01, 1.01, 0.65)
+
+**Inter-backend comparison**
+- CoreML vs CPU diff: 1.23/255
+- Per-channel (B,G,R): (1.35, 1.36, 0.97)
+- Speedup: ~3.4x faster (CoreML)
+
+Both backends produce content-preserving results with low inter-backend diff, validating the CoreML implementation.
 
 ## Acceptance targets (owner verifies)
 

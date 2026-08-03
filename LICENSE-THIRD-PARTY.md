@@ -209,13 +209,16 @@ SOFTWARE.
 
 ## SynthID diffusion-regen (opt-in `WMR_BUILD_REGEN`)
 
-The `--synthid-attack regen` mode (SDXL img2img via
-[leejet/stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)) is an
-**opt-in build feature** (`WMR_BUILD_REGEN=ON`). When enabled, the release binary
-statically links `stable-diffusion.cpp` and its `ggml` tensor backend (both MIT). The
-SDXL base model and the fp16-fix VAE are **downloaded on first use** to a per-user cache
-(`~/.cache/wmr/`), SHA256-verified, and are NOT bundled with any release package. Both
-downloads are pinned to exact hashes checked against the HuggingFace LFS content oids.
+The `--synthid-attack regen` mode (SDXL img2img) is an **opt-in build feature**
+(`WMR_BUILD_REGEN=ON`). When enabled:
+
+- The default CPU backend uses `leejet/stable-diffusion.cpp`, statically linked with its
+  `ggml` tensor backend (both MIT). The SDXL base model and fp16-fix VAE are **downloaded
+  on first use** to `~/.cache/wmr/`, SHA256-verified, and are NOT bundled.
+- The CoreML backend (macOS, `WMR_BUILD_AI_COREML_SD`) uses models converted from
+  `apple/ml-stable-diffusion` (tag 1.1.1, MIT). Users convert them manually via the recipe
+  in `~/.claude/plans/coreml-sdxl-phase3.md`. The models (~6.5 GB total) are NOT bundled
+  and NOT auto-downloaded.
 
 ### leejet/stable-diffusion.cpp — MIT License
 
@@ -268,6 +271,39 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+### apple/ml-stable-diffusion — MIT License
+
+Source: <https://github.com/apple/ml-stable-diffusion> (tag 1.1.1). The reference
+Swift/CoreML Stable Diffusion implementation. The SDXL img2img models (UNet, VAE
+encoder/decoder, two text encoders) are compiled to `.mlpackage` format and loaded at
+runtime by the CoreML backend (macOS only, `WMR_BUILD_AI_COREML_SD`). Users convert
+them manually via the recipe in `~/.claude/plans/coreml-sdxl-phase3.md`. The converted
+models (~6.5 GB total) are NOT bundled and NOT auto-downloaded.
+
+Copyright (c) 2024 Apple Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The SDXL checkpoint used by the apple/ml-stable-diffusion converter is the same
+Stable Diffusion XL base model listed below, under the CreativeML Open RAIL++-M
+License.
 
 ### Stable Diffusion XL base model — CreativeML Open RAIL++-M License
 
