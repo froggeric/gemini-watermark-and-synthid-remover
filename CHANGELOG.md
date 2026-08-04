@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [1.15.0] - 2026-08-04
+
 ### SynthID diffusion-regen mode (the only validated SynthID scrub)
 
 - **feat: native SynthID diffusion-regen mode (`--synthid-attack regen`, SDXL img2img via stable-diffusion.cpp, tiled 4K, behind `WMR_BUILD_REGEN`).** A new `--synthid-attack {off|spectral|regen}` flag selects the SynthID invisible-watermark attack. The default stays `spectral` (the frequency-domain heuristic suppressor, unchanged). `regen` runs a low-strength SDXL img2img regeneration of the whole image through a vendored [leejet/stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) (pinned at commit `50062a4b`) and its `ggml` backend (commit `eced84c8`). This is the only attack the published literature reports as validated against SynthID-Image.
@@ -28,8 +32,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Degenerate-codebook OOM guard.** `CodebookSubtractor::remove_synthid` now rejects a profile whose magnitude plane is all-zero / non-finite or whose consistency is NaN (the 0/0 from byte-identical captures). Previously the NaN/zero cascade through `polarToCart` to FFT could trigger a multi-exabyte allocation (crash). Now it logs a warning and skips the codebook subtraction; the phase-noise disruption still runs.
 - **`--no-content-guard` evaluation flag.** Opt-in flag on `synthid` / `remove` that bypasses the content-image guard (`is_content_image -> num_passes=0`) so a codebook acts on content for attenuation measurement. Not a default; the guard stays on for normal use.
 - **Evaluation.** `docs/research/synthid-clean-codebook-eval.md` measures the clean codebook on real content: on `gemini_random` / 896x1200 content the codebook is effectively inert (+0.16 to +0.38% band attenuation over the phase-noise baseline, PSNR 33 to 45 dB) because the carrier is not resolvable above the content noise floor. The contaminated codebook imprints the visible diamond (bright concentration in the corner) plus a scattered dot field; the clean codebook does neither. The clean codebook is not shipped as a default.
-
-## [1.15.0] - 2026-08-01
 
 ### SynthID Phase 0: honesty reframe + codebook correctness + verification
 

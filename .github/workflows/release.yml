@@ -113,8 +113,10 @@ jobs:
             # osx-x86_64 ORT prebuilt); arm64 keeps the GPU + MI-GAN build.
             ARGS="$ARGS -DCMAKE_OSX_ARCHITECTURES=x86_64 -DWMR_NCNN_VULKAN=OFF"
           else
-            # Apple Silicon native + bundled MoltenVK for out-of-the-box GPU.
-            ARGS="$ARGS -DVulkan_LIBRARY=$(brew --prefix vulkan-loader)/lib/libvulkan.dylib"
+            # Apple Silicon native + bundled MoltenVK for out-of-the-box GPU +
+            # the CoreML SDXL regen backend (the mac default for --synthid-attack
+            # regen). x86_64 stays without it (CPU regen fallback, like MI-GAN).
+            ARGS="$ARGS -DVulkan_LIBRARY=$(brew --prefix vulkan-loader)/lib/libvulkan.dylib -DWMR_BUILD_AI_COREML_SD=ON"
           fi
           cmake -B build -S . -GNinja $ARGS
 
