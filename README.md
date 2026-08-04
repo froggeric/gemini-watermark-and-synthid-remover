@@ -164,23 +164,25 @@ Be aware of the tradeoffs before you use it:
 ##### CoreML backend (macOS, faster)
 
 The CoreML backend uses native CoreML models compiled from `apple/ml-stable-diffusion`
-tag 1.1.1. It is faster than CPU (~3.4x on M4 Pro for a single tile) and replaces the
+tag 1.1.1. It is faster than CPU (~3.4x on M4 for a single image) and replaces the
 broken Metal/Vulkan mac path.
 
-**Model conversion (one-time setup).** The CoreML models are not auto-downloaded. Convert
-them yourself:
+**Model conversion (one-time setup).** The CoreML models are not auto-downloaded; convert
+them yourself with `apple/ml-stable-diffusion` tag 1.1.1:
 
-1. Clone `apple/ml-stable-diffusion` at tag 1.1.1.
-2. Apply the `coremltools` `_cast` patch (see `~/.claude/plans/coreml-sdxl-phase3.md`).
-3. Install torch 2.7 + coremltools 9.
-4. Run `scripts/gen_coreml_sd_empty_prompt.py` from the `wmr` repo.
+1. `git clone https://github.com/apple/ml-stable-diffusion && cd ml-stable-diffusion && git checkout 1.1.1`
+2. In a Python 3.12 venv install `torch==2.7.0 coremltools==9.0 diffusers==0.39.0 transformers==4.51.3 pytest`, and apply the one-line `_cast` patch in `coremltools/converters/mil/frontend/torch/ops.py` (`.item()` length-1 arrays before the cast; see `~/.claude/plans/coreml-sdxl-phase3.md`).
+3. Convert the models. **You must pass `--custom-vae-version madebyollin/sdxl-vae-fp16-fix`**: the SDXL base VAE overflows in fp16 and darkens every decode by ~15/255 without it (visible as a uniform color shift independent of strength).
+   `python -m python_coreml_stable_diffusion.torch2coreml --convert-text-encoder --convert-unet --convert-vae-decoder --convert-vae-encoder --custom-vae-version madebyollin/sdxl-vae-fp16-fix --model-version stabilityai/stable-diffusion-xl-base-1.0 -o ~/.cache/wmr/coreml-sdxl`
+4. Bake the empty-prompt embeddings by running `scripts/gen_coreml_sd_empty_prompt.py` from the `wmr` repo (same venv) -> `~/.cache/wmr/coreml-sdxl/empty_prompt_embeds.bin`.
 
-The script outputs `.mlpackage` directories (UNet, VAE encoder/decoder, two text encoders)
-to `~/.cache/wmr/coreml-sdxl/`. Set `$WMR_COREML_SD_MODELS_DIR` to place them elsewhere.
+Output: `.mlpackage` directories (UNet, VAE encoder/decoder, two text encoders) plus the
+embeds `.bin` in `~/.cache/wmr/coreml-sdxl/`. Set `$WMR_COREML_SD_MODELS_DIR` to place
+them elsewhere.
 
-**Performance.** On M4 Pro: ~50s one-time model load + ~18s per 1024-tile. Expected 4K
-tiled performance: ~3 minutes total. The UNet currently runs on CPU; GPU/ANE placement
-is future work.
+**Performance.** On M4 (16 GB): ~50s one-time model load + ~9s per 1024-tile (a 2432x1728
+image, ~6 tiles, regenerates in ~50s). The UNet currently runs on the CPU path; GPU/ANE
+placement is future work.
 
 This mode is behind `WMR_BUILD_REGEN` + `WMR_BUILD_AI_COREML_SD`. Release macOS arm64
 binaries ship both enabled. A lean build omits them and will print a rebuild hint if
