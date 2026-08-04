@@ -127,13 +127,17 @@ wmr synthid image.png --synthid-attack regen -o clean.png
 wmr remove image.png --synthid --synthid-attack regen -o clean.png   # visible diamond first, then regen
 ```
 
-**Backend selection.** The regen path supports multiple backends via `--regen-backend`:
+**Backend selection + platform availability (v1.15.0).** The regen path runs natively on
+macOS Apple Silicon via CoreML. In this release the sdcpp CPU regen backend is built only
+into the macOS Apple Silicon binary; the Linux, Windows, and macOS Intel binaries do not
+include it, so on those `--synthid-attack regen` falls back to the spectral suppressor.
+Cross-platform CPU regen is a follow-up.
 
-| Backend | Platform | Performance | Notes |
+| Backend | Platform (v1.15.0) | Performance | Notes |
 |---------|----------|-------------|-------|
-| `auto` (default) | All | Best available | mac: CoreML if present, else CPU. Others: CPU. |
-| `coreml` | macOS (Apple Silicon) | ~10s/tile + ~50s load (one-time) | Native CoreML SDXL, ~3.4x faster than CPU on M4 (total wall time; ~13x on inference once loaded). |
-| `cpu` | All | ~231s/tile (896x1200) | sdcpp via stable-diffusion.cpp, slow but portable. |
+| `auto` (default) | macOS Apple Silicon | ~10s/tile + ~50s load (one-time) | CoreML SDXL if models present, else spectral. |
+| `coreml` | macOS Apple Silicon | ~10s/tile + ~50s load (one-time) | Native CoreML SDXL, ~3.4x faster than CPU on M4 (total wall time; ~13x on inference once loaded). |
+| `cpu` | macOS Apple Silicon only in v1.15.0 | ~231s/tile (896x1200) | sdcpp via stable-diffusion.cpp. Linux/Windows/mac-Intel: spectral fallback (cross-platform sdcpp is a follow-up). |
 
 On macOS with `WMR_BUILD_AI_COREML_SD`, the `auto` backend prefers CoreML when models
 are present at `$WMR_COREML_SD_MODELS_DIR` (defaults to `~/.cache/wmr/coreml-sdxl/`).

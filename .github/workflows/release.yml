@@ -131,8 +131,8 @@ jobs:
             -DWMR_BUILD_TESTS=OFF \
             -DWMR_BUILD_AI_DENOISE=ON \
             -DWMR_BUILD_AI_MIGAN=ON \
-            -DWMR_BUILD_REGEN=ON \
-            -DVCPKG_MANIFEST_FEATURES="ai-denoise;regen" \
+            -DWMR_BUILD_REGEN=OFF \
+            -DVCPKG_MANIFEST_FEATURES="ai-denoise" \
             -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} \
             -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
 
@@ -155,8 +155,8 @@ jobs:
             -DWMR_BUILD_TESTS=OFF ^
             -DWMR_BUILD_AI_DENOISE=ON ^
             -DWMR_BUILD_AI_MIGAN=ON ^
-            -DWMR_BUILD_REGEN=ON ^
-            -DVCPKG_MANIFEST_FEATURES="ai-denoise;regen" ^
+            -DWMR_BUILD_REGEN=OFF ^
+            -DVCPKG_MANIFEST_FEATURES="ai-denoise" ^
             -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} ^
             -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
           cmake --build build --config ${{ env.BUILD_TYPE }}
@@ -362,9 +362,9 @@ jobs:
           cmake -B build -S . -GNinja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DWMR_BUILD_AI_DENOISE=ON \
-            -DWMR_BUILD_REGEN=ON \
+            -DWMR_BUILD_REGEN=OFF \
             -DWMR_BUILD_TESTS=ON \
-            -DVCPKG_MANIFEST_FEATURES="ai-denoise;regen" \
+            -DVCPKG_MANIFEST_FEATURES="ai-denoise" \
             -DVCPKG_TARGET_TRIPLET=x64-linux \
             -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
 
