@@ -110,8 +110,11 @@ jobs:
             # Vulkan linkage on APPLE and needs a build-time libvulkan; there is
             # no x86_64 Vulkan dylib on this arm64 runner, so disable Vulkan
             # entirely -> CPU-only AI on this binary. MI-GAN is OFF here too (no
-            # osx-x86_64 ORT prebuilt); arm64 keeps the GPU + MI-GAN build.
-            ARGS="$ARGS -DCMAKE_OSX_ARCHITECTURES=x86_64 -DWMR_NCNN_VULKAN=OFF"
+            # osx-x86_64 ORT prebuilt); regen is OFF too (sdcpp/ggml cannot
+            # cross-compile to x86_64 - "unknown target CPU apple-m1" - and CPU
+            # regen is impractical on Intel anyway); arm64 keeps GPU + MI-GAN +
+            # CoreML-SD + regen. --synthid-attack regen falls back to spectral here.
+            ARGS="$ARGS -DCMAKE_OSX_ARCHITECTURES=x86_64 -DWMR_NCNN_VULKAN=OFF -DWMR_BUILD_REGEN=OFF -DVCPKG_MANIFEST_FEATURES=ai-denoise"
           else
             # Apple Silicon native + bundled MoltenVK for out-of-the-box GPU +
             # the CoreML SDXL regen backend (the mac default for --synthid-attack
