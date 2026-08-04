@@ -33,7 +33,7 @@ struct InpaintConfig {
 #ifdef WMR_BUILD_REGEN
     // Diffusion-regen (SynthID) knobs. Mirror `sigma` as the AI-only field pattern:
     // these are only read when method == DiffusionRegen (guarded in WatermarkEngine).
-    float regen_strength = 0.05f;       // img2img denoising strength (valid 0.02..0.15)
+    float regen_strength = 0.10f;       // img2img denoising strength (valid 0.02..0.15); 0.10 validated for SynthID removal on CoreML
     int   regen_steps = 20;             // sample steps
     bool  regen_tile = true;            // tiled img2img for >1024 (preserve resolution)
     bool  regen_allow_download = true;  // false on --regen-no-download / CI smoke

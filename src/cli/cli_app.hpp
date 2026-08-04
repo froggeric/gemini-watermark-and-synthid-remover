@@ -69,7 +69,7 @@ struct CliOptions {
     // lossy SDXL img2img path; "off" skips synthid entirely even with --synthid set.
     std::string synthid_attack = "spectral";   // off|spectral|regen
     // regen knobs (used only when synthid_attack=="regen"):
-    float regen_strength = 0.05f;
+    float regen_strength = 0.10f;  // validated for SynthID removal on CoreML (fp16-fix VAE)
     int   regen_steps = 20;
     bool  regen_no_download = false;
     bool  regen_no_tile = false;
@@ -112,7 +112,7 @@ inline std::string synthid_attack_help_text() {
         "regen = low-strength SDXL img2img regeneration (the only *validated* SynthID scrub "
         "in the literature; LOSSY ~38-45 dB; leaves a detectable attacked-image footprint; "
         "downloads a ~6.5 GB model + ~335 MB VAE on first use). "
-        "regen does NOT remove the VISIBLE Gemini diamond (strength ~0.05 cannot); in "
+        "regen does NOT remove the VISIBLE Gemini diamond (strength ~0.10 cannot); in "
         "--synthid / SynthidOnly mode, visible-clean the image first if you need that too "
         "(AutoRemove mode runs visible removal first).";
 }

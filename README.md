@@ -106,7 +106,7 @@ Supported inputs: PNG / JPEG / WebP images; MP4 and other FFmpeg-supported video
 | `--phase-adaptive` | Use the image's own phase (conjugate subtraction; uniform images) |
 | `--synthid-strength` | 0.0–2.0 (default 0.50) |
 | `--synthid` (remove only) | Also attempt SynthID suppression during a `remove` pass |
-| `--regen-strength` | img2img strength, 0.02–0.15 (default 0.05; regen only) |
+| `--regen-strength` | img2img strength, 0.02–0.15 (default 0.10; regen only) |
 | `--regen-steps` | sampler steps (default 20; regen only) |
 | `--regen-no-download` | refuse the first-run model fetch (regen only; errors if the model is absent) |
 | `--regen-no-tile` | disable tiled img2img (whole-image; fails above ~1024px on most GPUs) |
@@ -140,9 +140,13 @@ are present at `$WMR_COREML_SD_MODELS_DIR` (defaults to `~/.cache/wmr/coreml-sdx
 
 Be aware of the tradeoffs before you use it:
 
-- **It is lossy.** Typical output is 38 to 45 dB PSNR versus the input (a light re-render).
-  The default strength is 0.05, tuned to scrub the carrier while preserving content. Raise
-  it only if you accept more visible change.
+- **It is lossy, and at the strength that actually scrubs SynthID you will see it.**
+  Typical output is 38 to 45 dB PSNR versus the input. The default strength is **0.10**,
+  the minimum validated (against Google's official SynthID detector) to remove the
+  invisible watermark on the CoreML backend. At that strength expect visible **smoothing
+  and minor simplification**, because SDXL regeneration is less powerful than the original
+  model that produced the image. Raise strength only if you accept more change; lower it
+  if you will tolerate a residual watermark for a cleaner image.
 - **Model acquisition.** The CPU backend downloads ~6.5 GB + ~335 MB on first use (the SDXL
   base checkpoint and the fp16-fix VAE, SHA256-pinned, cached in `~/.cache/wmr/`). The
   CoreML backend (~6.5 GB) requires manual model conversion (see below). Neither is bundled.
@@ -152,7 +156,7 @@ Be aware of the tradeoffs before you use it:
 - **No public verifier exists** for SynthID-Image, so success cannot be confirmed locally.
   The "validated" claim rests on published third-party measurements, not a check `wmr` can
   run for you.
-- **It does NOT remove the visible Gemini diamond.** At strength 0.05 the img2img pass
+- **It does NOT remove the visible Gemini diamond.** At strength 0.10 the img2img pass
   leaves the visible mark largely intact. Run `wmr remove` (the reverse-blend) first, or
   use `wmr remove --synthid --synthid-attack regen` which runs the visible removal before
   regen. `wmr synthid --synthid-attack regen` (SynthidOnly mode) operates on the image as
@@ -180,9 +184,11 @@ Output: `.mlpackage` directories (UNet, VAE encoder/decoder, two text encoders) 
 embeds `.bin` in `~/.cache/wmr/coreml-sdxl/`. Set `$WMR_COREML_SD_MODELS_DIR` to place
 them elsewhere.
 
-**Performance.** On M4 (16 GB): ~50s one-time model load + ~9s per 1024-tile (a 2432x1728
-image, ~6 tiles, regenerates in ~50s). The UNet currently runs on the CPU path; GPU/ANE
-placement is future work.
+**Performance.** On M4 (16 GB): ~50s one-time model load, then ~9s per 1024-tile. A large
+(4K-class) image regenerates in about **2 minutes** on CoreML versus about **15 minutes**
+on the CPU backend on the same machine, a substantial improvement. Per-tile, CoreML is
+~9s vs the CPU backend's ~143s. The UNet currently runs on CoreML's CPU path; GPU/ANE
+placement is future work that would cut this further.
 
 This mode is behind `WMR_BUILD_REGEN` + `WMR_BUILD_AI_COREML_SD`. Release macOS arm64
 binaries ship both enabled. A lean build omits them and will print a rebuild hint if

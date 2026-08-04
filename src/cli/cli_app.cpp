@@ -327,7 +327,7 @@ static int process_single_image(const CliOptions& opts) {
         if (opts.synthid_attack == "regen") {
 #ifdef WMR_BUILD_REGEN
             // regen = SDXL img2img over the WHOLE image (a SynthID-only scrub). It does
-            // NOT remove the visible Gemini diamond (strength ~0.05 cannot); in AutoRemove
+            // NOT remove the visible Gemini diamond (strength ~0.10 cannot); in AutoRemove
             // mode the visible pass above already ran, in SynthidOnly mode the input is the
             // user's responsibility (visible-clean first if needed). No codebook required.
             WatermarkEngine engine;             // reaches the leaked regenerator singleton
