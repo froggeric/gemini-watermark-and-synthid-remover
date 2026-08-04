@@ -5,6 +5,7 @@
 #include "core/regen_backend.hpp"
 #ifdef WMR_BUILD_AI_COREML_SD
 #include "core/coreml_sd_pipeline.hpp"
+#include "core/coreml_sd_model_fetch.hpp"
 #endif
 #include <spdlog/spdlog.h>
 #include <stable-diffusion.h>
@@ -287,9 +288,8 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
 
 #ifdef WMR_BUILD_AI_COREML_SD
     // CoreML backend: use the native CoreML pipeline instead of sdcpp.
-    // Auto routes to CoreML on mac when models are present (Task 5).
+    // Auto routes to CoreML on mac when models are present.
     if (b == RegenBackend::CoreML) {
-        m_impl->coreml_pipeline = std::make_unique<CoreMLSDPipeline>();
         // Resolve models directory: env var, exe-dir/../share/wmr/coreml-sdxl,
         // exe-dir/coreml-sdxl, or ~/.cache/wmr/coreml-sdxl.
         fs::path models_dir;
@@ -307,10 +307,17 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
                 models_dir = cache_dir() / "coreml-sdxl";
             }
         }
+        // Fetch models from HuggingFace if missing (unless --regen-no-download)
+        if (!ensure_coreml_models(models_dir, cfg.allow_download)) {
+            spdlog::warn("regen: CoreML models not available (models_dir='{}'). "
+                         "Falling back to CPU or spectral. Use --regen-backend cpu to force CPU, "
+                         "or allow downloads with --regen-no-download omitted.", models_dir.string());
+            return false;
+        }
+        m_impl->coreml_pipeline = std::make_unique<CoreMLSDPipeline>();
         fs::path embeds_bin = models_dir / "empty_prompt_embeds.bin";
         if (!m_impl->coreml_pipeline->initialize(models_dir.string(), embeds_bin.string())) {
             spdlog::warn("regen: CoreML pipeline initialization failed (models_dir='{}'). "
-                         "Ensure the converted .mlpackage files and empty_prompt_embeds.bin are present. "
                          "Falling back to spectral.", models_dir.string());
             return false;
         }

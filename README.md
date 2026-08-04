@@ -149,7 +149,7 @@ Be aware of the tradeoffs before you use it:
   if you will tolerate a residual watermark for a cleaner image.
 - **Model acquisition.** The CPU backend downloads ~6.5 GB + ~335 MB on first use (the SDXL
   base checkpoint and the fp16-fix VAE, SHA256-pinned, cached in `~/.cache/wmr/`). The
-  CoreML backend (~6.5 GB) requires manual model conversion (see below). Neither is bundled.
+  CoreML backend (~4.5 GB) is also auto-downloaded from HuggingFace on first use (see below). Neither is bundled.
 - **It leaves a forensic footprint.** A regen-attacked image is itself a detectable
   diffusion output; an attacker looking for "tampering" can spot it. This is an attack on
   the watermark, not an invisibility guarantee.
@@ -171,18 +171,22 @@ The CoreML backend uses native CoreML models compiled from `apple/ml-stable-diff
 tag 1.1.1. It is faster than CPU (~3.4x on M4 for a single image) and replaces the
 broken Metal/Vulkan mac path.
 
-**Model conversion (one-time setup).** The CoreML models are not auto-downloaded; convert
-them yourself with `apple/ml-stable-diffusion` tag 1.1.1:
+**Model acquisition.** The app auto-downloads the CoreML models (~4.5 GB total) from
+`huggingface.co/froggeric/wmr` on first use (cached in `~/.cache/wmr/coreml-sdxl/`).
+No manual conversion is needed. To refuse the download, pass `--regen-no-download`
+(errors if models are absent). Set `$WMR_COREML_SD_MODELS_DIR` to place them elsewhere.
+
+**Manual conversion (fallback).** If you prefer to convert the models yourself, use
+`apple/ml-stable-diffusion` tag 1.1.1:
 
 1. `git clone https://github.com/apple/ml-stable-diffusion && cd ml-stable-diffusion && git checkout 1.1.1`
-2. In a Python 3.12 venv install `torch==2.7.0 coremltools==9.0 diffusers==0.39.0 transformers==4.51.3 pytest`, and apply the one-line `_cast` patch in `coremltools/converters/mil/frontend/torch/ops.py` (`.item()` length-1 arrays before the cast; see `~/.claude/plans/coreml-sdxl-phase3.md`).
-3. Convert the models. **You must pass `--custom-vae-version madebyollin/sdxl-vae-fp16-fix`**: the SDXL base VAE overflows in fp16 and darkens every decode by ~15/255 without it (visible as a uniform color shift independent of strength).
+2. In a Python 3.12 venv install `torch==2.7.0 coremltools==9.0 diffusers==0.39.0 transformers==4.51.3 pytest`, and apply the one-line `_cast` patch in `coremltools/converters/mil/frontend/torch/ops.py` (`.item()` length-1 arrays before the cast).
+3. Convert the models. **You must pass `--custom-vae-version madebyollin/sdxl-vae-fp16-fix`**: the SDXL base VAE overflows in fp16 and darkens every decode by ~15/255 without it.
    `python -m python_coreml_stable_diffusion.torch2coreml --convert-text-encoder --convert-unet --convert-vae-decoder --convert-vae-encoder --custom-vae-version madebyollin/sdxl-vae-fp16-fix --model-version stabilityai/stable-diffusion-xl-base-1.0 -o ~/.cache/wmr/coreml-sdxl`
 4. Bake the empty-prompt embeddings by running `scripts/gen_coreml_sd_empty_prompt.py` from the `wmr` repo (same venv) -> `~/.cache/wmr/coreml-sdxl/empty_prompt_embeds.bin`.
 
 Output: `.mlpackage` directories (UNet, VAE encoder/decoder, two text encoders) plus the
-embeds `.bin` in `~/.cache/wmr/coreml-sdxl/`. Set `$WMR_COREML_SD_MODELS_DIR` to place
-them elsewhere.
+embeds `.bin` in `~/.cache/wmr/coreml-sdxl/`.
 
 **Performance.** On M4 (16 GB): ~50s one-time model load, then ~9s per 1024-tile. A large
 (4K-class) image regenerates in about **2 minutes** on CoreML versus about **15 minutes**

@@ -120,6 +120,7 @@ if(WMR_BUILD_AI_COREML_SD)
     target_sources(wmr_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/src/core/coreml_sd_scheduler.cpp
         ${CMAKE_SOURCE_DIR}/src/core/coreml_sd_pipeline.mm
+        ${CMAKE_SOURCE_DIR}/src/core/coreml_sd_model_fetch.cpp
         unit/coreml_sd_scheduler_test.cpp
         unit/coreml_sd_pipeline_smoke_test.cpp
     )

@@ -395,6 +395,7 @@ if(WMR_BUILD_AI_COREML_SD)
     target_sources(${PROJECT_NAME} PRIVATE
         src/core/coreml_sd_scheduler.cpp
         src/core/coreml_sd_pipeline.mm
+        src/core/coreml_sd_model_fetch.cpp
     )
     target_link_libraries(${PROJECT_NAME} PRIVATE ${ACCELERATE_LIB} ${COREML_LIB} ${FOUNDATION_LIB})
     target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_BUILD_AI_COREML_SD=1)
