@@ -19,6 +19,7 @@ _Nothing yet._
 - **Removed CLI flags:** `--codebook`, `--codebook-free`, `--phase-adaptive`, `--lab-a`, `--no-content-guard`, `--synthid-strength`, `--carrier-grid`, and `--synthid` (on `remove`).
 - **Removed tests:** `spectral_codebook_test`, `codebook_subtractor_test`, `codebook_builder_test`, `fft_context_test`, `synthid_wording_test` (the spectral honesty-lock, obsolete once spectral is gone), `lab_a_experiment_test`. `synthid_attack_cli_test` is reworked for the `{regen}`-only contract.
 - **Build changes:** FFTW3 dropped from `CMakeLists.txt`, `tests/CMakeLists.txt`, `vcpkg.json`, `scripts/build.sh`, `CMakePresets.json`. The lean default build is now AI-free and FFT-free. The regen path (`regenerator`, `coreml_sd_*`, `external/stable-diffusion.cpp`) is unchanged.
+- **Documentation.** README rewritten for the regen-only SynthID contract (no detection; `--synthid-attack {regen}`, default `regen`) and audited against the actual CLI (fixed the stale `--denoise` default to `off`, version labels). Two research docs added: `synthid-detection-validation.md` (our spectral detector vs 8 Google-labeled images: ROC AUC 0.20) and `synthid-detection-feasibility.md` (a 14-source deep study of third-party SynthID detection, 16 adversarially verified claims). Canonical decision record: `synthid-spectral-removal-record.md` (what was removed, why, what was tried, the data blocker, conditions to revisit). `wmr detect` is documented as visible-only. 13 prior research docs preserved as the findings record.
 
 ## [1.15.0] - 2026-08-04
 

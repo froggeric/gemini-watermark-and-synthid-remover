@@ -12,7 +12,7 @@ A fast command-line tool that removes **visible** watermarks from images and vid
 
 | Watermark | Found on | Removal method | Status |
 |-----------|----------|----------------|--------|
-| Gemini sparkle logo | Gemini images | Reverse alpha-blend + AI denoise | ✅ Full |
+| Gemini diamond logo | Gemini images | Exact reverse alpha-blend | ✅ Full |
 | Veo video watermark | Veo videos | Per-frame reverse alpha-blend | ✅ Full |
 | NotebookLM logo + wordmark | NotebookLM videos | Per-scene AI inpaint (MI-GAN) | ✅ Full |
 | SynthID (invisible) | Gemini images | Lossy SDXL img2img regen | ⚠️ Lossy; not a verifiable removal (no public SynthID verifier exists) |
@@ -118,13 +118,13 @@ wmr synthid image.png -o clean.png                            # SynthID scrub (r
 wmr remove image.png --synthid-attack regen -o clean.png      # visible diamond first, then regen
 ```
 
-**Backend selection + platform availability (v1.15.0).** The regen path runs natively on macOS Apple Silicon via CoreML. In this release the sdcpp CPU regen backend is built only into the macOS Apple Silicon binary; the Linux, Windows, and macOS Intel binaries do not include it, so on those `--synthid-attack regen` is unavailable (prints a rebuild hint). Cross-platform CPU regen is a follow-up.
+**Backend selection + platform availability (1.16.0).** The regen path runs natively on macOS Apple Silicon via CoreML. In this release the sdcpp CPU regen backend is built only into the macOS Apple Silicon binary; the Linux, Windows, and macOS Intel binaries do not include it, so on those `--synthid-attack regen` is unavailable (prints a rebuild hint). Cross-platform CPU regen is a follow-up.
 
-| Backend | Platform (v1.15.0) | Performance | Notes |
+| Backend | Platform (1.16.0) | Performance | Notes |
 |---------|----------|-------------|-------|
 | `auto` (default) | macOS Apple Silicon | ~10s/tile + ~50s load (one-time) | CoreML SDXL if models present, else CPU. |
 | `coreml` | macOS Apple Silicon | ~10s/tile + ~50s load (one-time) | Native CoreML SDXL, ~3.4x faster than CPU on M4 (total wall time; ~13x on inference once loaded). |
-| `cpu` | macOS Apple Silicon only in v1.15.0 | ~231s/tile (896x1200) | sdcpp via stable-diffusion.cpp. Linux/Windows/mac-Intel: unavailable this release (cross-platform sdcpp is a follow-up). |
+| `cpu` | macOS Apple Silicon only in 1.16.0 | ~231s/tile (896x1200) | sdcpp via stable-diffusion.cpp. Linux/Windows/mac-Intel: unavailable this release (cross-platform sdcpp is a follow-up). |
 
 On macOS with `WMR_BUILD_AI_COREML_SD`, the `auto` backend prefers CoreML when models
 are present at `$WMR_COREML_SD_MODELS_DIR` (defaults to `~/.cache/wmr/coreml-sdxl/`).
@@ -229,12 +229,12 @@ wmr remove in.png --strength 150 -o out.png    # cleanup strength (0-300%)
 
 | Flag | Range | Default | Notes |
 |------|-------|---------|-------|
-| `--denoise` | `ai\|soft\|ns\|telea\|off` | `ai` (when built) | Cleanup method |
-| `--sigma` | 1–150 | 50 | FDnCNN noise level (AI) |
+| `--denoise` | `off\|soft\|ns\|telea` (release adds `ai`) | `off` | Residual cleanup method (`off` = exact reverse-blend, no cleanup) |
+| `--sigma` | 1–150 | 50 | FDnCNN noise level (AI only) |
 | `--strength` | 0–300 % | 120 | Cleanup strength |
 | `--radius` | 1–25 | 10 | Gaussian/TELEA/NS radius |
 
-Source/dev builds default to AI-OFF (a lean fast build), exposing only `--inpaint-strength`. Use `WMR_AI_DENOISE=1` to build with AI (see [Build from source](#build-from-source)).
+The default is `off` (exact reverse-blend, no cleanup) in every build. Release binaries also offer the `ai` method (FDnCNN); source/dev builds omit it (build with `WMR_AI_DENOISE=1` to enable, see [Build from source](#build-from-source)).
 
 ## How it works
 
