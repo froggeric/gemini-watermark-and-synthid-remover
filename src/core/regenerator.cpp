@@ -84,17 +84,20 @@ fs::path resolve_vae(const RegenConfig& cfg) {
     return cache_dir() / name;
 }
 
-// Pinned sources. SHA256 == the HuggingFace LFS content oid (the HF tree API exposes it
-// as `lfs.sha256`); the VAE oid was cross-verified by downloading the 335 MB file and
-// running `shasum -a 256` (byte-for-byte match), so the model oid is trusted the same way
-// without downloading the 6.5 GB checkpoint. The fp16-fix VAE file is named
-// `sdxl_vae.safetensors` on HF (NOT `sdxl_vae-fp16-fix.safetensors`; that path 404s).
+// Pinned sources, mirrored to the project's own HuggingFace repo (froggeric/wmr) so the
+// CPU regen path depends only on our own infra (not the upstream stabilityai / madebyollin
+// repos). SHA256 == the HuggingFace LFS content oid (the HF tree API exposes it as
+// `lfs.sha256`), which is content-addressed: mirroring the exact upstream bytes to
+// froggeric/wmr leaves both oids unchanged. The VAE oid was cross-verified by downloading
+// the 335 MB file and running `shasum -a 256` (byte-for-byte match); the model oid is
+// trusted the same way without downloading the 6.5 GB checkpoint. The fp16-fix VAE file is
+// named `sdxl_vae.safetensors` (NOT `sdxl_vae-fp16-fix.safetensors`; that path 404s).
 constexpr const char* kRegenModelUrl =
-    "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors";
+    "https://huggingface.co/froggeric/wmr/resolve/main/sd_xl_base_1.0.safetensors";
 constexpr const char* kRegenModelSha256 =
     "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b";
 constexpr const char* kRegenVaeUrl =
-    "https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/main/sdxl_vae.safetensors";
+    "https://huggingface.co/froggeric/wmr/resolve/main/sdxl_vae.safetensors";
 constexpr const char* kRegenVaeSha256 =
     "235745af8d86bf4a4c1b5b4f529868b37019a10f7c0b2e79ad0abca3a22bc6e1";
 

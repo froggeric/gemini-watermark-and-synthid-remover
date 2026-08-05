@@ -109,16 +109,18 @@ jobs:
             # Cross-compile Intel on Apple Silicon. NCNN's simplevk does STATIC
             # Vulkan linkage on APPLE and needs a build-time libvulkan; there is
             # no x86_64 Vulkan dylib on this arm64 runner, so disable Vulkan
-            # entirely -> CPU-only AI on this binary. MI-GAN is OFF here too (no
-            # osx-x86_64 ORT prebuilt); regen is OFF too (sdcpp/ggml cannot
-            # cross-compile to x86_64 - "unknown target CPU apple-m1" - and CPU
-            # regen is impractical on Intel anyway); arm64 keeps GPU + MI-GAN +
-            # CoreML-SD + regen. --synthid-attack regen falls back to spectral here.
-            ARGS="$ARGS -DCMAKE_OSX_ARCHITECTURES=x86_64 -DWMR_NCNN_VULKAN=OFF -DWMR_BUILD_REGEN=OFF -DVCPKG_MANIFEST_FEATURES=ai-denoise"
+            # entirely -> CPU-only AI denoise on this binary. MI-GAN stays ON
+            # (CoreML, arch-neutral .mlpackage). Regen is ON but CPU-only: Metal
+            # does not cross-compile to x86_64, and ggml's GGML_NATIVE host-cpu
+            # probe would emit -mcpu=apple-m1 for the arm64 host (rejected by the
+            # x86_64 target). CMakeLists.txt disables that probe on a cross-arch
+            # build, and WMR_REGEN_CPU_ONLY forces the sdcpp backends off.
+            # --synthid-attack regen runs on the CPU here (slow but correct).
+            ARGS="$ARGS -DCMAKE_OSX_ARCHITECTURES=x86_64 -DWMR_NCNN_VULKAN=OFF -DWMR_REGEN_CPU_ONLY=ON"
           else
             # Apple Silicon native + bundled MoltenVK for out-of-the-box GPU +
             # the CoreML SDXL regen backend (the mac default for --synthid-attack
-            # regen). x86_64 stays without it (CPU regen fallback, like MI-GAN).
+            # regen). x86_64 uses CPU regen (no CoreML SD) + CoreML MI-GAN.
             ARGS="$ARGS -DVulkan_LIBRARY=$(brew --prefix vulkan-loader)/lib/libvulkan.dylib -DWMR_BUILD_AI_COREML_SD=ON"
           fi
           cmake -B build -S . -GNinja $ARGS
@@ -131,8 +133,8 @@ jobs:
             -DWMR_BUILD_TESTS=OFF \
             -DWMR_BUILD_AI_DENOISE=ON \
             -DWMR_BUILD_AI_MIGAN=ON \
-            -DWMR_BUILD_REGEN=OFF \
-            -DVCPKG_MANIFEST_FEATURES="ai-denoise" \
+            -DWMR_BUILD_REGEN=ON -DWMR_REGEN_CPU_ONLY=ON \
+            -DVCPKG_MANIFEST_FEATURES="ai-denoise;regen" \
             -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} \
             -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
 
@@ -155,8 +157,8 @@ jobs:
             -DWMR_BUILD_TESTS=OFF ^
             -DWMR_BUILD_AI_DENOISE=ON ^
             -DWMR_BUILD_AI_MIGAN=ON ^
-            -DWMR_BUILD_REGEN=OFF ^
-            -DVCPKG_MANIFEST_FEATURES="ai-denoise" ^
+            -DWMR_BUILD_REGEN=ON -DWMR_REGEN_CPU_ONLY=ON ^
+            -DVCPKG_MANIFEST_FEATURES="ai-denoise;regen" ^
             -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} ^
             -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
           cmake --build build --config ${{ env.BUILD_TYPE }}
@@ -362,9 +364,9 @@ jobs:
           cmake -B build -S . -GNinja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DWMR_BUILD_AI_DENOISE=ON \
-            -DWMR_BUILD_REGEN=OFF \
+            -DWMR_BUILD_REGEN=ON -DWMR_REGEN_CPU_ONLY=ON \
             -DWMR_BUILD_TESTS=ON \
-            -DVCPKG_MANIFEST_FEATURES="ai-denoise" \
+            -DVCPKG_MANIFEST_FEATURES="ai-denoise;regen" \
             -DVCPKG_TARGET_TRIPLET=x64-linux \
             -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
 

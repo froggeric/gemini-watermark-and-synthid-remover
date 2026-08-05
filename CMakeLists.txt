@@ -306,6 +306,16 @@ endif()
 # BEFORE add_subdirectory(tests) so the stable-diffusion target exists when the
 # tests mirror this block.
 option(WMR_BUILD_REGEN "Build SynthID diffusion-regen (stable-diffusion.cpp SDXL img2img)" OFF)
+# CPU-only regen: force every stable-diffusion.cpp GPU backend off (CUDA, Vulkan,
+# Metal, OpenCL). For CI legs that have no GPU toolchain (the ubuntu/windows
+# runners, and the macOS x86_64 cross-build): Vulkan needs the loader + glslc
+# (absent on the ubuntu runner), sdcpp-on-MSVC was never CI-validated with a GPU
+# backend, and Metal does not cross-compile to x86_64. CI can only smoke the CPU
+# path anyway (no usable GPU on the runners), so CPU-only is the green
+# cross-platform default; the release binary still runs `--synthid-attack regen`
+# (CPU; slow but correct). GPU backends for faster regen are an out-of-band /
+# real-hardware follow-up.
+option(WMR_REGEN_CPU_ONLY "Force the regen backend to CPU-only (no CUDA/Vulkan/Metal/OpenCL); for CI legs without a GPU toolchain" OFF)
 if(WMR_BUILD_REGEN)
     set(SD_SUBMODULE "${CMAKE_SOURCE_DIR}/external/stable-diffusion.cpp")
     if(NOT EXISTS "${SD_SUBMODULE}/CMakeLists.txt")
@@ -317,8 +327,23 @@ if(WMR_BUILD_REGEN)
     # docs/backend.md, stable-diffusion.cpp then selects GPU -> integrated GPU ->
     # CPU on its own, so a box with no usable GPU gracefully runs on CPU without us
     # guessing a device name like "cuda0"/"vulkan0". An explicit override is handled
-    # by Task 2's resolver (regen_backend_string); the default is empty/auto.
-    if(APPLE)
+    # by regen_backend_string (regen_backend.cpp); the default is empty/auto.
+    if(WMR_REGEN_CPU_ONLY)
+        set(SD_CUDA   OFF CACHE BOOL "" FORCE)
+        set(SD_VULKAN OFF CACHE BOOL "" FORCE)
+        set(SD_METAL  OFF CACHE BOOL "" FORCE)
+        set(SD_OPENCL OFF CACHE BOOL "" FORCE)
+        # sdcpp's SD_* -> GGML_* mapping only ENABLES ggml backends (if(SD_METAL)
+        # set(GGML_METAL ON)); it never disables them. ggml then independently
+        # defaults GGML_METAL=ON on APPLE (and would default Vulkan/CUDA on their
+        # respective hosts), so SD_METAL=OFF alone leaves the Metal backend built.
+        # Force the GGML_* defaults off too so CPU-only is real, not just "no
+        # sdcpp-selected backend".
+        set(GGML_CUDA   OFF CACHE BOOL "" FORCE)
+        set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
+        set(GGML_METAL  OFF CACHE BOOL "" FORCE)
+        set(GGML_OPENCL OFF CACHE BOOL "" FORCE)
+    elseif(APPLE)
         set(SD_METAL  ON  CACHE BOOL "" FORCE)
         set(SD_CUDA   OFF CACHE BOOL "" FORCE)
         set(SD_VULKAN OFF CACHE BOOL "" FORCE)
@@ -333,6 +358,21 @@ if(WMR_BUILD_REGEN)
             set(SD_VULKAN ON  CACHE BOOL "" FORCE)
         endif()
         set(SD_METAL OFF CACHE BOOL "" FORCE)
+    endif()
+
+    # macOS cross-arch build (x86_64 on an arm64 host): ggml's GGML_NATIVE host-cpu
+    # probe runs the HOST compiler with -mcpu=native, extracts the HOST flag
+    # (-mcpu=apple-m1), then feeds it to the TARGET x86_64 compile, which the x86_64
+    # compiler rejects ("unknown target CPU 'apple-m1'"). The CPU backend is always
+    # built, so this fires under WMR_REGEN_CPU_ONLY too. Disable the probe whenever
+    # the target arch is not the host arch (set BEFORE sdcpp's add_subdirectory so
+    # ggml's option(GGML_NATIVE ...) inherits it).
+    if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+        list(FIND CMAKE_OSX_ARCHITECTURES "${CMAKE_HOST_SYSTEM_PROCESSOR}" _wmr_regen_host_arch_idx)
+        if(_wmr_regen_host_arch_idx EQUAL -1)
+            set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+            message(STATUS "Regen: macOS cross-arch build -> GGML_NATIVE OFF (avoids the host-cpu -mcpu probe)")
+        endif()
     endif()
 
     set(SD_BUILD_EXAMPLES    OFF CACHE BOOL "" FORCE)
