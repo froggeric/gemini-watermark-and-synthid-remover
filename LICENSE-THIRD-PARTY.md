@@ -216,9 +216,10 @@ The `--synthid-attack regen` mode (SDXL img2img) is an **opt-in build feature**
   `ggml` tensor backend (both MIT). The SDXL base model and fp16-fix VAE are **downloaded
   on first use** to `~/.cache/wmr/`, SHA256-verified, and are NOT bundled.
 - The CoreML backend (macOS, `WMR_BUILD_AI_COREML_SD`) uses models converted from
-  `apple/ml-stable-diffusion` (tag 1.1.1, MIT). Users convert them manually via the recipe
-  in `~/.claude/plans/coreml-sdxl-phase3.md`. The models (~6.5 GB total) are NOT bundled
-  and NOT auto-downloaded.
+  `apple/ml-stable-diffusion` (tag 1.1.1, MIT). The models (~4.5 GB total) are
+  auto-downloaded on first use from `huggingface.co/froggeric/wmr` (SHA256-verified,
+  cached in `~/.cache/wmr/coreml-sdxl/`); they are NOT bundled. Manual conversion
+  remains a fallback (see the README).
 
 ### leejet/stable-diffusion.cpp — MIT License
 
@@ -277,9 +278,11 @@ SOFTWARE.
 Source: <https://github.com/apple/ml-stable-diffusion> (tag 1.1.1). The reference
 Swift/CoreML Stable Diffusion implementation. The SDXL img2img models (UNet, VAE
 encoder/decoder, two text encoders) are compiled to `.mlpackage` format and loaded at
-runtime by the CoreML backend (macOS only, `WMR_BUILD_AI_COREML_SD`). Users convert
-them manually via the recipe in `~/.claude/plans/coreml-sdxl-phase3.md`. The converted
-models (~6.5 GB total) are NOT bundled and NOT auto-downloaded.
+runtime by the CoreML backend (macOS only, `WMR_BUILD_AI_COREML_SD`). The converted
+models (~4.5 GB total) are auto-downloaded on first use from
+`huggingface.co/froggeric/wmr` (SHA256-verified); they are NOT bundled. Manual
+conversion via `apple/ml-stable-diffusion` tag 1.1.1 (with
+`--custom-vae-version madebyollin/sdxl-vae-fp16-fix`) remains a fallback (see README).
 
 Copyright (c) 2024 Apple Inc.
 
