@@ -69,7 +69,7 @@ struct CliOptions {
     bool synthid_attack_requested = false;
     // regen knobs (used only when synthid_attack=="regen"):
     float regen_strength = 0.10f;  // validated for SynthID scrubbing on CoreML (fp16-fix VAE)
-    int   regen_steps = 20;
+    int   regen_steps = 50;  // N=50: matches the 9-image 100%-validated config (s=0.10 -> 5 steps)
     bool  regen_no_download = false;
     bool  regen_no_tile = false;
     std::string regen_model_path;
@@ -102,7 +102,8 @@ inline std::string synthid_attack_help_text() {
         "The only method is regen (the default). "
         "regen = low-strength SDXL img2img regeneration of the whole image (the only "
         "SynthID-Image scrub the published literature reports as validated; LOSSY "
-        "~38-45 dB; leaves a detectable attacked-image footprint; downloads a ~6.5 GB "
+        "(~29-41 dB PSNR, content-dependent); leaves a detectable attacked-image "
+        "footprint; downloads a ~6.5 GB "
         "model + ~335 MB VAE on first use). "
         "No public SynthID verifier exists, so success cannot be confirmed locally. "
         "On the remove subcommand, regen runs only when --synthid-attack is passed "
