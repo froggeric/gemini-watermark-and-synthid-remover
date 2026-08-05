@@ -103,7 +103,7 @@ wmr does **not** detect SynthID (no public SynthID-Image verifier exists; the sp
 |------|-------------|
 | `--synthid-attack regen` | SynthID attack (default `regen`; the only method). On `remove`, regen runs only when this flag is passed. On `synthid`, regen runs by default |
 | `--regen-strength` | img2img strength, 0.02 to 0.15 (default 0.10) |
-| `--regen-steps` | sampler steps (default 20) |
+| `--regen-steps` | sampler steps (default 50) |
 | `--regen-no-download` | refuse the first-run model fetch (errors if the model is absent) |
 | `--regen-no-tile` | disable tiled img2img (whole-image; fails above ~1024px on most GPUs) |
 | `--regen-model-path` / `--regen-vae-path` | point at a local model / VAE instead of the pinned download |
@@ -118,13 +118,14 @@ wmr synthid image.png -o clean.png                            # SynthID scrub (r
 wmr remove image.png --synthid-attack regen -o clean.png      # visible diamond first, then regen
 ```
 
-**Backend selection + platform availability (1.16.0).** The regen path runs natively on macOS Apple Silicon via CoreML. In this release the sdcpp CPU regen backend is built only into the macOS Apple Silicon binary; the Linux, Windows, and macOS Intel binaries do not include it, so on those `--synthid-attack regen` is unavailable (prints a rebuild hint). Cross-platform CPU regen is a follow-up.
+**Backend selection + platform availability (1.16.2).** The regen path runs on every platform. macOS Apple Silicon defaults to the native CoreML pipeline (fast); Linux, Windows, and macOS Intel run the sdcpp CPU backend (correct, but slow). All backends use the same SDXL base model and the same deterministic-Euler img2img schedule, so the validated strength (0.10 @ 50 steps = 5 denoise steps) applies uniformly.
 
-| Backend | Platform (1.16.0) | Performance | Notes |
+| Backend | Platform | Performance | Notes |
 |---------|----------|-------------|-------|
-| `auto` (default) | macOS Apple Silicon | ~10s/tile + ~50s load (one-time) | CoreML SDXL if models present, else CPU. |
-| `coreml` | macOS Apple Silicon | ~10s/tile + ~50s load (one-time) | Native CoreML SDXL, ~3.4x faster than CPU on M4 (total wall time; ~13x on inference once loaded). |
-| `cpu` | macOS Apple Silicon only in 1.16.0 | ~231s/tile (896x1200) | sdcpp via stable-diffusion.cpp. Linux/Windows/mac-Intel: unavailable this release (cross-platform sdcpp is a follow-up). |
+| `auto` (default) | all | macOS Apple Silicon ~10s/tile (CoreML); else CPU | macOS prefers CoreML when the models are present; Linux/Windows/mac-Intel fall back to CPU. |
+| `coreml` | macOS Apple Silicon | ~10s/tile + ~50s load (one-time) | Native CoreML SDXL, ~3.4x faster than CPU on M4. |
+| `cpu` | all | ~231s/tile (896x1200) | sdcpp via stable-diffusion.cpp. The default on the Linux/Windows/macOS Intel release binaries. |
+| `metal` | macOS Apple Silicon (arm64 binary only) | not recommended | sdcpp Metal backend; unstable upstream on Apple Silicon, prefer `auto`/`coreml`. |
 
 On macOS with `WMR_BUILD_AI_COREML_SD`, the `auto` backend prefers CoreML when models
 are present at `$WMR_COREML_SD_MODELS_DIR` (defaults to `~/.cache/wmr/coreml-sdxl/`).

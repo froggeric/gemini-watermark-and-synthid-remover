@@ -493,7 +493,7 @@ int run_cli(int argc, char* argv[]) {
             ->capture_default_str()
             ->check(CLI::Range(0.02f, 0.15f));
         cmd->add_option("--regen-steps", opts.regen_steps,
-                        "regen sample steps (fewer is faster; ~8-30)")
+                        "regen sample steps (fewer is faster; 50 is the validated default)")
             ->capture_default_str()
             ->check(CLI::Range(1, 100));
         cmd->add_flag("--regen-no-download", opts.regen_no_download,

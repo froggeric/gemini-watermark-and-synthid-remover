@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 _Nothing yet._
 
+## [1.16.2] - 2026-08-05
+
+### SynthID regen is now cross-platform (CPU on Linux/Windows/macOS Intel)
+
+- **`--synthid-attack regen` now builds and runs on Linux, Windows, and macOS Intel** (it was macOS-Apple-Silicon-only in 1.15.0-1.16.1). Two new CMake pieces fix the build gaps that forced it off those platforms in v1.15.0:
+  - `WMR_REGEN_CPU_ONLY` forces the stable-diffusion.cpp GPU backends off (CUDA/Vulkan/Metal/OpenCL) for the GPU-less CI/release legs. It also forces the underlying `GGML_*` defaults off, because ggml turns `GGML_METAL` on by itself on Apple regardless of `SD_METAL`, so disabling `SD_METAL` alone was not enough.
+  - A macOS cross-arch guard sets `GGML_NATIVE=OFF` when the target architecture is not the host, so ggml's host-cpu probe stops emitting `-mcpu=apple-m1` (which the x86_64 cross-compile target rejects).
+  macOS Apple Silicon keeps its Metal backend (unchanged). The Linux/Windows/macOS Intel release binaries ship CPU-only regen (slow but correct); a GPU backend for faster regen there is a follow-up.
+- **Aligned the CPU regen sampler with the validated CoreML config.** The CPU path now uses deterministic Euler (`EULER_SAMPLE_METHOD` + the SDXL discrete schedule), matching the `CoreMLSDEulerScheduler` the strength-0.10 removal knee was validated against. It previously used Euler-ancestral (`EULER_A`), which re-injects noise each step and over-denoises at the same 0.10 strength (more lossy, not a lower removal threshold). The step math is identical on both paths (`int(N*strength)` = 5 steps at 0.10/50); lowering the CPU strength to 0.05 instead would collapse to 2 steps and under-remove. The validated 0.10 @ 50 now applies uniformly across backends.
+- **CPU-path model downloads moved to the project's own HuggingFace repo** (`froggeric/wmr`; was `stabilityai` + `madebyollin`). The SHA256 pins are the content-addressed LFS oids, unchanged by the mirror. The two mirrored files (`sd_xl_base_1.0.safetensors`, ~6.5 GB; `sdxl_vae.safetensors`, ~335 MB) must be present on `froggeric/wmr` before the tagged release.
+- **Build/CI.** `WMR_BUILD_REGEN=ON` re-enabled on the linux/windows/mac-x86_64/tests CI legs with `WMR_REGEN_CPU_ONLY=ON`; mac arm64 unchanged.
+
 ## [1.16.1] - 2026-08-05
 
 ### SynthID regen: validated removal knee + lighter/faster defaults
