@@ -37,6 +37,14 @@ Dev scripts (spectral-only):
 - `scripts/build_synthid_codebook.sh`, `scripts/verify_removal.py`,
   `scripts/visualize_spectral.py`, `docs/research/synthid_content_probe.py`,
   `docs/research/synthid_content_ring_probe.py`, `docs/research/synthid_lab_a_probe.py`.
+- Seven uncited spectral dev-analysis scripts that referenced the removed `.wcb`
+  format/code and could no longer run: `scripts/analyze_carrier{,_deep}.py`,
+  `scripts/analyze_channel_detector.py`, `scripts/analyze_phase_detector.py`,
+  `scripts/build_codebook_from_folder.py`, `scripts/build_differential_codebook.py`,
+  `scripts/convert_npz_to_wcb.py`. (Their findings live on in the research docs; none
+  was cited by a kept doc.) `docs/research/ws2b_leakage_probe.py` is KEPT because two
+  kept docs (`synthid-48-96-leakage-check.md`, `synthid-content-fixture-analysis.md`)
+  cite it as their reproducibility anchor.
 
 Build:
 - FFTW3 dependency dropped from `CMakeLists.txt`, `tests/CMakeLists.txt`,
