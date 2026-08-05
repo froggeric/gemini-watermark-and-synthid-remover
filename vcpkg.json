@@ -7,7 +7,6 @@
     "fmt",
     "cli11",
     "spdlog",
-    "fftw3",
     "catch2",
     { "name": "ffmpeg", "features": ["x264"] }
   ],

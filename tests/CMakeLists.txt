@@ -5,17 +5,11 @@ find_package(Catch2 REQUIRED)
 # Test sources
 set(TEST_SOURCES
     unit/blend_modes_test.cpp
-    unit/fft_context_test.cpp
-    unit/spectral_codebook_test.cpp
     unit/inpaint_test.cpp
     unit/notebooklm_gates_test.cpp
     unit/geometry_detector_test.cpp
     unit/still_geometry_test.cpp
-    unit/synthid_wording_test.cpp
     unit/synthid_attack_cli_test.cpp
-    unit/codebook_subtractor_test.cpp
-    unit/codebook_builder_test.cpp
-    unit/lab_a_experiment_test.cpp
     integration/visible_pipeline_test.cpp
 )
 
@@ -24,13 +18,7 @@ set(LIB_SOURCES
     ${CMAKE_SOURCE_DIR}/src/core/blend_modes.cpp
     ${CMAKE_SOURCE_DIR}/src/core/watermark_engine.cpp
     ${CMAKE_SOURCE_DIR}/src/core/inpaint.cpp
-    ${CMAKE_SOURCE_DIR}/src/core/fft_context.cpp
     ${CMAKE_SOURCE_DIR}/src/detection/ncc_detector.cpp
-    ${CMAKE_SOURCE_DIR}/src/detection/synthid_detector.cpp
-    ${CMAKE_SOURCE_DIR}/src/synthid/spectral_codebook.cpp
-    ${CMAKE_SOURCE_DIR}/src/synthid/codebook_subtractor.cpp
-    ${CMAKE_SOURCE_DIR}/src/synthid/codebook_builder.cpp
-    ${CMAKE_SOURCE_DIR}/src/synthid/noise_residual_subtractor.cpp
     ${CMAKE_SOURCE_DIR}/src/video/notebooklm_gates.cpp  # VideoReader-free (pure OpenCV); safe for the test link
     ${CMAKE_SOURCE_DIR}/src/video/geometry_detector.cpp  # VideoReader-free (pure OpenCV); safe for the test link
     ${CMAKE_SOURCE_DIR}/src/detection/still_geometry.cpp  # VideoReader-free (pure OpenCV); safe for the test link
@@ -55,7 +43,6 @@ target_link_libraries(wmr_tests PRIVATE
     opencv_photo
     fmt::fmt
     spdlog::spdlog
-    FFTW3::fftw3f
 )
 
 # Register tests with CTest. Run from the source root so the integration tests find

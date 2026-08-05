@@ -42,7 +42,7 @@ REGEN="${WMR_BUILD_REGEN:-0}"
 # Requires Accelerate framework (system). Unset/0 keeps the lean build without CoreML.
 COREML_SD="${WMR_BUILD_AI_COREML_SD:-0}"
 
-DEPS=(opencv fftw ffmpeg catch2 fmt spdlog cli11)
+DEPS=(opencv ffmpeg catch2 fmt spdlog cli11)
 
 # AI-denoise mode: pull in the Vulkan toolchain + init the NCNN submodule.
 if [ "${AI_DENOISE}" = "1" ]; then
@@ -109,7 +109,6 @@ cmake -S . -B "${BUILD_DIR}" -G Ninja \
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
   -DCMAKE_PREFIX_PATH="${PREFIXES}" \
   -DOpenCV_DIR="$(brew --prefix opencv)/lib/cmake/opencv4" \
-  -DFFTW3f_DIR="$(brew --prefix fftw)/lib/cmake/fftw3" \
   -DFFMPEG_ROOT="$(brew --prefix ffmpeg)" \
   -DWMR_BUILD_TESTS=ON \
   $([ "${AI_DENOISE}" = "1" ] && echo "-DWMR_BUILD_AI_DENOISE=ON") \

@@ -56,9 +56,8 @@
       "cacheVariables": {
         "CMAKE_OSX_ARCHITECTURES": "arm64",
         "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0",
-        "CMAKE_PREFIX_PATH": "/opt/homebrew/opt/opencv;/opt/homebrew/opt/fftw;/opt/homebrew/opt/ffmpeg;/opt/homebrew/opt/catch2;/opt/homebrew/opt/fmt;/opt/homebrew/opt/spdlog;/opt/homebrew/opt/cli11",
+        "CMAKE_PREFIX_PATH": "/opt/homebrew/opt/opencv;/opt/homebrew/opt/ffmpeg;/opt/homebrew/opt/catch2;/opt/homebrew/opt/fmt;/opt/homebrew/opt/spdlog;/opt/homebrew/opt/cli11",
         "OpenCV_DIR": "/opt/homebrew/opt/opencv/lib/cmake/opencv4",
-        "FFTW3f_DIR": "/opt/homebrew/opt/fftw/lib/cmake/fftw3",
         "FFMPEG_ROOT": "/opt/homebrew/opt/ffmpeg",
         "WMR_BUILD_TESTS": "ON"
       }

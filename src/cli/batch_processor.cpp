@@ -1,10 +1,6 @@
 #include "cli/batch_processor.hpp"
 #include "core/watermark_engine.hpp"
 #include "core/types.hpp"
-#include "core/fft_context.hpp"
-#include "synthid/spectral_codebook.hpp"
-#include "synthid/codebook_subtractor.hpp"
-#include "synthid/noise_residual_subtractor.hpp"
 
 #include <opencv2/imgcodecs.hpp>
 #include <spdlog/spdlog.h>
@@ -116,16 +112,20 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
         }
     }
 
-    // SynthID processing. Mirrors process_single_image's synthid branch: regen runs
-    // a whole-image SDXL scrub (skipping the spectral path), off skips entirely, and
-    // spectral (default) is today's codebook/codebook-free path (byte-identical).
-    if ((opts.mode == CliMode::AutoRemove && opts.synthid) || opts.mode == CliMode::SynthidOnly) {
+    // SynthID scrub. Spectral detection/suppression was removed in 1.16.0; the only
+    // SynthID operation is `--synthid-attack regen` (lossy SDXL img2img). Mirrors
+    // process_single_image: on AutoRemove (batch from `remove`) regen runs only when
+    // the user explicitly passed --synthid-attack; on SynthidOnly (batch from
+    // `synthid`) it always runs. This is the method-extension seam: a future method
+    // adds one IsMember value + one branch below.
+    if ((opts.mode == CliMode::AutoRemove && opts.synthid_attack_requested) ||
+        opts.mode == CliMode::SynthidOnly) {
         if (opts.synthid_attack == "regen") {
 #ifdef WMR_BUILD_REGEN
-            // regen = whole-image SDXL img2img. No codebook required. On failure the
-            // engine returns false (logs + leaves the image unchanged). Mirror the
-            // single-image path: surface the failure so the batch loop counts this
-            // image as failed (not silently as success) and skip the misleading save.
+            // regen = whole-image SDXL img2img. On failure the engine returns false
+            // (logs + leaves the image unchanged). Mirror the single-image path:
+            // surface the failure so the batch loop counts this image as failed
+            // (not silently as success) and skip the misleading save.
             InpaintConfig ic;
             ic.method = InpaintMethod::DiffusionRegen;
             ic.regen_strength       = opts.regen_strength;
@@ -143,29 +143,11 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
             }
 #else
             spdlog::error("--synthid-attack regen: this wmr build is regen-free (WMR_BUILD_REGEN off). "
-                          "Rebuild with WMR_BUILD_REGEN=1, or use --synthid-attack spectral.");
+                          "Rebuild with WMR_BUILD_REGEN=1.");
             return 1;
 #endif
-        } else if (opts.synthid_attack == "off") {
-            spdlog::info("SynthID attack is 'off'; skipping the synthid pass");
-        } else {
-            RemovalConfig config;
-            config.custom_strength = opts.synthid_strength;
-            config.phase_adaptive = opts.phase_adaptive;
-            config.lab_a = opts.lab_a;
-
-            if (!opts.codebook_path.empty()) {
-                FftContext fft;
-                SpectralCodebook codebook;
-                codebook.load(opts.codebook_path);
-                CodebookSubtractor subtractor(fft);
-                subtractor.remove_synthid(image, codebook, config);
-            } else if (opts.codebook_free) {
-                FftContext fft;
-                NoiseResidualSubtractor subtractor(fft);
-                subtractor.remove_synthid(image, config);
-            }
         }
+        // Future SynthID methods: add the IsMember value + a branch here.
     }
 
     // Determine output path

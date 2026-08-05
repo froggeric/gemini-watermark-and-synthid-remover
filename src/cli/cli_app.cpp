@@ -2,12 +2,6 @@
 #include "cli/batch_processor.hpp"
 #include "core/watermark_engine.hpp"
 #include "core/types.hpp"
-#include "core/fft_context.hpp"
-#include "synthid/spectral_codebook.hpp"
-#include "synthid/codebook_subtractor.hpp"
-#include "synthid/noise_residual_subtractor.hpp"
-#include "synthid/codebook_builder.hpp"
-#include "detection/synthid_detector.hpp"
 #include "video/video_processor.hpp"
 
 #include <opencv2/imgcodecs.hpp>
@@ -32,8 +26,8 @@ namespace {
 void print_header(std::ostream& os) {
     os << "--------------------------------------------\n"
         << "  wmr v" APP_VERSION " — watermark remover\n"
-        << "  Remove Gemini/Veo visible watermarks\n"
-        << "  and suppress SynthID invisible watermarks (heuristic; not a verifiable removal).\n"
+        << "  Remove Gemini/Veo visible watermarks.\n"
+        << "  Remove SynthID invisible watermarks via lossy regen (no detection; no public verifier exists).\n"
         << "  --synthid-attack regen is lossy (SDXL img2img; ~6.5 GB model + ~335 MB VAE download on first use).\n"
         << "  https://github.com/froggeric/gemini-watermark-and-synthid-remover\n"
         << "  Copyright 2026 Frederic Guigand\n"
@@ -85,43 +79,6 @@ std::optional<cv::Rect> parse_rect(const std::string& s) {
         return cv::Rect(x, y, w, h);
     }
     return std::nullopt;
-}
-
-// Parse a "x1,y1;x2,y2;..." carrier-bin list (FFT-bin coords on the per-profile
-// rows x cols grid). Returns nullopt for an empty OR malformed string; the
-// caller distinguishes the two. Empty entries (e.g. a trailing ';') are tolerated.
-// Each bin must parse as two non-negative integers separated by ',' (e.g.
-// "84,0;168,0"). Whitespace tolerance: std::istringstream::operator>> skips
-// leading whitespace within a token, so " 84 , 0" parses the same as "84,0".
-// Whitespace AROUND a token (after a ';') is also fine. A token with no ','
-// (e.g. "84") or non-numeric chars (e.g. "not_a_bin") is rejected as malformed.
-std::optional<std::vector<std::pair<int,int>>> parse_bin_list(const std::string& s) {
-    if (s.empty()) return std::nullopt;
-    std::vector<std::pair<int,int>> bins;
-
-    // Split on ';' manually. Whitespace inside a token is handled by
-    // istringstream's >> above (it skips leading ws within the token); the
-    // separator between x and y must still be a literal ','.
-    size_t i = 0;
-    while (i < s.size()) {
-        size_t j = s.find(';', i);
-        if (j == std::string::npos) j = s.size();
-        if (j > i) {  // skip empty entries (consecutive ';' or trailing)
-            const std::string token = s.substr(i, j - i);
-            int x, y;
-            char sep;
-            std::istringstream ss(token);
-            if (ss >> x >> sep >> y && sep == ',' && x >= 0 && y >= 0) {
-                bins.emplace_back(x, y);
-            } else {
-                return std::nullopt;  // malformed entry → user error
-            }
-        }
-        i = (j == s.size()) ? j : j + 1;
-    }
-
-    if (bins.empty()) return std::nullopt;  // only ';' entries → treat as malformed
-    return bins;
 }
 
 // Build the still-image geometry override from CLI opts. Returns false (with a logged
@@ -185,32 +142,10 @@ static int process_detect(const CliOptions& opts) {
         else { report(WatermarkVariant::V2); report(WatermarkVariant::V1); }
     }
 
-    // SynthID detection
-    if (!opts.codebook_path.empty()) {
-        FftContext fft;
-        SpectralCodebook codebook;
-        try {
-            codebook.load(opts.codebook_path);
-        } catch (const std::exception& e) {
-            spdlog::error("Cannot load codebook: {}", e.what());
-            return 1;
-        }
-
-        SynthidDetector detector(fft);
-        auto result = detector.detect(image, codebook);
-        if (result.detected) {
-            spdlog::info("[SYNTHID] DETECTED (confidence: {:.1f}%)",
-                         result.confidence * 100.0f);
-            spdlog::info("  noise_corr={:.3f} carrier_phase={:.3f} "
-                         "struct_ratio={:.3f} ms_consistency={:.3f}",
-                         result.noise_correlation, result.carrier_phase_score,
-                         result.structure_ratio, result.multi_scale_consistency);
-        } else {
-            spdlog::info("[SYNTHID] not detected ({:.1f}%)",
-                         result.confidence * 100.0f);
-        }
-    }
-
+    // SynthID detection was removed in 1.16.0: the spectral detector had no
+    // discriminative power (ROC AUC 0.20 on Google-verifier-labeled images) and
+    // no public SynthID-Image verifier exists. `wmr detect` is visible-only now.
+    // See docs/research/synthid-spectral-removal-record.md.
     return 0;
 }
 
@@ -315,14 +250,23 @@ static int process_single_image(const CliOptions& opts) {
         }
     }
 
-    // SynthID suppression. Branches on opts.synthid_attack:
-    //   "regen"    = SDXL img2img over the WHOLE image (lossy; the only *validated*
-    //                SynthID scrub). Skips the spectral codebook path entirely.
-    //   "off"      = skip the synthid pass even with --synthid set.
-    //   "spectral" = today's frequency-domain heuristic (DEFAULT, byte-identical to
-    //                pre-regen behavior when no --synthid-attack flag is passed).
+    // SynthID scrub. The spectral detector + suppressor was removed in 1.16.0
+    // (it did not work; see docs/research/synthid-spectral-removal-record.md), so
+    // the only SynthID operation is `--synthid-attack regen` (lossy SDXL img2img).
+    //
+    // When it runs:
+    //   - SynthidOnly mode (the `synthid` subcommand): always. Its whole purpose.
+    //   - AutoRemove mode (the `remove` subcommand): only when the user EXPLICITLY
+    //     passed --synthid-attack (regen is lossy + downloads ~6.5 GB, so opt-in).
+    //     Because "regen" is the default string value, the request is detected via
+    //     CLI11's option count, not the string alone (synthid_attack_requested).
+    //
+    // This block is the method-extension seam: a future SynthID method is one new
+    // IsMember value on --synthid-attack + one new branch below. Keep the per-method
+    // dispatch intact; do not collapse it to a hardcoded "regen is the only path".
+    const bool synthid_attack_requested = opts.synthid_attack_requested;
     if (opts.mode == CliMode::SynthidOnly ||
-        (opts.mode == CliMode::AutoRemove && opts.synthid)) {
+        (opts.mode == CliMode::AutoRemove && synthid_attack_requested)) {
 
         if (opts.synthid_attack == "regen") {
 #ifdef WMR_BUILD_REGEN
@@ -356,57 +300,11 @@ static int process_single_image(const CliOptions& opts) {
             did_work = true;
 #else
             spdlog::error("--synthid-attack regen: this wmr build is regen-free (WMR_BUILD_REGEN off). "
-                          "Rebuild with WMR_BUILD_REGEN=1, or use --synthid-attack spectral.");
+                          "Rebuild with WMR_BUILD_REGEN=1.");
             return 1;
 #endif
-        } else if (opts.synthid_attack == "off") {
-            spdlog::info("SynthID attack is 'off'; skipping the synthid pass");
-        } else {
-            // ---- DEFAULT "spectral": today's frequency-domain path (codebook/codebook-free) ----
-            if (opts.codebook_path.empty() && !opts.codebook_free) {
-                spdlog::error("SynthID suppression requires --codebook <path> or --codebook-free");
-                return 1;
-            }
-
-            FftContext fft;
-            RemovalConfig config;
-            config.custom_strength = opts.synthid_strength;
-            config.phase_adaptive = opts.phase_adaptive;
-            config.lab_a = opts.lab_a;
-            config.no_content_guard = opts.no_content_guard;
-
-            if (!opts.codebook_path.empty()) {
-                SpectralCodebook codebook;
-                codebook.load(opts.codebook_path);
-
-                if (!opts.force) {
-                    SynthidDetector detector(fft);
-                    auto det = detector.detect(image, codebook,
-                        opts.lab_a ? SynthidDetector::ColorSpace::LabA
-                                   : SynthidDetector::ColorSpace::BGR);
-                    if (!det.detected) {
-                        spdlog::debug("No SynthID detected ({:.1f}%)", det.confidence * 100.0f);
-                        if (opts.mode == CliMode::SynthidOnly) {
-                            spdlog::warn("No SynthID detected. Use --force to suppress anyway.");
-                            return 2;
-                        }
-                    } else {
-                        spdlog::info("SynthID detected ({:.1f}%), suppressing carrier...",
-                                     det.confidence * 100.0f);
-                    }
-                }
-
-                CodebookSubtractor subtractor(fft);
-                subtractor.remove_synthid(image, codebook, config);
-            } else {
-                spdlog::info("Using codebook-free suppression (noise residual estimation)");
-                NoiseResidualSubtractor subtractor(fft);
-                subtractor.remove_synthid(image, config);
-            }
-
-            spdlog::info("SynthID suppression complete (frequency-domain heuristic; not a verifiable removal)");
-            did_work = true;
         }
+        // Future SynthID methods: add the IsMember value + a branch here.
     }
 
     if (!did_work) {
@@ -442,33 +340,6 @@ static int process_single_image(const CliOptions& opts) {
 
     spdlog::info("Saved: {}", output);
     return 0;
-}
-
-static int process_build_codebook(const CliOptions& opts) {
-    FftContext fft;
-    CodebookBuilder builder(fft);
-
-    // Parse --carrier-grid (opt-in carrier-bin seeding). Empty = no seeding
-    // (today's behavior). Malformed = user error.
-    if (!opts.carrier_grid_str.empty()) {
-        auto bins = parse_bin_list(opts.carrier_grid_str);
-        if (!bins) {
-            spdlog::error("Invalid --carrier-grid format. Expected: x1,y1;x2,y2;... "
-                         "(e.g. --carrier-grid 84,0;168,0)");
-            return 1;
-        }
-        builder.set_carrier_bins(*bins);
-        spdlog::info("Carrier-bin seeding: {} bin(s) will be applied to every fresh profile",
-                     bins->size());
-    }
-
-    auto stats = builder.build_from_directory(opts.input_path, opts.output_path);
-
-    spdlog::info("Build complete: {} images → {} profiles ({} low-sample)",
-                 stats.total_images, stats.profiles_created,
-                 stats.skipped_low_samples);
-
-    return stats.profiles_created > 0 ? 0 : 1;
 }
 
 static int process_video(const CliOptions& opts) {
@@ -609,11 +480,13 @@ int run_cli(int argc, char* argv[]) {
     // test asserts on it). The regen flags are always bound (even on a regen-free
     // lean build) so `--synthid-attack regen` parses, then the dispatch path
     // rejects it with a clear error rather than failing at CLI parse time.
-    auto add_synthid_attack = [&](CLI::App* cmd) {
-        cmd->add_option("--synthid-attack", opts.synthid_attack,
+    // Returns the --synthid-attack option pointer so the caller (remove) can tell
+    // "explicitly requested" from "default" via ->count() (regen is opt-in on remove).
+    auto add_synthid_attack = [&](CLI::App* cmd) -> CLI::Option* {
+        CLI::Option* atk = cmd->add_option("--synthid-attack", opts.synthid_attack,
                         synthid_attack_help_text())
             ->capture_default_str()
-            ->check(CLI::IsMember({"off", "spectral", "regen"}));
+            ->check(CLI::IsMember({"regen"}));
         cmd->add_option("--regen-strength", opts.regen_strength,
                         "regen img2img denoising strength 0.02-0.15 "
                         "(lower = closer to original, weaker scrub)")
@@ -645,6 +518,7 @@ int run_cli(int argc, char* argv[]) {
                         "(Apple Silicon native CoreML SDXL; opt-in only).")
             ->capture_default_str()
             ->check(CLI::IsMember({"auto", "cpu", "metal", "vulkan", "coreml"}));
+        return atk;
     };
 
     // --- remove (default) ---
@@ -659,22 +533,12 @@ int run_cli(int argc, char* argv[]) {
                          "Use legacy Gemini (pre-3.5) V1 watermark profile");
     remove_cmd->add_flag("--no-legacy", opts.still_no_legacy,
                          "Pin current (Gemini 3.5+) V2 profile; disable auto fallback");
-    remove_cmd->add_flag("--synthid", opts.synthid, "Also suppress SynthID carrier");
-    remove_cmd->add_option("--codebook", opts.codebook_path, "Spectral codebook path (.wcb)");
-    remove_cmd->add_flag("--codebook-free", opts.codebook_free,
-                          "Estimate carrier from noise residual (no codebook needed)");
-    remove_cmd->add_flag("--lab-a", opts.lab_a,
-                         "WS3 experiment: suppress in the LAB `a` channel only (with --codebook-free/--codebook)");
-    remove_cmd->add_flag("--no-content-guard", opts.no_content_guard,
-                         "Bypass the content-image guard so the codebook acts on content (evaluation)");
-    remove_cmd->add_option("--synthid-strength", opts.synthid_strength,
-                           "SynthID suppression strength 0.0-2.0")
-        ->check(CLI::Range(0.0f, 2.0f));
     remove_cmd->add_option("--inpaint-strength", opts.inpaint_strength,
                            "Inpaint strength 0.0-1.0")
         ->check(CLI::Range(0.0f, 1.0f));
     add_denoise(remove_cmd);
-    add_synthid_attack(remove_cmd);
+    // regen is opt-in on remove: only runs when --synthid-attack is explicitly passed.
+    CLI::Option* remove_attack_opt = add_synthid_attack(remove_cmd);
     remove_cmd->add_flag("-r,--recursive", opts.recursive, "Process directories recursively");
     remove_cmd->add_option("-o,--output", opts.output_path, "Output path (required for files; batch defaults to cleaned/)");
     add_still_geometry(remove_cmd);
@@ -685,7 +549,6 @@ int run_cli(int argc, char* argv[]) {
     detect_cmd->add_option("input", opts.input_path, "Input image")
         ->required()
         ->check(CLI::ExistingFile);
-    detect_cmd->add_option("--codebook", opts.codebook_path, "Spectral codebook for SynthID detection");
     detect_cmd->add_flag("--legacy", opts.still_legacy,
                          "Report only the legacy Gemini (pre-3.5) V1 profile");
     detect_cmd->add_flag("--no-legacy", opts.still_no_legacy,
@@ -714,41 +577,19 @@ int run_cli(int argc, char* argv[]) {
     add_common(visible_cmd);
 
     // --- synthid ---
-    auto* synthid_cmd = app.add_subcommand("synthid", "Suppress SynthID invisible watermark (frequency-domain heuristic; not a verifiable removal)");
+    // The synthid subcommand's whole purpose is the SynthID scrub, so regen runs
+    // by default (no need to pass --synthid-attack). The flag is still accepted
+    // for symmetry and as the future method-extension seam.
+    auto* synthid_cmd = app.add_subcommand("synthid",
+        "Remove SynthID invisible watermark via lossy SDXL regen "
+        "(no detection; not a verifiable removal without a public verifier)");
     synthid_cmd->add_option("input", opts.input_path, "Input image")
         ->required()
         ->check(CLI::ExistingFile);
     synthid_cmd->add_flag("-f,--force", opts.force, "Skip detection");
-    synthid_cmd->add_option("--codebook", opts.codebook_path, "Spectral codebook path (.wcb)");
-    synthid_cmd->add_flag("--codebook-free", opts.codebook_free,
-                          "Estimate carrier from noise residual (no codebook needed)");
-    synthid_cmd->add_flag("--phase-adaptive", opts.phase_adaptive,
-                          "Use image's own phase for uniform images (conjugate subtraction)");
-    synthid_cmd->add_flag("--lab-a", opts.lab_a,
-                          "WS3 experiment: suppress in the LAB `a` channel only");
-    synthid_cmd->add_flag("--no-content-guard", opts.no_content_guard,
-                          "Bypass the content-image guard so the codebook acts on content (evaluation)");
-    synthid_cmd->add_option("--synthid-strength", opts.synthid_strength,
-                            "SynthID suppression strength 0.0-2.0")
-        ->check(CLI::Range(0.0f, 2.0f));
     synthid_cmd->add_option("-o,--output", opts.output_path, "Output path (required)");
     add_synthid_attack(synthid_cmd);
     add_common(synthid_cmd);
-
-    // --- build-codebook ---
-    auto* build_cmd = app.add_subcommand("build-codebook", "Build SynthID codebook from reference images");
-    build_cmd->add_option("input", opts.input_path, "Directory of reference images")
-        ->required()
-        ->check(CLI::ExistingDirectory);
-    build_cmd->add_option("-o,--output", opts.output_path, "Output codebook path")
-        ->required();
-    build_cmd->add_option("--carrier-grid", opts.carrier_grid_str,
-                           "Seed candidate SynthID carrier bins in every fresh profile. "
-                           "Format: \"x1,y1;x2,y2;...\" (FFT-bin coords on the per-profile "
-                           "rows x cols grid). Sets consistency + phase_consistency = 1.0 "
-                           "at each bin so the subtractor acts there. Opt-in; absent = no "
-                           "seeding (default).");
-    add_common(build_cmd);
 
     // --- video ---
     auto* video_cmd = app.add_subcommand("video", "Remove watermark from video");
@@ -822,6 +663,11 @@ int run_cli(int argc, char* argv[]) {
         return 2;
     }
 
+    // On the remove subcommand, SynthID regen is opt-in: it runs only when the
+    // user explicitly passed --synthid-attack. The synthid subcommand runs regen
+    // unconditionally (its whole purpose), so the request flag is irrelevant there.
+    opts.synthid_attack_requested = (remove_attack_opt->count() > 0);
+
     // Determine mode from subcommand
     if (detect_cmd->parsed()) {
         opts.mode = CliMode::Detect;
@@ -829,8 +675,6 @@ int run_cli(int argc, char* argv[]) {
         opts.mode = CliMode::VisibleOnly;
     } else if (synthid_cmd->parsed()) {
         opts.mode = CliMode::SynthidOnly;
-    } else if (build_cmd->parsed()) {
-        opts.mode = CliMode::BuildCodebook;
     } else if (video_cmd->parsed()) {
         opts.mode = CliMode::Video;
     } else {
@@ -841,9 +685,6 @@ int run_cli(int argc, char* argv[]) {
         switch (opts.mode) {
             case CliMode::Detect:
                 return process_detect(opts);
-
-            case CliMode::BuildCodebook:
-                return process_build_codebook(opts);
 
             case CliMode::Video:
                 return process_video(opts);

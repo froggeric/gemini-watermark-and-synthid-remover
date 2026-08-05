@@ -16,7 +16,6 @@ enum class CliMode {
     Detect,
     VisibleOnly,
     SynthidOnly,
-    BuildCodebook,
     Video,
 };
 
@@ -30,14 +29,7 @@ struct CliOptions {
     bool verbose = false;
     bool detect_only = false;
     float inpaint_strength = 0.85f;
-    bool synthid = false;
-    std::string codebook_path;
-    float synthid_strength = 0.50f;
     bool recursive = false;
-    bool codebook_free = false;
-    bool phase_adaptive = false;
-    bool lab_a = false;               // WS3 experiment: operate on LAB `a` channel only (synthid path)
-    bool no_content_guard = false;     // synthid: bypass the content-image skip so a codebook acts on content (evaluation)
     bool legacy_profile = false;       // video: Veo legacy text profile
     bool notebooklm_profile = false;    // video: NotebookLM profile
     std::string notebooklm_rect_str;     // video: manual rect override "x,y,w,h"
@@ -64,23 +56,25 @@ struct CliOptions {
     float denoise_strength_pct = 120.0f; // --strength 0-300 (percent; /100 internally)
     int denoise_radius = 10;            // --radius 1-25
 
-    // SynthID attack selection. DEFAULT "spectral" preserves today's behavior
-    // (--synthid alone runs the frequency-domain suppressor). "regen" opts into the
-    // lossy SDXL img2img path; "off" skips synthid entirely even with --synthid set.
-    std::string synthid_attack = "spectral";   // off|spectral|regen
+    // SynthID attack selection. The spectral detector/suppressor was removed in
+    // 1.16.0 (it did not work; see docs/research/synthid-spectral-removal-record.md),
+    // so "regen" (lossy SDXL img2img) is the only method and the default for the
+    // `synthid` subcommand. This stays a pluggable string + CLI11 IsMember +
+    // per-method dispatch branch so a future SynthID method is a localized add:
+    // one new IsMember value + one new branch in process_single_image / batch.
+    std::string synthid_attack = "regen";   // regen (the only method today)
+    // Not a CLI flag. Set post-parse from the remove subcommand's --synthid-attack
+    // option count(): on `remove`, regen runs only when the flag was passed; on
+    // `synthid`, regen is the subcommand's whole purpose and runs regardless.
+    bool synthid_attack_requested = false;
     // regen knobs (used only when synthid_attack=="regen"):
-    float regen_strength = 0.10f;  // validated for SynthID removal on CoreML (fp16-fix VAE)
+    float regen_strength = 0.10f;  // validated for SynthID scrubbing on CoreML (fp16-fix VAE)
     int   regen_steps = 20;
     bool  regen_no_download = false;
     bool  regen_no_tile = false;
     std::string regen_model_path;
     std::string regen_vae_path;
     std::string regen_backend = "auto";   // auto|cpu|metal|vulkan (auto->CPU on Apple Silicon)
-
-    // build-codebook: opt-in carrier-bin seeding. Parsed from --carrier-grid
-    // "x1,y1;x2,y2;..." (FFT-bin coords on the per-profile rows x cols grid).
-    // Empty (flag absent) = no seeding = today's behavior.
-    std::string carrier_grid_str;
 };
 
 // Resolve the still-image profile variant from CLI flags.
@@ -101,31 +95,26 @@ bool resolve_inpaint_config(const CliOptions& opts, InpaintConfig& out);
 // assert on it directly without spawning a subprocess and without linking the heavy
 // cli_app.cpp TU (which drags in FFmpeg/video). There is ONE place to change the
 // caveat text: this definition. Keep it in sync with the regex in
-// synthid_attack_cli_test.cpp and the forbidden-claim regex in synthid_wording_test.cpp.
+// synthid_attack_cli_test.cpp.
 inline std::string synthid_attack_help_text() {
     return
-        "--synthid-attack selects the SynthID invisible-watermark attack "
-        "(default spectral = today's --synthid behavior). "
-        "off = skip the synthid pass entirely. "
-        "spectral = the frequency-domain suppressor (heuristic; NOT a verifiable removal, "
-        "Google publishes no public verifier). "
-        "regen = low-strength SDXL img2img regeneration (the only *validated* SynthID scrub "
-        "in the literature; LOSSY ~38-45 dB; leaves a detectable attacked-image footprint; "
-        "downloads a ~6.5 GB model + ~335 MB VAE on first use). "
+        "--synthid-attack selects the SynthID invisible-watermark attack. "
+        "The only method is regen (the default). "
+        "regen = low-strength SDXL img2img regeneration of the whole image (the only "
+        "SynthID-Image scrub the published literature reports as validated; LOSSY "
+        "~38-45 dB; leaves a detectable attacked-image footprint; downloads a ~6.5 GB "
+        "model + ~335 MB VAE on first use). "
+        "No public SynthID verifier exists, so success cannot be confirmed locally. "
+        "On the remove subcommand, regen runs only when --synthid-attack is passed "
+        "explicitly (it is opt-in there). On the synthid subcommand it is the default. "
         "regen does NOT remove the VISIBLE Gemini diamond (strength ~0.10 cannot); in "
-        "--synthid / SynthidOnly mode, visible-clean the image first if you need that too "
+        "SynthidOnly mode, visible-clean the image first if you need that too "
         "(AutoRemove mode runs visible removal first).";
 }
 
 // Parse a "x,y,w,h" rect string. Returns nullopt for an empty OR malformed string;
 // the caller distinguishes the two (empty = no flag, malformed = error).
 std::optional<cv::Rect> parse_rect(const std::string& s);
-
-// Parse a "x1,y1;x2,y2;..." carrier-bin list (FFT-bin coords on the per-profile
-// rows x cols grid). Returns nullopt for an empty OR malformed string; the
-// caller distinguishes the two (empty = no flag, malformed = user error). Empty
-// entries (e.g. trailing ';') are tolerated.
-std::optional<std::vector<std::pair<int,int>>> parse_bin_list(const std::string& s);
 
 // Build the still-image geometry override from CLI opts. Returns false (with a
 // logged error) when --rect was given but malformed.
