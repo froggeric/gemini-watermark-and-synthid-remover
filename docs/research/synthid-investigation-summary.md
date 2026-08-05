@@ -1,5 +1,14 @@
 # SynthID investigation: summary + state (2026-08-02)
 
+> **Update 2026-08-05 (v1.16.0): the spectral path was removed.** Following the
+> validation below (detector ROC AUC 0.20 on Google-verifier-labeled images; a clean
+> codebook inert on content), the spectral SynthID detection + suppression code was
+> deleted in v1.16.0. The only SynthID operation wmr ships now is
+> `--synthid-attack regen` (lossy SDXL img2img). The decision record, with the
+> evidence and the conditions to revisit detection, is at
+> `synthid-spectral-removal-record.md`. The rest of this doc is the pre-removal
+> investigation record (kept for reference).
+
 Capstone of the SynthID work on branch `synthid-correctness-pack` (merged to `main`, not released; version 1.15.0 in CMakeLists, no tag). This doc ties together the detailed write-ups in `docs/research/synthid-*.md` and records conclusions + next steps. Read this first when resuming SynthID work.
 
 ## What SynthID-Image actually is (ground truth)

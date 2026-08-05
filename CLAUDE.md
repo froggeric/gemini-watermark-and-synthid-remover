@@ -17,9 +17,8 @@ Or, arm64 preset: `cmake --preset mac-homebrew-Release && cmake --build --preset
 **System libs (macOS/Homebrew), manual, no vcpkg:**
 ```bash
 cmake -B build -S . -GNinja \
-  -DCMAKE_PREFIX_PATH="$(brew --prefix opencv);$(brew --prefix fftw);$(brew --prefix ffmpeg);$(brew --prefix catch2);$(brew --prefix fmt);$(brew --prefix spdlog);$(brew --prefix cli11)" \
+  -DCMAKE_PREFIX_PATH="$(brew --prefix opencv);$(brew --prefix ffmpeg);$(brew --prefix catch2);$(brew --prefix fmt);$(brew --prefix spdlog);$(brew --prefix cli11)" \
   -DOpenCV_DIR=$(brew --prefix opencv)/lib/cmake/opencv4 \
-  -DFFTW3f_DIR=$(brew --prefix fftw)/lib/cmake/fftw3 \
   -DFFMPEG_ROOT=$(brew --prefix ffmpeg) \
   -DWMR_BUILD_TESTS=ON
 cmake --build build
@@ -69,19 +68,18 @@ An FDnCNN denoiser (`src/core/ai_denoise.{hpp,cpp}`, NCNN + Vulkan, CPU fallback
   - **MI-GAN (1.10.0) is platform-split.** macOS (arm64 + x86_64) = native CoreML: `WMR_BUILD_AI_MIGAN=ON` → the CMake `if(APPLE)` branch compiles `migan_coreml_inpainter.mm`, links the system CoreML framework (no ORT, no vendored lib), and ships the 14 MB `migan_512_places2_fp16.mlpackage` dir (Git LFS via `assets/.../weight.bin`; `lfs: enable_migan` on checkout). mac x86_64 is now a **tarball** (was a bare binary) so the `.mlpackage` sits next to it; Intel Macs gain MI-GAN (were OFF in 1.9.0). linux/windows = ORT (unchanged from 1.9.0): the ONNX Runtime shared lib + 27 MB `migan_pipeline_v2.onnx`, shipped as **archives** (`wmr` + `libonnxruntime.so.1`/`onnxruntime.dll` + model; linux `patchelf --set-rpath '$ORIGIN'`). ORT = official v1.27.1 prebuilt fetched at CMake configure (NOT the vcpkg port, heavy source build would threaten the Windows 6 h cap), `IMPORTED` target `wmr_ort`, SHA256-pinned; windows post-build-copies `onnxruntime.dll` next to `wmr.exe` (exe-dir search).
   - Licenses ship in `LICENSE-THIRD-PARTY.md`.
 
-### SynthID Removal (two strategies)
+### SynthID (regen only, since 1.16.0)
 
-Both operate in the frequency domain via `FftContext` (FFTW3 wrapper with plan caching):
+The spectral SynthID detection + suppression path (CodebookSubtractor, NoiseResidualSubtractor, CodebookBuilder, SynthidDetector, FftContext, FFTW3) was **removed in 1.16.0** because it did not work: the detector scored ROC AUC 0.20 on Google-verifier-labeled images, and a clean codebook is inert on content (the carrier is ~0.025/255, below the noise floor). wmr does **not** detect SynthID (no public SynthID-Image verifier exists). The decision record, evidence, and the conditions to revisit detection are in `docs/research/synthid-spectral-removal-record.md`.
 
-- **CodebookSubtractor**, multi-pass spectral subtraction using a .wcb codebook. DC exclusion ramp, magnitude caps, per-channel weights (B=0.85, G=1.0, R=0.70).
-- **NoiseResidualSubtractor**, codebook-free. Bilateral filter denoise → noise residual → FFT → estimate carrier. Two regimes: uniform images (replace with mean color) vs content images (phase noise in carrier band).
+The only SynthID operation is `--synthid-attack regen` (lossy SDXL img2img). `--synthid-attack` is a pluggable method selector (IsMember `{"regen"}`, default `regen`); a future method is one new IsMember value + one new dispatch branch. On `remove`, regen runs only when `--synthid-attack` is passed explicitly (lossy + ~6.5 GB download, so opt-in); on `synthid`, regen is the default.
 
 ### SynthID diffusion-regen + CoreML SDXL backend (Phase 2 + 3)
 
-- `--synthid-attack {off|spectral|regen}` (default `spectral`). `regen` = low-strength SDXL img2img of the whole image (the only SynthID-Image scrub the literature reports as validated; LOSSY, no public verifier, default strength 0.10, detector-validated). Behind `WMR_BUILD_REGEN` (sdcpp CPU backend, vendored `external/stable-diffusion.cpp`) + `WMR_BUILD_AI_COREML_SD` (native CoreML mac). Knobs: `--regen-backend {auto,cpu,metal,vulkan,coreml}`, `--regen-strength/-steps`, `--regen-no-download`.
+- `--synthid-attack regen` (the only method since 1.16.0) = low-strength SDXL img2img of the whole image (the only SynthID-Image scrub the literature reports as validated; LOSSY, no public verifier, default strength 0.10, detector-validated). Behind `WMR_BUILD_REGEN` (sdcpp CPU backend, vendored `external/stable-diffusion.cpp`) + `WMR_BUILD_AI_COREML_SD` (native CoreML mac). Knobs: `--regen-backend {auto,cpu,metal,vulkan,coreml}`, `--regen-strength/-steps`, `--regen-no-download`.
 - **CoreML SD pipeline** (`src/core/coreml_sd_{scheduler,pipeline.mm,model_fetch}` + `regenerator.cpp`): from-scratch ObjC++ port (Euler scheduler over Accelerate + VAE encode/decode + baked empty-prompt embeds; text encoders NOT shipped). mac `auto` prefers CoreML when models present (CPU fallback). ~10s/1024-tile on M4 (CoreML-CPU path; GPU/ANE placement open). Models auto-download from `huggingface.co/froggeric/wmr` (SHA256-pinned in `coreml_sd_model_fetch.cpp`, tar.gz-extracted; `--regen-no-download` refuses).
 - **Conversion (dev-only, `apple/ml-stable-diffusion`):** tag **1.1.1** (NOT HEAD, which drags in `diffusionkit`); install `pytest` (coremltools' testing_utils imports it); pin `torch==2.7.0 coremltools==9.0 diffusers==0.39.0 transformers==4.51.3` (newer torch breaks the trace); apply the one-line `_cast` patch in `coremltools/.../torch/ops.py` (`int(len-1 array)` → `.item()` first); **MANDATORY `--custom-vae-version madebyollin/sdxl-vae-fp16-fix`** (the base VAE overflows/darkens in fp16). Full recipe + the C++ IO specs: `~/.claude/plans/coreml-sdxl-phase3.md`.
-- **v1.15.0 regen scope: macOS Apple Silicon only** (sdcpp CPU regen OFF on linux/windows/mac-Intel CI legs; `--synthid-attack regen` falls back to spectral there). See CI below.
+- **v1.15.0 regen scope: macOS Apple Silicon only** (sdcpp CPU regen OFF on linux/windows/mac-Intel CI legs; `--synthid-attack regen` is unavailable there, prints a rebuild hint). See CI below.
 
 ### Video Processing
 
@@ -277,7 +275,7 @@ residual_thresh=14, inpaint_radius=3, strength=1.0}`.
 
 ### CLI
 
-CLI11 subcommands in src/cli/: `remove` (default), `visible`, `synthid`, `detect`, `video`, `build-codebook`. Directory inputs to remove/visible/synthid trigger batch mode (sequential, outputs to `cleaned/` subdirectory).
+CLI11 subcommands in src/cli/: `remove` (default), `visible`, `synthid`, `detect`, `video`. Directory inputs to remove/visible/synthid trigger batch mode (sequential, outputs to `cleaned/` subdirectory).
 
 ## Key Conventions
 
@@ -318,7 +316,6 @@ CLI11 subcommands in src/cli/: `remove` (default), `visible`, `synthid`, `detect
 
 - CMakePresets.json is macOS-only (arm64, despite "x64" naming). Linux/Windows use manual cmake invocation.
 - FFmpeg found via custom `cmake/FindFFMPEG.cmake` (pkg-config primary, `FFMPEG_ROOT` fallback). Creates imported targets `FFMPEG::avformat` etc.
-- FFTW3 linked via variables in main build (`${FFTW3f_LIBRARIES}`) but via imported target in tests (`FFTW3::fftw3f`), inconsistency inherited from vcpkg vs system lib resolution.
 - Linux links static libgcc/libstdc++; MSVC uses static CRT.
 - **Local build is DYNAMIC; CI is STATIC.** The Homebrew `build/wmr` links OpenCV/FFmpeg/fmt/spdlog dynamically (~10 MB); CI's vcpkg build is fully static (lean release binaries are ~29 MB single self-contained files, `otool -L` shows only system frameworks). Don't judge CI portability from the local binary, inspect the downloaded release binary (`gh release download`).
 - macOS runners and the local Mac are BSD, not GNU: `base64` decodes with `-D` and encodes with `-i` (no `--decode`/`-w0`); `xargs` has no `-r`/`--no-run-if-empty` (use `find -exec`); `sed -i` needs `''`.

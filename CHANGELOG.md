@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 _Nothing yet._
 
+## [1.16.0] - 2026-08-05
+
+### Removed: spectral SynthID detection + suppression (did not work)
+
+- **BREAKING: the spectral SynthID detection and suppression path is removed.** The spectral detector (`SynthidDetector`), the codebook and codebook-free subtractors (`CodebookSubtractor`, `NoiseResidualSubtractor`), the codebook builder (`CodebookBuilder`), the spectral codebook format, and `FftContext` are deleted, along with the `src/synthid/` directory and the FFTW3 dependency. The `build-codebook` subcommand is gone.
+- **Why.** The spectral detector scored **ROC AUC 0.20** on 8 Google-official-verifier-labeled images (worse than random; its score was a content-property constant with no discrimination). A deep study (14 sources, 16 adversarially verified claims) found no reliable third-party SynthID-Image detection exists. A clean codebook is inert on content images (carrier ~0.025/255 is below the noise floor; +0.16 to +0.38% attenuation over baseline, within noise). Keeping the path meant shipping a detection + suppression capability that provably did not work. Full evidence and the conditions to revisit detection: [`docs/research/synthid-spectral-removal-record.md`](docs/research/synthid-spectral-removal-record.md).
+- **SynthID is now regen-only.** The only SynthID operation is `--synthid-attack regen` (lossy SDXL img2img, the single attack the published literature reports as validated). `--synthid-attack` is kept as a pluggable method selector (IsMember set `{"regen"}`, default `regen`) so a future SynthID method is a localized add. On `remove`, regen runs only when `--synthid-attack` is explicitly passed (it is lossy and downloads ~6.5 GB, so opt-in). On `synthid`, regen runs by default.
+- **`wmr detect` is visible-only.** SynthID detection is gone (no public verifier exists; the detector had no discriminative power).
+- **Removed CLI flags:** `--codebook`, `--codebook-free`, `--phase-adaptive`, `--lab-a`, `--no-content-guard`, `--synthid-strength`, `--carrier-grid`, and `--synthid` (on `remove`).
+- **Removed tests:** `spectral_codebook_test`, `codebook_subtractor_test`, `codebook_builder_test`, `fft_context_test`, `synthid_wording_test` (the spectral honesty-lock, obsolete once spectral is gone), `lab_a_experiment_test`. `synthid_attack_cli_test` is reworked for the `{regen}`-only contract.
+- **Build changes:** FFTW3 dropped from `CMakeLists.txt`, `tests/CMakeLists.txt`, `vcpkg.json`, `scripts/build.sh`, `CMakePresets.json`. The lean default build is now AI-free and FFT-free. The regen path (`regenerator`, `coreml_sd_*`, `external/stable-diffusion.cpp`) is unchanged.
+
 ## [1.15.0] - 2026-08-04
 
 ### SynthID diffusion-regen mode (the only validated SynthID scrub)
