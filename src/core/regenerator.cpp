@@ -310,19 +310,19 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
         // Fetch models from HuggingFace if missing (unless --regen-no-download)
         if (!ensure_coreml_models(models_dir, cfg.allow_download)) {
             spdlog::warn("regen: CoreML models not available (models_dir='{}'). "
-                         "Falling back to CPU or spectral. Use --regen-backend cpu to force CPU, "
-                         "or allow downloads with --regen-no-download omitted.", models_dir.string());
+                         "Regen did not run; image unchanged. Use --regen-backend cpu for CPU regen, "
+                         "or allow downloads by omitting --regen-no-download.", models_dir.string());
             return false;
         }
         m_impl->coreml_pipeline = std::make_unique<CoreMLSDPipeline>();
         fs::path embeds_bin = models_dir / "empty_prompt_embeds.bin";
         if (!m_impl->coreml_pipeline->initialize(models_dir.string(), embeds_bin.string())) {
             spdlog::warn("regen: CoreML pipeline initialization failed (models_dir='{}'). "
-                         "Falling back to spectral.", models_dir.string());
+                         "Regen did not run; image unchanged.", models_dir.string());
             return false;
         }
         if (!m_impl->coreml_pipeline->is_ready()) {
-            spdlog::warn("regen: CoreML pipeline not ready after initialization. Falling back to spectral.");
+            spdlog::warn("regen: CoreML pipeline not ready after initialization. Regen did not run; image unchanged.");
             return false;
         }
         m_impl->ready = true;

@@ -49,7 +49,7 @@ public:
     // tile_size on either axis (default), runs MultiDiffusion-style tiled img2img so
     // the native resolution is preserved; else a single pass at the image size.
     // Writes the result back into `image` (BGR u8, same size). Returns false on a
-    // backend/model error (caller falls back to the spectral path; never throws).
+    // backend/model error (caller leaves the image unchanged; never throws).
     bool regen(cv::Mat& image, const RegenConfig& cfg);
 
 private:
@@ -63,7 +63,7 @@ private:
 // (ggml-metal: GGML_ASSERT([rsets->data count] == 0)). main() reads this after
 // run_cli() and, if true, flushes streams + std::_Exit to skip static destructors
 // (the standard llama.cpp/ggml workaround for these Metal teardown aborts). Returns
-// false in a lean build, a spectral-only run, or a regen run that never created an
+// false in a lean build, or a regen run that never created an
 // sd_ctx (model missing / download failed) -> normal exit path.
 bool regenerator_was_used();
 

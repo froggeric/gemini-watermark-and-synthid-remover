@@ -308,9 +308,9 @@ bool WatermarkEngine::remove_watermark_detected(
     // SynthID diffusion-regen: SDXL img2img over the WHOLE image (regen replaces
     // content, so the visible-mark alpha-blend + residual cleanup below never run).
     // On any failure (no model/backend, regen error) this is an honest no-op: the
-    // image is returned byte-for-byte unchanged and the caller decides the fallback
-    // (the CLI chooses spectral explicitly via `--synthid-attack spectral`). The
-    // false return lets the CLI surface the failure to a non-zero exit code.
+    // image is returned byte-for-byte unchanged and the CLI surfaces the failure to
+    // a non-zero exit code. (The spectral path was removed in 1.16.0; regen is the
+    // only SynthID operation.)
     if (cfg.method == InpaintMethod::DiffusionRegen) {
         RegenConfig rc;
         rc.strength = cfg.regen_strength;
@@ -323,7 +323,7 @@ bool WatermarkEngine::remove_watermark_detected(
         Regenerator& reg = regenerator();
         if (!reg.is_ready() && !reg.initialize(rc)) {
             spdlog::warn("SynthID regen unavailable (no model/backend); image unchanged.");
-            return false;  // graceful: caller may fall back to spectral
+            return false;  // graceful: image left unchanged, CLI surfaces non-zero exit
         }
         if (!reg.regen(image, rc)) {
             spdlog::warn("SynthID regen failed on this image; image left unchanged.");

@@ -16,8 +16,8 @@ int main(int argc, char* argv[]) {
     // leak of our Regenerator singleton doesn't cause it -- it's ggml's own teardown.
     // std::_Exit skips static destructors entirely (the standard llama.cpp/ggml
     // workaround for these Metal teardown aborts). Flush first so the saved-file +
-    // log lines land. Only fires when an sd_ctx was actually created; spectral /
-    // lean / regen-requested-but-no-model runs return normally.
+    // log lines land. Only fires when an sd_ctx was actually created; lean /
+    // regen-requested-but-no-model runs return normally.
     if (wmr::regenerator_was_used()) {
         std::fflush(nullptr);
         std::_Exit(rc);

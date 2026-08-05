@@ -10,7 +10,7 @@ namespace fs = std::filesystem;
 // If any required files are missing and `allow_download` is true, downloads them
 // from the HuggingFace repo (froggeric/wmr), verifies SHA256, and extracts the
 // .tar.gz archives. On any failure (network, SHA mismatch, extract), logs and
-// returns false (caller should fall back to CPU/spectral). If all files are already
+// returns false (caller should fall back to the CPU regen backend). If all files are already
 // present and verified, returns true without touching the network.
 //
 // Required files:
