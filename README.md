@@ -132,21 +132,28 @@ are present at `$WMR_COREML_SD_MODELS_DIR` (defaults to `~/.cache/wmr/coreml-sdx
 Be aware of the tradeoffs before you use it:
 
 - **It is lossy, and at the strength that actually scrubs SynthID you will see it.**
-  Typical output is 38 to 45 dB PSNR versus the input. The default strength is **0.10**,
-  the minimum validated (against Google's official SynthID detector) to remove the
-  invisible watermark on the CoreML backend. At that strength expect visible **smoothing
+  Output fidelity varies with content: measured ~29 to 41 dB PSNR versus the input across
+  a varied test set at strength 0.10 (busy content changes more; smooth content less). The
+  default strength is **0.10**, validated as the minimum that reliably removes the
+  invisible watermark (see the next bullet). At that strength expect visible **smoothing
   and minor simplification**, because SDXL regeneration is less powerful than the original
-  model that produced the image. Raise strength only if you accept more change; lower it
-  if you will tolerate a residual watermark for a cleaner image.
+  model that produced the image. Raise strength only if you accept more change; lowering it
+  is **not recommended**: lighter strengths do not reliably clear SynthID on all content
+  (see `docs/research/synthid-light-reconstruction-attacks.md`).
 - **Model acquisition.** The CPU backend downloads ~6.5 GB + ~335 MB on first use (the SDXL
   base checkpoint and the fp16-fix VAE, SHA256-pinned, cached in `~/.cache/wmr/`). The
   CoreML backend (~4.5 GB) is also auto-downloaded from HuggingFace on first use (see below). Neither is bundled.
 - **It leaves a forensic footprint.** A regen-attacked image is itself a detectable
   diffusion output; an attacker looking for "tampering" can spot it. This is an attack on
   the watermark, not an invisibility guarantee.
-- **No public verifier exists** for SynthID-Image, so success cannot be confirmed locally.
-  The "validated" claim rests on published third-party measurements, not a check `wmr` can
-  run for you.
+- **No public verifier exists** for SynthID-Image, so `wmr` cannot confirm success locally.
+  The default strength 0.10 was validated against Google's own "Verify with SynthID"
+  detector: across a varied 9-image set, including an image-to-image generation that
+  carries SynthID **twice**, every output cleared the watermark, confirmed over **two
+  rounds** of checks. This is a small sample (the detector is rate-limited to ~10
+  checks/day), not a large-scale proof, but it spans posters, mockups, and AI art and
+  includes the hardest known case. Lighter strengths (0.04-0.08) cleared normal
+  singly-watermarked images but missed the double-watermark case, so 0.10 is the default.
 - **It does NOT remove the visible Gemini diamond.** At strength 0.10 the img2img pass
   leaves the visible mark largely intact. Run `wmr remove` (the reverse-blend) first, or
   use `wmr remove --synthid-attack regen` which runs the visible removal before

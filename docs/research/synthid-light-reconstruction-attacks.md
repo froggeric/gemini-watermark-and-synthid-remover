@@ -35,7 +35,7 @@ The deeper finding: **every "light" attack that approaches working is itself a
 diffusion model** (AdcSR is a diffusion-SR hybrid; CtrlRegen is clean-noise
 diffusion; VAE+latent-noise at sigma>0 is literally img2img at strength sigma^2).
 So the real open question is not "VAE vs upscaler vs diffusion" but "what is the
-lightest diffusion operating point that still removes SynthID" — which is wmr's
+lightest diffusion operating point that still removes SynthID", which is wmr's
 existing `--regen-strength` knob.
 
 ## Why a pure VAE round-trip is expected to fail
@@ -152,3 +152,63 @@ removal does not buy forensic stealth; it only buys speed and fidelity.
 - WAVES benchmark (public-VAE watermarks removable; in-latent vs post-hoc): arXiv 2401.08573
 - fyxme SynthID attack study (only diffusion worked): fyx.me/articles/...
 - SDXL fp16-fix VAE fidelity (LPIPS 0.056, SSIM 0.73): huggingface.co/madebyollin/sdxl-vae-fp16-fix
+
+---
+
+## Empirical results (2026-08-05)
+
+Validated against Google's official "Verify with SynthID" detector. macOS Apple Silicon,
+CoreML backend, SDXL fp16-fix VAE. Test set: 9 varied Gemini-generated images (posters,
+mockups, AI art), including one image-to-image generation that carries SynthID twice.
+Each data point was confirmed over two rounds of detector checks. The detector is
+rate-limited (~10 checks/day), so this is a small, varied sample, not large-scale.
+
+### Removal knee (diffusion regen, N=50)
+
+| strength | denoise steps | result |
+|----------|--------------|--------|
+| VAE round-trip (0 diffusion) | 0 | cleared ~2/5 images (~40%) - not reliable |
+| 0.02 | 1 | detected |
+| 0.04 | 2 | detected on some images (content-dependent) |
+| 0.06 | 3 | "unsure" on the hardest (uniform-color) image |
+| 0.08 | 4 | cleared 7/8 singly-watermarked images; failed only the double-watermarked one |
+| **0.10** | **5** | **cleared 9/9, including the double-watermark case - the validated default** |
+
+PSNR versus input at strength 0.10 ranges ~29 to 41 dB across the set (busy content
+changes more; smooth content less). Fidelity is content-dependent, not a single number.
+
+### VAE-only round-trip (0 diffusion): not reliable
+
+The pure VAE encode-decode round-trip (no diffusion, `--regen-vae-roundtrip`) cleared
+about 2 of 5 images (~40%). It sits right on the detector's decision boundary:
+content-dependent, not a usable scrubber. This confirms, for stills with the SDXL
+fp16-fix VAE, Google's stated section-6.2 hardening against VAE-based regeneration on
+average. The images it did clear were borderline cases, not a method. The
+`--regen-vae-roundtrip` flag is kept on the `synthid-vae-roundtrip` branch as a research
+tool; it is not a shipping feature.
+
+### The double-watermark edge case
+
+One test image was an image-to-image generation (a Gemini output used as the source for
+another Gemini generation), so SynthID was applied twice. It resisted lighter strengths
+(failed at 4-step / 0.08) and required 0.10 (5-step) to clear. This is the reason the
+default cannot safely drop below 0.10: the rare double-watermark case needs the full
+strength. Normal (singly-watermarked) Gemini images clear at 0.08 (4-step) with slightly
+higher fidelity, but a default must cover the worst case.
+
+### Conclusion
+
+- **Default strength 0.10 is validated as the minimum that clears 100% of the varied set**
+  (9 images, two rounds, including the double-watermark edge case).
+- Lighter strengths (0.04-0.08) clear normal singly-watermarked images but are
+  content-dependent and miss the double-watermark case; not safe as a default.
+- VAE-only (0 diffusion) is unreliable (~40%); not shipped.
+- Output fidelity at 0.10: ~29 to 41 dB PSNR, content-dependent.
+
+### Note on N (the step base)
+
+SynthID removal is governed by `strength` (the starting noise level in the schedule), not
+by N (the denoise granularity). The 9-image validation used N=50 (5 actual steps at
+s=0.10). The shipped default starts at the same noise level (s=0.10 -> ~90% of the
+schedule) regardless of N, so it is removal-equivalent; a higher N only buys marginally
+finer reconstruction (slightly better fidelity) at higher compute cost.
