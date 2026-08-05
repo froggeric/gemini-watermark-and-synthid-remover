@@ -308,6 +308,12 @@ See [`CLAUDE.md`](CLAUDE.md) for the full architecture deep-dive, and [`CHANGELO
 
 PRs welcome. Tests use Catch2; integration tests need the project root as CWD (they look for `test-images/`). Build with tests via `scripts/build.sh`, then `ctest --test-dir build --output-on-failure`. See [`CLAUDE.md`](CLAUDE.md) for conventions, platform quirks, and the design notes behind each watermark path.
 
+### Help wanted: faster SynthID regen on Linux & Windows
+
+`--synthid-attack regen` now runs everywhere, but off Apple Silicon it is CPU-only and slow (minutes per image). The Linux and Windows release binaries ship CPU-only because the sdcpp ([leejet/stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) + ggml) GPU backends have build gaps we could not CI-validate yet (Vulkan needs `glslc` + the loader on the linux runner; sdcpp-on-MSVC was never green in CI). If you work with **Vulkan or CUDA on ggml / stable-diffusion.cpp** and can help wire and validate a GPU regen backend for Linux/Windows, that is the biggest speedup left. A good first step: build locally with `WMR_BUILD_REGEN=ON` (no `WMR_REGEN_CPU_ONLY`), point `--regen-backend vulkan`/`cuda` at a GPU, and report the timings and whether the output still clears Google's SynthID verifier. Open an issue to coordinate.
+
+Other welcome contributions: new watermark profiles (still or video geometry/alpha captures), higher-fidelity or faster inpaint backends, and video SynthID.
+
 ## Credits
 
 Built on research and code from:
