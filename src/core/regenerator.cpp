@@ -204,7 +204,17 @@ struct Regenerator::Impl {
         p.prompt = c.prompt.empty() ? "" : c.prompt.c_str();
         p.negative_prompt = "";
         p.sample_params.sample_steps = c.steps;
-        p.sample_params.sample_method = EULER_A_SAMPLE_METHOD;
+        // Deterministic Euler (NOT Euler-A). The validated removal knee (CoreML,
+        // strength 0.10 @ N=50 = int(50*0.10) = 5 denoise steps) uses
+        // CoreMLSDEulerScheduler: a deterministic Euler on the standard discrete
+        // sigma schedule. sdcpp's EULER_A is ancestral (re-injects noise each step)
+        // and over-denoises at the same 0.10 strength: more lossy, NOT a lower
+        // removal threshold. EULER (deterministic) + DISCRETE_SCHEDULER (the SDXL
+        // default sd_get_default_scheduler returns) matches the CoreML schedule, so
+        // the 0.10 knee applies uniformly across backends. Do NOT lower the strength
+        // on CPU instead: at N=50, strength 0.05 collapses to int(2.5) = 2 steps and
+        // under-removes. Keep 0.10.
+        p.sample_params.sample_method = EULER_SAMPLE_METHOD;
         // SCHEDULER_COUNT is a SENTINEL, not a real value (verified fact). generate_image
         // does not auto-resolve it; resolve it here the way the sdcpp CLI does.
         p.sample_params.scheduler = sd_get_default_scheduler(ctx, p.sample_params.sample_method);
