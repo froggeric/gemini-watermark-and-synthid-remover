@@ -16,31 +16,31 @@
 #   BUILD_TYPE=Debug scripts/build.sh
 #   RUN_TESTS=0 scripts/build.sh     # skip tests
 #   BUILD_DIR=build-alt scripts/build.sh
-#   WMR_AI_DENOISE=1 scripts/build.sh  # FDnCNN AI denoise (NCNN/Vulkan)
-#   WMR_AI_MIGAN=1 scripts/build.sh    # MI-GAN NotebookLM inpainter (ONNX Runtime)
-#   WMR_BUILD_REGEN=1 scripts/build.sh # SynthID diffusion-regen (stable-diffusion.cpp)
+#   WMR_AI_DENOISE=0 scripts/build.sh   # skip FDnCNN AI denoise (NCNN/Vulkan)
+#   WMR_AI_MIGAN=0 scripts/build.sh     # skip MI-GAN NotebookLM inpainter
+#   WMR_BUILD_REGEN=0 scripts/build.sh  # skip SynthID diffusion-regen (sdcpp)
 set -euo pipefail
 
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 RUN_TESTS="${RUN_TESTS:-1}"
 BUILD_DIR="${BUILD_DIR:-build}"
-# When WMR_AI_DENOISE=1, build the NCNN/Vulkan FDnCNN denoiser. Adds the
-# vulkan/volk Homebrew deps, inits the NCNN submodule, and enables
-# -DWMR_BUILD_AI_DENOISE=ON. Unset/0 keeps the lean default build unchanged.
-AI_DENOISE="${WMR_AI_DENOISE:-0}"
-# When WMR_AI_MIGAN=1, build the MI-GAN NotebookLM inpainter (ONNX Runtime).
-# No extra deps — ONNX Runtime is fetched as an official prebuilt at configure
-# time. Unset/0 keeps MI-GAN out of the build (NS-only NotebookLM path).
-AI_MIGAN="${WMR_AI_MIGAN:-0}"
-# When WMR_BUILD_REGEN=1, build SynthID diffusion-regen (leejet/stable-diffusion.cpp
-# SDXL img2img). Adds Homebrew openssl@3 to the prefix path so find_package(OpenSSL)
-# resolves the keg (libcurl comes from the system on macOS). Inits the
-# stable-diffusion.cpp submodule (+ its ggml submodule). Unset/0 keeps the lean
-# build stable-diffusion/ggml/curl-free.
-REGEN="${WMR_BUILD_REGEN:-0}"
-# When WMR_BUILD_AI_COREML_SD=1, build CoreML SDXL img2img pipeline (macOS only).
-# Requires Accelerate framework (system). Unset/0 keeps the lean build without CoreML.
-COREML_SD="${WMR_BUILD_AI_COREML_SD:-0}"
+# The build is FULL by default: every AI feature that builds on this platform is ON.
+# There is no separate "lean" build. The flags below are platform-aware defaults;
+# set the env vars above to 0 to force a feature off.
+# FDnCNN AI denoise (NCNN/Vulkan) + MI-GAN inpainter (CoreML on mac, ORT elsewhere)
+# are cross-platform, so they are on everywhere.
+AI_DENOISE="${WMR_AI_DENOISE:-1}"
+AI_MIGAN="${WMR_AI_MIGAN:-1}"
+# SynthID diffusion-regen (stable-diffusion.cpp + CoreML SDXL) builds on macOS; it has
+# build gaps on linux/windows/mac-Intel (Vulkan/glslc, MSVC, cross-compile), so it is
+# off by default there. Override WMR_BUILD_REGEN=1 on those platforms at your own risk.
+if [ "$(uname)" = "Darwin" ]; then
+    REGEN="${WMR_BUILD_REGEN:-1}"
+    COREML_SD="${WMR_BUILD_AI_COREML_SD:-1}"   # CoreML SDXL is mac-only
+else
+    REGEN="${WMR_BUILD_REGEN:-0}"
+    COREML_SD="${WMR_BUILD_AI_COREML_SD:-0}"
+fi
 
 DEPS=(opencv ffmpeg catch2 fmt spdlog cli11)
 
