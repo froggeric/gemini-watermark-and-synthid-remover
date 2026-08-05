@@ -13,9 +13,7 @@ SynthID detection work.
 The spectral SynthID detector and suppressor did not work. They are removed. The
 only SynthID operation that ships is `--synthid-attack regen` (lossy SDXL img2img,
 the single attack the published literature reports as validated against
-SynthID-Image). Detection is out of wmr entirely: no public SynthID-Image verifier
-exists, so any detection claim is unverifiable, and our detector had no
-discriminative power anyway.
+SynthID-Image). Detection is out of wmr entirely: there is no public SynthID-Image verifier API (Google's "Verify with SynthID" is a manual in-app tool, not automatable), so any detection claim can't be auto-verified, and our detector had no discriminative power anyway.
 
 ## What was removed
 
@@ -124,7 +122,7 @@ capability that provably does not work. Removing it is honest code.
 There is no way to obtain the labeled data needed to build or validate a SynthID
 detector:
 
-- **No public SynthID-Image verifier.** Google's only open SynthID code is
+- **No public verifier API.** Google's "Verify with SynthID" is manual/in-app; its only open SynthID code is
   text-only (`google-deepmind/synthid-text`). The Gemini in-app "Verify with
   SynthID" tool is account-gated, rate-limited (~10 images per 24h), emits
   natural-language verdicts, and cannot be batched.
@@ -147,7 +145,7 @@ isolate.
 Detection stays out of wmr until at least one of these is true. Until then, regen is
 the only SynthID operation wmr performs.
 
-1. **Google publishes a public SynthID-Image verifier or feature extractor.** That
+1. **Google publishes a public SynthID-Image verifier API or feature extractor.** That
    would give a ground-truth label source and make detection measurable.
 2. **A controlled same-generator watermarked-vs-unwatermarked dataset becomes
    available** (a generator that can be run with the watermark on and off, paired on

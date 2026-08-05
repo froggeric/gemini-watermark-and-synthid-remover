@@ -1,8 +1,10 @@
 // Honesty lock for the --synthid-attack regen path.
 //
 // The regen path (SDXL img2img) is the only *validated* SynthID scrub in the
-// literature, but it is LOSSY, leaves a forensic footprint, and there is no public
-// SynthID verifier, so it cannot be claimed as a verifiable "removal" either. This
+// literature, validated against Google's official "Verify with SynthID" verifier.
+// It is still LOSSY, leaves a forensic footprint, and that verifier is manual +
+// rate-limited with no API, so per-run success cannot be auto-confirmed in-process
+// and the help must not over-claim an absolute "removal". This
 // test locks the user-facing help text to:
 //   (a) carry the honest caveats: "lossy", "download", "verifier", "--synthid-attack", "regen";
 //   (b) NOT claim the regen path "removes SynthID" / "removes the SynthID" /

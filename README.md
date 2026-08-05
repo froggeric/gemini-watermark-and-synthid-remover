@@ -15,9 +15,9 @@ A fast command-line tool that removes **visible** watermarks from images and vid
 | Gemini diamond logo | Gemini images | Exact reverse alpha-blend | ✅ Full |
 | Veo video watermark | Veo videos | Per-frame reverse alpha-blend | ✅ Full |
 | NotebookLM logo + wordmark | NotebookLM videos | Per-scene AI inpaint (MI-GAN) | ✅ Full |
-| SynthID (invisible) | Gemini images | Lossy SDXL img2img regen | ⚠️ Lossy; not a verifiable removal (no public SynthID verifier exists) |
+| SynthID (invisible) | Gemini images | Lossy SDXL img2img regen | ⚠️ Lossy; validated against Google's official SynthID verifier (manual, rate-limited) |
 
-`detect` locates the **visible** watermark without modifying the file. wmr does **not** detect SynthID: no public SynthID-Image verifier exists, and the spectral detector we shipped before 1.16.0 had no discriminative power (it scored ROC AUC 0.20 on Google-verifier-labeled images). See [`docs/research/synthid-spectral-removal-record.md`](docs/research/synthid-spectral-removal-record.md) for the evidence.
+`detect` locates the **visible** watermark without modifying the file. wmr does **not** detect SynthID: Google's "Verify with SynthID" is a manual in-app tool (no API wmr can drive), and the spectral detector we shipped before 1.16.0 had no discriminative power (it scored ROC AUC 0.20 on images labeled by that Google verifier). See [`docs/research/synthid-spectral-removal-record.md`](docs/research/synthid-spectral-removal-record.md) for the evidence.
 
 ## Quick start
 
@@ -97,7 +97,7 @@ Supported inputs: PNG / JPEG / WebP images; MP4 and other FFmpeg-supported video
 
 ### SynthID flags
 
-wmr does **not** detect SynthID (no public SynthID-Image verifier exists; the spectral detector we shipped before 1.16.0 had no discriminative power and was removed). The only SynthID operation is `--synthid-attack regen`, a lossy SDXL img2img scrub.
+wmr does **not** detect SynthID (Google's "Verify with SynthID" is a manual in-app tool with no API; and the spectral detector we shipped before 1.16.0 had no discriminative power and was removed). The only SynthID operation is `--synthid-attack regen`, a lossy SDXL img2img scrub validated against that official verifier.
 
 | Flag | Description |
 |------|-------------|
@@ -147,7 +147,7 @@ Be aware of the tradeoffs before you use it:
 - **It leaves a forensic footprint.** A regen-attacked image is itself a detectable
   diffusion output; an attacker looking for "tampering" can spot it. This is an attack on
   the watermark, not an invisibility guarantee.
-- **No public verifier exists** for SynthID-Image, so `wmr` cannot confirm success locally.
+- **Verification is manual, not in-process.** Google ships an official verifier — "Verify with SynthID" in the Gemini app, plus an early-access [SynthID Detector](https://deepmind.google/models/synthid/) portal — but it is a human-facing UI (no API; the Gemini-app check caps near ~10/day), so `wmr` cannot confirm a given output on its own. The removal is still verifiable, though:
   The default strength 0.10 was validated against Google's own "Verify with SynthID"
   detector: across a varied 9-image set, including an image-to-image generation that
   carries SynthID **twice**, every output cleared the watermark, confirmed over **two
@@ -252,7 +252,7 @@ The watermark's size depends on the output resolution: **48×48** for small imag
 
 **NotebookLM** marks are semi-transparent and color-adaptive (not a reversible alpha overlay), so they're removed by **AI inpainting** rather than reverse-blending. [MI-GAN](https://github.com/Picsart-AI-Research/MI-GAN) (MIT, ICCV 2023) synthesizes the missing region; on Apple Silicon it runs on the Neural Engine (~28 ms/frame), elsewhere on ONNX Runtime CPU, falling back to Navier-Stokes. The mark is auto-detected per video via template matching (polarity-invariant, stable across scene cuts). On Apple Silicon every scene uses MI-GAN by default; elsewhere a complexity gate picks MI-GAN for textured backgrounds and NS for uniform ones. `--notebooklm-method` overrides.
 
-**SynthID** invisible watermarks are content-conditional neural watermarks (arXiv 2510.09263) Google attaches to Gemini image output. wmr does **not** detect SynthID: no public SynthID-Image verifier exists, and the spectral detector shipped before 1.16.0 had no discriminative power (ROC AUC 0.20 on Google-verifier-labeled images). The only SynthID operation wmr performs is `--synthid-attack regen`: a lossy SDXL img2img regeneration of the whole image, the single attack the published literature reports as validated. It is opt-in on `remove` and the default on `synthid`. Google publishes no public verifier, so success cannot be confirmed locally; see the [SynthID flags](#synthid-flags) section for its tradeoffs (lossy, ~6.5 GB download, leaves a forensic footprint) and [`docs/research/synthid-spectral-removal-record.md`](docs/research/synthid-spectral-removal-record.md) for the evidence behind removing detection.
+**SynthID** invisible watermarks are content-conditional neural watermarks (arXiv 2510.09263) Google attaches to Gemini image output ([Google's SynthID page](https://deepmind.google/models/synthid/)). wmr does **not** detect SynthID: Google's "Verify with SynthID" is a manual in-app tool with no API, and the spectral detector shipped before 1.16.0 had no discriminative power (ROC AUC 0.20 on Google-verifier-labeled images). The only SynthID operation wmr performs is `--synthid-attack regen`: a lossy SDXL img2img regeneration of the whole image, the single attack the published literature reports as validated, and the one we validated against Google's official verifier. It is opt-in on `remove` and the default on `synthid`. Google exposes no verifier API (only the manual in-app tool), so success cannot be confirmed in-process; see the [SynthID flags](#synthid-flags) section for its tradeoffs (lossy, ~6.5 GB download, leaves a forensic footprint) and [`docs/research/synthid-spectral-removal-record.md`](docs/research/synthid-spectral-removal-record.md) for the evidence behind removing detection.
 
 ## Performance
 

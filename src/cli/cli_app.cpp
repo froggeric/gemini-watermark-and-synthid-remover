@@ -27,7 +27,7 @@ void print_header(std::ostream& os) {
     os << "--------------------------------------------\n"
         << "  wmr v" APP_VERSION " — watermark remover\n"
         << "  Remove Gemini/Veo visible watermarks.\n"
-        << "  Remove SynthID invisible watermarks via lossy regen (no detection; no public verifier exists).\n"
+        << "  Remove SynthID invisible watermarks via lossy regen (no detection; validated vs Google's SynthID verifier).\n"
         << "  --synthid-attack regen is lossy (SDXL img2img; ~6.5 GB model + ~335 MB VAE download on first use).\n"
         << "  https://github.com/froggeric/gemini-watermark-and-synthid-remover\n"
         << "  Copyright 2026 Frederic Guigand\n"
@@ -144,7 +144,7 @@ static int process_detect(const CliOptions& opts) {
 
     // SynthID detection was removed in 1.16.0: the spectral detector had no
     // discriminative power (ROC AUC 0.20 on Google-verifier-labeled images) and
-    // no public SynthID-Image verifier exists. `wmr detect` is visible-only now.
+    // the only SynthID verifier is Google's manual in-app "Verify with SynthID" tool (no API; not automatable). `wmr detect` is visible-only now.
     // See docs/research/synthid-spectral-removal-record.md.
     return 0;
 }
@@ -296,7 +296,7 @@ static int process_single_image(const CliOptions& opts) {
                 spdlog::warn("SynthID regen did not complete (no model/backend, or it failed); output is unchanged.");
                 return 1;
             }
-            spdlog::info("SynthID regen complete (lossy; not a verifiable removal)");
+            spdlog::info("SynthID regen complete (lossy; verify via Google's SynthID tool if you need to confirm)");
             did_work = true;
 #else
             spdlog::error("--synthid-attack regen: this wmr build is regen-free (WMR_BUILD_REGEN off). "
@@ -582,7 +582,7 @@ int run_cli(int argc, char* argv[]) {
     // for symmetry and as the future method-extension seam.
     auto* synthid_cmd = app.add_subcommand("synthid",
         "Remove SynthID invisible watermark via lossy SDXL regen "
-        "(no detection; not a verifiable removal without a public verifier)");
+        "(no detection; lossy, validated against Google's SynthID verifier)");
     synthid_cmd->add_option("input", opts.input_path, "Input image")
         ->required()
         ->check(CLI::ExistingFile);

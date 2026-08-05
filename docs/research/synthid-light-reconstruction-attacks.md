@@ -102,7 +102,7 @@ The cheapest, highest-information test order:
 4. **img2img knee-mapping varying N** (e.g. N=10/20 at s=0.05/0.07/0.10). Uses the
    existing regen path; finds the lightest diffusion point that clears SynthID.
 
-## Measurement protocol (no public verifier)
+## Measurement protocol (no public verifier API)
 
 - **Removal (ground truth):** Google's online "Verify with SynthID" check
   (~10/day/account). Run all sweep cells from one source image in one day's quota.

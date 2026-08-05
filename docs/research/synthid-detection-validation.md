@@ -179,7 +179,7 @@ separate the classes, and it does not.
   since the detect subcommand was introduced (`165cb129`), and
   `SynthidDetector::detect()` has no codebook-free overload.
 - The detector should not be exposed as a working SynthID feature. Google
-  provides no public SynthID-Image verifier, and this validation shows our
+  provides no public verifier API (its "Verify with SynthID" tool is manual, in-app, not automatable), and this validation shows our
   spectral detector cannot substitute for one. The honest product position: wmr
   does not detect SynthID; it can suppress it (heuristic, `--codebook-free`) or
   remove it (lossy, validated, `--synthid-attack regen`).
@@ -201,6 +201,6 @@ separate the classes, and it does not.
   "never-watermarked" frames. Even so they score identically to the positives,
   which strengthens (not weakens) the no-discrimination conclusion: substantial
   image processing did not move the content-driven score.
-- No public verifier exists. Google's in-app verdict is the only external signal
+- No public verifier API. Google's in-app "Verify with SynthID" is an official but manual verifier (account-gated, ~10/day, natural-language), the only external signal
   and is itself qualitative and account-gated. These 8 labels are the owner's
   manual checks.

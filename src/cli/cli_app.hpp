@@ -105,7 +105,7 @@ inline std::string synthid_attack_help_text() {
         "(~29-41 dB PSNR, content-dependent); leaves a detectable attacked-image "
         "footprint; downloads a ~6.5 GB "
         "model + ~335 MB VAE on first use). "
-        "No public SynthID verifier exists, so success cannot be confirmed locally. "
+        "Google's official 'Verify with SynthID' is a real verifier (the knee was tuned against it) but is manual, rate-limited (~10/day), and has no API, so success cannot be confirmed in-process. "
         "On the remove subcommand, regen runs only when --synthid-attack is passed "
         "explicitly (it is opt-in there). On the synthid subcommand it is the default. "
         "regen does NOT remove the VISIBLE Gemini diamond (strength ~0.10 cannot); in "

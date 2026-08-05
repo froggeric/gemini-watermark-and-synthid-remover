@@ -209,7 +209,7 @@ that the pixels still carry the mark. Useful as a hint, not as detection.
   "AI-generated image" heuristic (the fyxme architecture, retrained honestly and
   labeled as such). That is a different product from SynthID detection and should
   not be marketed as one.
-- Revisit only if (a) Google releases a public SynthID-Image verifier, or
+- Revisit only if (a) Google releases a public SynthID-Image verifier API, or
   (b) a controlled watermarked-vs-unwatermarked Gemini dataset becomes available.
   Neither is true today.
 
