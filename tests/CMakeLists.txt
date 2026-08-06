@@ -111,6 +111,7 @@ if(WMR_BUILD_AI_COREML_SD)
         unit/coreml_sd_scheduler_test.cpp
         unit/coreml_sd_pipeline_smoke_test.cpp
         unit/coreml_sd_compute_units_test.mm
+        unit/coreml_sd_model_cache_test.cpp
     )
     target_link_libraries(wmr_tests PRIVATE ${ACCELERATE_LIB} ${COREML_LIB} ${FOUNDATION_LIB})
     target_compile_definitions(wmr_tests PRIVATE WMR_BUILD_AI_COREML_SD=1)

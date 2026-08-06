@@ -5,6 +5,8 @@
 
 #include <spdlog/spdlog.h>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <cstdio>
 
@@ -60,91 +62,95 @@ bool extract_tar_gz(const fs::path& archive, const fs::path& target_dir) {
     return true;
 }
 
-// Download a single file from HF, verify SHA256, and extract if it's a .tar.gz.
-// Returns true if the file is present and verified (either pre-existing or downloaded).
-// Returns false on any failure (network, SHA mismatch, extract failure).
-bool fetch_model_file(const std::string& filename,
-                      const std::string& sha256,
-                      const fs::path& models_dir,
-                      bool allow_download) {
-    fs::path local_path = models_dir / filename;
+struct FetchResult { bool ok = false; bool refetched = false; };
 
-    // Check if already present and verified
+// Fetch one file: present+sidecar-pin-match -> no-op (O(1) warm path);
+// present+SHA-verified -> refresh sidecar, no-op; present+SHA-mismatch -> remove +
+// re-download; absent -> download. allow_download gates the network only.
+// base_url+"/"+filename is the source URL. Reuses download_pinned_file (OpenSSL
+// SHA, true HTTP Range resume, atomic rename).
+FetchResult fetch_one(const std::string& filename, const std::string& sha,
+                      const fs::path& models_dir, bool allow_download,
+                      const std::string& base_url) {
+    fs::path local_path = models_dir / filename;
+    fs::path ok_sidecar = models_dir / (filename + ".sha256.ok");
+
+    // O(1) warm path: a sidecar holding the CURRENT pin means we already
+    // verified these exact bytes on a previous run. A re-pin invalidates it
+    // because the pin string differs.
+    if (fs::exists(local_path) && fs::exists(ok_sidecar)) {
+        std::ifstream okf(ok_sidecar);
+        std::string prev((std::istreambuf_iterator<char>(okf)), {});
+        if (prev == sha) {
+            spdlog::debug("regen: {} verified via sidecar (pin match)", filename);
+            return {true, false};
+        }
+    }
+
+    // Verify (or re-verify) the on-disk bytes.
     if (fs::exists(local_path)) {
-        if (verify_sha256(local_path, sha256)) {
-            spdlog::debug("regen: {} already present and verified", filename);
-            return true;
+        if (verify_sha256(local_path, sha)) {
+            { std::ofstream o(ok_sidecar); o << sha; }  // stamp/refresh sidecar
+            spdlog::debug("regen: {} present and verified", filename);
+            return {true, false};
         }
         spdlog::warn("regen: {} exists but SHA mismatch, re-downloading", filename);
         fs::remove(local_path);
+        fs::remove(ok_sidecar);
     }
 
     if (!allow_download) {
         spdlog::warn("regen: {} absent and download disabled", filename);
-        return false;
+        return {false, false};
     }
 
-    // Build download URL
-    std::string url = std::string(kHfRepoUrl) + "/" + filename;
-
-    // Download with SHA256 verification
-    auto result = download_pinned_file(url, local_path, sha256, true, false, nullptr);
+    std::string url = base_url + "/" + filename;
+    auto result = download_pinned_file(url, local_path, sha, true, false, nullptr);
     if (!result.ok) {
         spdlog::error("regen: failed to download {}: {}", filename, result.error);
-        return false;
+        return {false, false};
     }
-
+    { std::ofstream o(ok_sidecar); o << sha; }  // download_pinned_file already SHA-verified
     spdlog::info("regen: downloaded {} successfully", filename);
-    return true;
+    return {true, true};
+}
+
+// Re-extract an archive when its extracted dir is missing OR the archive was
+// just (re)downloaded this call (stale-free: remove the old dir first).
+bool ensure_extracted(const fs::path& models_dir, const CoreMLModelFile& f, bool was_refetched) {
+    if (!f.is_archive) return true;
+    fs::path dir = models_dir / f.mlpackage_dir;
+    if (fs::exists(dir) && !was_refetched) return true;
+    if (fs::exists(dir)) fs::remove_all(dir);
+    return extract_tar_gz(models_dir / f.filename, models_dir);
 }
 
 }  // namespace
 
-bool ensure_coreml_models(const fs::path& models_dir, bool allow_download) {
+bool ensure_coreml_model_files(const fs::path& models_dir,
+                               const std::vector<CoreMLModelFile>& files,
+                               bool allow_download,
+                               const std::string& base_url) {
     fs::create_directories(models_dir);
-
-    // Check if all required files are present
-    bool all_present = true;
-    if (!fs::exists(models_dir / kFilenameEmbeds)) all_present = false;
-    if (!fs::exists(models_dir / kFilenameUnet)) all_present = false;
-    if (!fs::exists(models_dir / kFilenameVaeEncoder)) all_present = false;
-    if (!fs::exists(models_dir / kFilenameVaeDecoder)) all_present = false;
-
-    // Also check for extracted .mlpackage directories
-    bool extracted_present =
-        fs::exists(models_dir / "Stable_Diffusion_version_stabilityai_stable-diffusion-xl-base-1.0_unet.mlpackage") &&
-        fs::exists(models_dir / "Stable_Diffusion_version_stabilityai_stable-diffusion-xl-base-1.0_vae_encoder.mlpackage") &&
-        fs::exists(models_dir / "Stable_Diffusion_version_stabilityai_stable-diffusion-xl-base-1.0_vae_decoder.mlpackage");
-
-    if (all_present && extracted_present) {
-        spdlog::debug("regen: CoreML models already present and extracted");
-        return true;
+    for (const auto& f : files) {
+        auto fr = fetch_one(f.filename, f.sha256, models_dir, allow_download, base_url);
+        if (!fr.ok) return false;
+        if (!ensure_extracted(models_dir, f, fr.refetched)) return false;
     }
-
-    if (!allow_download) {
-        spdlog::warn("regen: CoreML models incomplete and download disabled");
-        return false;
-    }
-
-    spdlog::info("regen: fetching CoreML SDXL models from {}", kHfRepoUrl);
-
-    // Download the 4 files
-    if (!fetch_model_file(kFilenameEmbeds, kSha256Embeds, models_dir, allow_download))
-        return false;
-    if (!fetch_model_file(kFilenameUnet, kSha256Unet, models_dir, allow_download))
-        return false;
-    if (!fetch_model_file(kFilenameVaeEncoder, kSha256VaeEncoder, models_dir, allow_download))
-        return false;
-    if (!fetch_model_file(kFilenameVaeDecoder, kSha256VaeDecoder, models_dir, allow_download))
-        return false;
-
-    // Extract the 3 .tar.gz archives
-    if (!extract_tar_gz(models_dir / kFilenameUnet, models_dir)) return false;
-    if (!extract_tar_gz(models_dir / kFilenameVaeEncoder, models_dir)) return false;
-    if (!extract_tar_gz(models_dir / kFilenameVaeDecoder, models_dir)) return false;
-
-    spdlog::info("regen: CoreML SDXL models downloaded and extracted successfully");
     return true;
+}
+
+bool ensure_coreml_models(const fs::path& models_dir, bool allow_download) {
+    static const std::vector<CoreMLModelFile> kFiles = {
+        {kFilenameEmbeds,     kSha256Embeds,     false, nullptr},
+        {kFilenameUnet,       kSha256Unet,       true,
+         "Stable_Diffusion_version_stabilityai_stable-diffusion-xl-base-1.0_unet.mlpackage"},
+        {kFilenameVaeEncoder, kSha256VaeEncoder, true,
+         "Stable_Diffusion_version_stabilityai_stable-diffusion-xl-base-1.0_vae_encoder.mlpackage"},
+        {kFilenameVaeDecoder, kSha256VaeDecoder, true,
+         "Stable_Diffusion_version_stabilityai_stable-diffusion-xl-base-1.0_vae_decoder.mlpackage"},
+    };
+    return ensure_coreml_model_files(models_dir, kFiles, allow_download, kHfRepoUrl);
 }
 
 }  // namespace wmr
