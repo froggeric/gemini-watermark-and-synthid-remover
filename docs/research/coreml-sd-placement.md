@@ -262,6 +262,38 @@ quote these numbers as a per-tile steady-state figure without that placement
 check (predict #1 includes one-time warmup; the timed wall is the reliable
 number).
 
+## 6-bit palettization: tested and rejected (2026-08-06)
+
+The fp16 ORIGINAL UNet was palettized to 6-bit k-means
+(`coremltools.optimize.coreml.palettize_weights`, `OpPalettizerConfig(nbits=6,
+mode="kmeans", granularity="per_tensor", weight_threshold=512)`). Size dropped
+4.8 GB -> 1.8 GB (~2.7x), and the IO spec was unchanged
+(`encoder_hidden_states (2,2048,1,77)`), but on the Apple GPU it is a net
+negative:
+
+| Method | Timed wall (`gemini-pro-paid.png`, ~6 tiles) | per-forward (steady) |
+|--------|----------------------------------------------|----------------------|
+| fp16 ORIGINAL (1.16.3) | 183 s | ~6.1 s |
+| 6-bit palettized ORIGINAL | 348 s | ~11.6 s |
+
+So 6-bit is **~1.9x slower**, not faster. The 6-bit-vs-fp16 output diff on the
+same image is PSNR 34.85 dB / diff_mean 2.91/255 (more lossy than fp16; no
+systematic channel shift, max-diff 172 on outlier pixels). The first CoreML
+compile is also ~5-6 min one-time (vs ~30 s for fp16).
+
+Why: palettization's inference speedup comes from JIT LUT-decompression **on the
+Neural Engine** (Apple's explicit claim). Our UNet runs on the GPU (the ANE is
+unused for SDXL), and on the GPU the per-matmul LUT dequantization is a net cost
+that outweighs the smaller weight traffic. Apple's coremltools palettization-perf
+page states this caveat. The predict-#1 line (3117 ms for 6-bit vs 4873 ms for
+fp16) is misleading: it is a warmup artifact, not steady state.
+
+Conclusion: palettization is a dead end for wmr as long as the ANE is unused
+(which it is, for SDXL). The fp16 ORIGINAL UNet (1.16.3) stays canonical. Not
+verified against Google's verifier (no point: a ~2x-slower model is not worth
+shipping regardless of whether it still clears). Revisit only if a future change
+routes SDXL to the ANE (none is on the table).
+
 ## Sources
 
 - [Hugging Face: Using Stable Diffusion with Core ML on Apple Silicon](https://huggingface.co/blog/diffusers-coreml)
