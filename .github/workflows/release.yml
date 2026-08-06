@@ -4,6 +4,13 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      only_leg:
+        description: 'Build only one leg for cheap iteration (e.g. a windows-only fix). "all" = every leg, which is also the behavior on a tag push.'
+        type: choice
+        options: ['all', 'macos-arm64', 'macos-x86_64', 'linux', 'windows']
+        default: 'all'
+        required: false
 
 env:
   BUILD_TYPE: Release
@@ -12,6 +19,29 @@ env:
   HAS_CERT: ${{ secrets.MACOS_CERTIFICATE != '' }}
 
 jobs:
+  # Pick the build matrix: all 4 legs on a tag push / unfiltered dispatch, or a
+  # single leg when workflow_dispatch.only_leg is set (cheap iteration on a
+  # windows/linux fix without rebuilding the others). Emits a compact JSON array
+  # of the include entries; the build job consumes it via fromJSON. On a tag push
+  # github.event.inputs is null -> all 4 (the release path).
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        env:
+          ONLY_LEG: ${{ github.event.inputs.only_leg }}
+        run: |
+          set -euo pipefail
+          full='[ {"leg":"macos-arm64","os":"macos-14","artifact":"wmr-macos-arm64","binary":"build/wmr","macos_arch":"arm64","vcpkg_triplet":"arm64-osx","enable_migan":true}, {"leg":"macos-x86_64","os":"macos-14","artifact":"wmr-macos-x86_64","binary":"build/wmr","macos_arch":"x86_64","vcpkg_triplet":"x64-osx","enable_migan":true}, {"leg":"linux","os":"ubuntu-latest","artifact":"wmr-linux-x86_64","binary":"build/wmr","vcpkg_triplet":"x64-linux","enable_migan":true}, {"leg":"windows","os":"windows-latest","artifact":"wmr-windows-x86_64","binary":"build/wmr.exe","vcpkg_triplet":"x64-windows-static","enable_migan":true} ]'
+          if [ -z "$ONLY_LEG" ] || [ "$ONLY_LEG" = "all" ]; then
+            picked="$full"
+          else
+            picked="$(echo "$full" | jq -c --arg leg "$ONLY_LEG" 'map(select(.leg==$leg))')"
+          fi
+          echo "matrix=$picked" >> "$GITHUB_OUTPUT"
+
   # Single full-package build per (OS, arch). Every release binary ships the
   # FDnCNN AI denoise (NCNN+Vulkan) + MI-GAN (ONNX Runtime, the default
   # NotebookLM intricate-scene inpainter), no lean/full split, no FSR/LaMa.
@@ -32,32 +62,13 @@ jobs:
   # so every smoke forces CPU (VK_ICD_FILENAMES=/nonexistent) and still proves
   # the binary launches + denoises + tears down cleanly.
   build:
+    needs: [select]
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-14
-            artifact: wmr-macos-arm64
-            binary: build/wmr
-            macos_arch: arm64
-            vcpkg_triplet: arm64-osx
-            enable_migan: true
-          - os: macos-14
-            artifact: wmr-macos-x86_64
-            binary: build/wmr
-            macos_arch: x86_64
-            vcpkg_triplet: x64-osx
-            enable_migan: true   # 1.10.0: CoreML (system framework, arch-neutral .mlpackage), Intel Macs gain MI-GAN
-          - os: ubuntu-latest
-            artifact: wmr-linux-x86_64
-            binary: build/wmr
-            vcpkg_triplet: x64-linux
-            enable_migan: true
-          - os: windows-latest
-            artifact: wmr-windows-x86_64
-            binary: build/wmr.exe
-            vcpkg_triplet: x64-windows-static
-            enable_migan: true
+        # All 4 legs on a tag push / unfiltered dispatch; a single leg when
+        # workflow_dispatch.only_leg is set (see the select job above).
+        include: ${{ fromJSON(needs.select.outputs.matrix) }}
 
     runs-on: ${{ matrix.os }}
 
@@ -342,6 +353,9 @@ jobs:
   # binaries now always ship AI, so this restores AI + routing test coverage that
   # the dev-default-OFF / release-TESTS-OFF gap previously dropped).
   tests:
+    # Skip on a single-leg dispatch (cheap iteration); run on tag pushes and
+    # unfiltered ("all") dispatches.
+    if: ${{ !github.event.inputs.only_leg || github.event.inputs.only_leg == 'all' }}
     runs-on: ubuntu-latest
 
     steps:
