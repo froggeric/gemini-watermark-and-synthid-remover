@@ -135,6 +135,50 @@ Test image: `reference-images/896x1200-gemini36/Gemini_Generated_Image_gawws5gaw
 
 Both backends produce content-preserving results with low inter-backend diff, validating the CoreML implementation.
 
+### Phase 4 ORIGINAL-attention GPU placement A/B (2026-08-06)
+
+Task #43: the macOS CoreML UNet was re-converted with `--attention-implementation
+ORIGINAL` so it routes to the Apple GPU instead of collapsing to CPU (the
+SPLIT_EINSUM variant fails the ANE and falls back). This A/B isolates the
+compute-unit variable on the SAME ORIGINAL model.
+
+Setup: ORIGINAL-attention UNet loaded via the pipeline directly (bypassing the
+regenerator bootstrap, which SHA-pins the SPLIT_EINSUM UNet), single 1024x1024
+tile of `test-images/poster-artnight.png` (resized, so no tiling confound),
+strength 0.10, N=50 (5 denoise steps), seed 42. The new `WMR_COREML_SD_COMPUTE_UNITS`
+knob flips the unit; the first-UNet-predict timing log (the only runtime placement
+signal, since CoreML exposes no chosen-unit API) records where each run landed.
+
+| Run | Compute units | UNet predict #1 | input->output diff_mean |
+|-----|---------------|-----------------|-------------------------|
+| A   | `all` (GPU)   | 4836 ms         | 8.17/255                |
+| B   | `cpu`         | 7967 ms         | 7.93/255                |
+
+GPU-vs-CPU output diff (the gate): overall **1.92/255**, per-channel RGB
+(2.17, 1.68, 1.92); per-channel means within ~1/255 (no saturation); max abs
+pixel diff 255 on a handful of outlier pixels (mean stays tiny). Gate (< 2.0/255):
+**PASS**.
+
+Conclusions:
+
+- ORIGINAL attention routes to the GPU. Run A's predict #1 (4836 ms) is well under
+  run B's forced-CPU 7967 ms; if `all` were also CPU, both would sit at ~8000 ms.
+  (predict #1 includes one-time GPU context warmup, so it is a placement detector,
+  not a steady-state per-tile number; Phase 3.2 measures steady-state.)
+- GPU and CPU produce near-identical output (1.92/255 apart = fp16 GPU-vs-CPU
+  rounding over 5 Euler steps + the VAE round trip; no systematic shift, no
+  collapse). They are removal-equivalent at s=0.10/N=50, so the validated CPU
+  removal knee carries over to the GPU output.
+- This validates #43's core hypothesis (ORIGINAL runs on the GPU and is correct)
+  at the cheap-pre-filter gate. The two remaining gates are the user's: the Google
+  "Verify with SynthID" re-clear on the 9-image set (Phase 2.2, the adoption gate)
+  and the Instruments placement confirmation + steady-state timing (Phase 3.x).
+
+Caveat: total img2img wall on this first run was GPU ~19s vs CPU ~31s for the one
+tile, both dominated by the first-run CoreML compile/warmup. Steady-state per-tile
+(Phase 3.2) is needed before claiming the ~1-3 s/tile target; do not quote predict
+#1 as the per-tile cost.
+
 ## Acceptance targets (owner verifies)
 
 These are the targets Task 9's acceptance criteria check against. Each must hold on at least one GPU backend:
