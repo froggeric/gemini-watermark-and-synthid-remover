@@ -240,6 +240,10 @@ one warmup pass (populates the CoreML compile cache) then one timed pass.
 
 **Speedup: ~1.22x wall-time, ~1.34x on the first UNet forward.**
 
+Owner visual check (2026-08-06): the ORIGINAL/GPU and SPLIT_EINSUM/CPU regen
+outputs are visually identical, consistent with the 1.92/255 GPU-vs-CPU pixel
+diff measured on the poster. So the swap is faithful; only the speed differs.
+
 Honest assessment: this is far short of the plan's ~1-3 s/tile target (the GPU
 row is ~30 s/tile here, 10-30x off). Two observations:
 
