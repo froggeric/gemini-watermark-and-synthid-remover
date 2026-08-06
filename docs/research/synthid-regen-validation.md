@@ -179,6 +179,24 @@ tile, both dominated by the first-run CoreML compile/warmup. Steady-state per-ti
 (Phase 3.2) is needed before claiming the ~1-3 s/tile target; do not quote predict
 #1 as the per-tile cost.
 
+### Phase 4 ORIGINAL/GPU SynthID verifier re-clear (2026-08-06) - ADOPTION GATE PASSED
+
+The 9-image Phase 3 validation set (`reference-images/vae-testing/`, including the
+double-watermarked img2img image `Gemini_Generated_Image_iu84oxiu84oxiu84-2.png`)
+was regenerated with the ORIGINAL-attention UNet on the GPU (CoreML, compute
+units=all, default strength 0.10 / steps 50, real tiled img2img; outputs in
+`reference-images/vae-testing-regen-gpu/`). Each output was then checked against
+Google's official "Verify with SynthID" verifier.
+
+Result: **9/9 cleared (no SynthID detected), including the double-watermarked
+image.** This is the adoption gate for #43: ORIGINAL-on-GPU preserves the
+validated removal knee, so the CPU/SPLIT_EINSUM 9/9 from 2026-08-05 carries over
+to the GPU. No re-checks were needed (verifier noise did not trigger).
+
+This clears #43 to proceed to distribution (Phase 4), pending the Instruments
+placement confirmation + steady-state timing (Phase 3.x) and the standard
+release-cut steps.
+
 ## Acceptance targets (owner verifies)
 
 These are the targets Task 9's acceptance criteria check against. Each must hold on at least one GPU backend:
