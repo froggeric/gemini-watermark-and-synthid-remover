@@ -226,6 +226,40 @@ in Phase 2 (the colorful diff) and Phase 3 (Instruments), not by this IO spike.
 
 ---
 
+## Phase 4 GPU-vs-CPU benchmark (2026-08-06)
+
+Benchmark: `wmr synthid reference-images/2816x1536-gemini/gemini-pro-paid.png
+--synthid-attack regen --regen-backend coreml` (2816x1536, ~6 tiles, default
+s=0.10 / N=50). Same binary; only the model + compute unit differ. Each method:
+one warmup pass (populates the CoreML compile cache) then one timed pass.
+
+| Method | Timed wall | UNet predict #1 |
+|--------|-----------|-----------------|
+| ORIGINAL (#43), compute units=all (GPU/ANE) | 183 s | 4873 ms |
+| SPLIT_EINSUM (v1.16.2), compute units=all   | 223 s | 6524 ms |
+
+**Speedup: ~1.22x wall-time, ~1.34x on the first UNet forward.**
+
+Honest assessment: this is far short of the plan's ~1-3 s/tile target (the GPU
+row is ~30 s/tile here, 10-30x off). Two observations:
+
+1. The premise that SPLIT_EINSUM "collapses to slow CPU (~10 s)" did NOT clearly
+   hold on this M4: it ran at ~6.5 s/forward (predict #1), which is single-digit
+   seconds, i.e. on an accelerator (ANE/GPU), not the ~10 s pure-CPU signal.
+2. ORIGINAL is only ~1.3x faster per forward, not the hoped-for multi-x. Both
+   variants sit at ~5-7 s/forward, which means the attention-implementation swap
+   is NOT the dominant cost; the per-forward time is bounded by something else
+   (likely the convolutions, or the accelerator simply is not fast enough on this
+   graph). ORIGINAL did NOT land at the sub-second-per-forward fast-GPU regime.
+
+Net: #43 IS faster and IS correct (9/9 verifier clear, recorded in
+synthid-regen-validation.md), but the performance win is marginal, not the
+transformative GPU acceleration the task aimed for. Instruments (Phase 3.1) is
+needed to see where each graph actually runs and why a forward is ~5 s; do not
+quote these numbers as a per-tile steady-state figure without that placement
+check (predict #1 includes one-time warmup; the timed wall is the reliable
+number).
+
 ## Sources
 
 - [Hugging Face: Using Stable Diffusion with Core ML on Apple Silicon](https://huggingface.co/blog/diffusers-coreml)
