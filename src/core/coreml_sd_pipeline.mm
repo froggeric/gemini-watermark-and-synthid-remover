@@ -42,6 +42,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -119,6 +120,7 @@ struct CoreMLSDPipeline::Impl {
     std::vector<__fp16> embeds;  // (2,2048,1,77) fp16
     CoreMLSDEulerScheduler scheduler;
     bool ready = false;
+    bool logged_first_predict = false;  // log the first UNet predict time once per pipeline
 };
 
 CoreMLSDPipeline::CoreMLSDPipeline() : m_impl(std::make_unique<Impl>()) {}
@@ -460,9 +462,20 @@ cv::Mat CoreMLSDPipeline::img2img(const cv::Mat& tile_bgr, float strength, int s
                 return {};
             }
 
+            auto t_predict0 = std::chrono::steady_clock::now();
             id<MLFeatureProvider> unet_out = [m_impl->unet predictionFromFeatures:unet_fp
                                                                          options:[[MLPredictionOptions alloc] init]
                                                                            error:&err];
+            if (!m_impl->logged_first_predict) {
+                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - t_predict0).count();
+                // CoreML exposes no public chosen-unit API, so this one-per-process log
+                // is the only runtime placement signal: hundreds of ms => the GPU path is
+                // live, ~10000 => CPU. The first predict also pays one-time context setup,
+                // so treat it as a detector, not a steady-state per-tile number.
+                spdlog::info("CoreML SDXL UNet predict #1: {} ms (hundreds => GPU, ~10000 => CPU)", ms);
+                m_impl->logged_first_predict = true;
+            }
             if (!unet_out) {
                 spdlog::warn("CoreML SDXL UNet prediction failed: {}",
                              err ? [[err localizedDescription] UTF8String] : "unknown");
