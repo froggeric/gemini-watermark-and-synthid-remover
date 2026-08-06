@@ -18,11 +18,11 @@
 #      input vs output                              -> relative carrier-band drop %
 #
 # IMPORTANT: the carrier-band drop is a RELATIVE heuristic, not a removal
-# proof. There is no public SynthID-Image verifier (see
-# docs/research/synthid-investigation-summary.md and the MEMORY note
-# "SynthID removal reality"). The only external signal is the Gemini in-app
-# check (~10/day per account). Record the numbers here as a reproducibility
-# anchor, not as evidence of removal.
+# proof. There is no SynthID-Image verifier API (Google's "Verify with SynthID"
+# is official but manual, in-app, and rate-limited at ~10 checks/day/account;
+# see docs/research/synthid-investigation-summary.md). That manual check is the
+# only external signal, so record the numbers here as a reproducibility anchor,
+# not as automated evidence of removal.
 #
 # Usage:
 #   scripts/regen_validate.sh <image>            # default: build/wmr, /tmp/wmr_regen_out.png
