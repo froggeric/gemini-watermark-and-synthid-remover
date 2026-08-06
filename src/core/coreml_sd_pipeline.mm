@@ -30,6 +30,7 @@
 
 #include "core/coreml_sd_pipeline.hpp"
 #include "core/coreml_sd_scheduler.hpp"
+#include "core/coreml_sd_compute_units.hpp"
 
 #import <CoreML/CoreML.h>
 #import <Foundation/Foundation.h>
@@ -104,6 +105,13 @@ void fill_std_normal(float* buf, size_t n, uint32_t& state) {
 
 } // namespace
 
+MLComputeUnits parse_coreml_compute_units(std::string_view s) noexcept {
+    if (s == "cpu_gpu" || s == "cpu-gpu") return MLComputeUnitsCPUAndGPU;
+    if (s == "cpu_ane" || s == "cpu-ane") return MLComputeUnitsCPUAndNeuralEngine;
+    if (s == "cpu") return MLComputeUnitsCPUOnly;
+    return MLComputeUnitsAll;  // "all", empty, or any unrecognized token
+}
+
 struct CoreMLSDPipeline::Impl {
     MLModel* unet = nil;
     MLModel* vae_encoder = nil;
@@ -156,8 +164,21 @@ bool CoreMLSDPipeline::initialize(const std::string& models_dir, const std::stri
 
     @try {
         NSError* err = nil;
+        // Resolve compute units from env for A/B + the force-GPU escape. Default: all
+        // (byte-identical to the prior hardcoded MLComputeUnitsAll when the env is unset).
+        // ORIGINAL attention routes to the GPU under .all (ANE declines the attention
+        // matmuls); cpu_gpu forces GPU if .all ever misplaces a future variant. One
+        // shared cfg so all three models (UNet + VAE enc/dec) inherit the same unit.
+        MLComputeUnits units = MLComputeUnitsAll;
+        if (const char* e = std::getenv("WMR_COREML_SD_COMPUTE_UNITS")) {
+            units = parse_coreml_compute_units(e);
+        }
         MLModelConfiguration* cfg = [[MLModelConfiguration alloc] init];
-        cfg.computeUnits = MLComputeUnitsAll;  // ANE preferred, GPU/CPU fallback
+        cfg.computeUnits = units;
+        spdlog::info("CoreML SDXL compute units: {}",
+                     units == MLComputeUnitsAll ? "all" :
+                     units == MLComputeUnitsCPUAndGPU ? "cpu+gpu" :
+                     units == MLComputeUnitsCPUAndNeuralEngine ? "cpu+ane" : "cpu");
 
         // Load UNet
         std::filesystem::path unet_path = models_path / "Stable_Diffusion_version_stabilityai_stable-diffusion-xl-base-1.0_unet.mlpackage";
