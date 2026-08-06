@@ -118,17 +118,21 @@ wmr synthid image.png -o clean.png                            # SynthID scrub (r
 wmr remove image.png --synthid-attack regen -o clean.png      # visible diamond first, then regen
 ```
 
-**Backend selection + platform availability (1.16.2).** The regen path runs on every platform. macOS Apple Silicon defaults to the native CoreML pipeline (fast); Linux, Windows, and macOS Intel run the sdcpp CPU backend (correct, but slow). All backends use the same SDXL base model and the same deterministic-Euler img2img schedule, so the validated strength (0.10 @ 50 steps = 5 denoise steps) applies uniformly.
+**Backend selection + platform availability.** The regen path runs on every platform. macOS Apple Silicon defaults to the native CoreML pipeline (much faster than CPU); Linux, Windows, and macOS Intel run the sdcpp CPU backend (correct, but slow). All backends use the same SDXL base model and the same deterministic-Euler img2img schedule, so the validated strength (0.10 @ 50 steps = 5 denoise steps) applies uniformly. Since 1.16.3 the macOS CoreML UNet uses `ORIGINAL` attention and is GPU-bound; the Neural Engine is unused (SDXL's large fp16 attention matmuls are ANE-ineligible, so CoreML places the UNet on the GPU).
 
 | Backend | Platform | Performance | Notes |
 |---------|----------|-------------|-------|
-| `auto` (default) | all | macOS Apple Silicon ~10s/tile (CoreML); else CPU | macOS prefers CoreML when the models are present; Linux/Windows/mac-Intel fall back to CPU. |
-| `coreml` | macOS Apple Silicon | ~10s/tile + ~50s load (one-time) | Native CoreML SDXL, ~3.4x faster than CPU on M4. |
+| `auto` (default) | all | macOS Apple Silicon CoreML (~20s/tile on M4); else CPU | macOS prefers CoreML when the models are present; Linux/Windows/mac-Intel fall back to CPU. |
+| `coreml` | macOS Apple Silicon | ~20s/tile + ~50s load (one-time) | Native CoreML SDXL; much faster than the CPU backend. |
 | `cpu` | all | ~231s/tile (896x1200) | sdcpp via stable-diffusion.cpp. The default on the Linux/Windows/macOS Intel release binaries. |
 | `metal` | macOS Apple Silicon (arm64 binary only) | not recommended | sdcpp Metal backend; unstable upstream on Apple Silicon, prefer `auto`/`coreml`. |
 
 On macOS with `WMR_BUILD_AI_COREML_SD`, the `auto` backend prefers CoreML when models
-are present at `$WMR_COREML_SD_MODELS_DIR` (defaults to `~/.cache/wmr/coreml-sdxl/`).
+are present at `$WMR_COREML_SD_MODELS_DIR` (defaults to `~/.cache/wmr/coreml-sdxl/`). The
+`$WMR_COREML_SD_COMPUTE_UNITS` env var (`all` default, `cpu_gpu`, `cpu_ane`, `cpu`)
+overrides the CoreML compute units for A/B or to force the GPU. On upgrade, wmr
+re-verifies each cached model against its pinned SHA and re-downloads only what
+changed, removing the old copy first, so the cache does not grow.
 
 Be aware of the tradeoffs before you use it:
 

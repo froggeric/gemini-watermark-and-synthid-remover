@@ -23,8 +23,9 @@ namespace {
 constexpr const char* kHfRepoUrl = "https://huggingface.co/froggeric/wmr/resolve/main";
 
 // SHA256 pins for the CoreML SDXL models (computed from the archives)
+// UNet: ORIGINAL attention (since 1.16.3; was SPLIT_EINSUM before, pin 9101cada...).
 constexpr const char* kSha256Unet =
-    "9101cadaefb5f98dad645ed81704ebe775ca173d926a61a4ed27a41d7e743f7a";
+    "9625f95c9da0fe7a46e8ac0d5cc2b112be42c7c7ed32487966be5a5838fb430c";
 constexpr const char* kSha256VaeEncoder =
     "370232dd23330abe34c17b19d8b7c08f55c5938887ad1ef608b2bc0b4e000036";
 constexpr const char* kSha256VaeDecoder =

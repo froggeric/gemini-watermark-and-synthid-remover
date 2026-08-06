@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 _Nothing yet._
 
+## [1.16.3] - 2026-08-06
+
+### macOS CoreML regen: ORIGINAL attention + cache/placement fixes
+
+- **macOS CoreML SDXL UNet re-converted with `ORIGINAL` attention**, replacing the `SPLIT_EINSUM` variant shipped since 1.16.0. Honest result: a modest ~1.2x speedup, not the dramatic GPU win originally aimed for. On an M4, a 6-tile 2816x1536 image regenerates in ~183 s with ORIGINAL vs ~223 s with the old SPLIT_EINSUM UNet. The Apple Neural Engine is unused by **both** variants: SDXL's large fp16 attention matmuls are ANE-ineligible, so CoreML routes the UNet to the GPU under `MLComputeUnitsAll`. `SPLIT_EINSUM` did not "collapse to CPU" as previously described; it was GPU-bound too, just slower per forward. Forcing GPU-only (`cpu_gpu`) matched `all` (185 s vs 183 s), confirming ORIGINAL is already GPU-placed. Removal is unchanged: the new UNet cleared 9/9 varied Gemini images (including a double-watermarked img2img generation) against Google's official "Verify with SynthID" verifier at the validated knee (strength 0.10, 50 steps). Full benchmark + the ANE analysis: [`docs/research/coreml-sd-placement.md`](docs/research/coreml-sd-placement.md).
+- **New `WMR_COREML_SD_COMPUTE_UNITS` environment variable** (`all` default, `cpu_gpu`, `cpu_ane`, `cpu`) selects the CoreML compute units at runtime, for A/B and as a force-GPU escape. Default is byte-identical to before (unset -> `all`).
+- **Fixed the model-cache fast path: re-pinning now reaches already-cached users.** `ensure_coreml_models` returned success when the model files merely existed (no SHA check on the warm path), so a re-pinned UNet or embeds file never reached users who already had the old one cached. The warm path now SHA-verifies against the current pin via an O(1) sidecar marker (`<archive>.sha256.ok`); on a re-pin it removes the old archive and extracted `.mlpackage` **before** downloading the new one, so the cache does not accumulate stale models (peak disk ~= steady state). This fix is what makes both this adoption and any future rollback actually reach cached users.
+- **First-UNet-predict timing log** (one line per run) reports placement: hundreds of ms means the GPU path is live, ~10 s means CPU. CoreML exposes no public chosen-unit API, so this is the only runtime placement signal.
+- **Existing macOS users re-download the UNet on the first regen after upgrading** (the cache fix detects the SHA change and removes the old one; the cache does not grow). The embeds file is unchanged, so it is not re-downloaded.
+
 ## [1.16.2] - 2026-08-05
 
 ### SynthID regen is now cross-platform (CPU on Linux/Windows/macOS Intel)

@@ -215,10 +215,8 @@ Consequences:
   and `kSha256Embeds` (`e27ab49b...`) are all UNCHANGED and stay correct for the
   ORIGINAL UNet.
 - The four-artifact rollback invariant collapses to ONE artifact: only the UNet
-  model swaps. The embeds are byte-identical across both variants (so the preserved
-  `empty_prompt_embeds-splitEinsum.bin` is the same bytes as the canonical file).
-- This de-risks the release: no embed-layout bug is possible, and rollback is a
-  single `kSha256Unet` swap plus a canonical-archive re-upload.
+  model swaps; the embeds are byte-identical across both variants.
+- This de-risks the release: no embed-layout bug is possible.
 
 The ORIGINAL-internal-ops to GPU placement hypothesis is unaffected (placement is
 decided by the attention ops, not the embed layout). That is confirmed out-of-band
