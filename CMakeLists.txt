@@ -386,6 +386,16 @@ if(WMR_BUILD_REGEN)
     # set is known before add_subdirectory pulls in ggml.
     enable_language(C)
 
+    # MSVC: sdcpp's src/stable-diffusion.cpp is a very large translation unit that
+    # exceeds the default COFF section count -> fatal error C1128 ("number of
+    # sections exceeded object file format limit: compile with /bigobj"). /bigobj
+    # raises the limit and is harmless on smaller TUs. Set on CMAKE_*_FLAGS BEFORE
+    # add_subdirectory so the ggml + stable-diffusion targets inherit it.
+    if(MSVC)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /bigobj")
+        set(CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} /bigobj")
+    endif()
+
     add_subdirectory(${SD_SUBMODULE} stable-diffusion)
 
     find_package(CURL REQUIRED)
