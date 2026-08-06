@@ -180,6 +180,52 @@ Sources:
 
 ---
 
+## Phase 4 ORIGINAL UNet IO spec (verified 2026-08-06)
+
+Re-converted the SDXL UNet with `--attention-implementation ORIGINAL` (converter
+`apple/ml-stable-diffusion` tag 1.1.1, the same pinned recipe as Phase 3, ONLY the
+attention flag changed). Output:
+`~/.cache/wmr/coreml-sdxl-original-attention/Stable_Diffusion_version_stabilityai_stable-diffusion-xl-base-1.0_unet.mlpackage`
+(~4.8 GB).
+
+IO verified two independent ways (a runtime CoreML load spike + a static
+coremltools spec read); both agree:
+
+- IN `sample` (2,4,128,128) Float16
+- IN `timestep` (2) Float16
+- IN `encoder_hidden_states` **(2,2048,1,77)** Float16
+- OUT `noise_pred` (2,4,128,128) Float32
+
+A dummy zero-input prediction produced a finite `noise_pred` (mean 0.056), so the
+IO contract holds end-to-end.
+
+### Decision: encoder_hidden_states is UNCHANGED; Tasks 1.3 and 1.4 are SKIPPED
+
+The implementation plan expected ORIGINAL attention to change
+`encoder_hidden_states` to the natural diffusers layout (2,77,2048). It does NOT:
+the boundary input is still the 4D (2,2048,1,77) layout, identical to the
+SPLIT_EINSUM variant. The `--attention-implementation` flag changes the INTERNAL
+attention ops (scaled-dot-product under ORIGINAL vs split-einsum under
+SPLIT_EINSUM), not the boundary tensor shape. The converter reshapes the text
+embeddings to (B, hidden, 1, seq) regardless of the flag.
+
+Consequences:
+
+- The `embed_ma` shape/strides, the gen-script transpose, `empty_prompt_embeds.bin`,
+  and `kSha256Embeds` (`e27ab49b...`) are all UNCHANGED and stay correct for the
+  ORIGINAL UNet.
+- The four-artifact rollback invariant collapses to ONE artifact: only the UNet
+  model swaps. The embeds are byte-identical across both variants (so the preserved
+  `empty_prompt_embeds-splitEinsum.bin` is the same bytes as the canonical file).
+- This de-risks the release: no embed-layout bug is possible, and rollback is a
+  single `kSha256Unet` swap plus a canonical-archive re-upload.
+
+The ORIGINAL-internal-ops to GPU placement hypothesis is unaffected (placement is
+decided by the attention ops, not the embed layout). That is confirmed out-of-band
+in Phase 2 (the colorful diff) and Phase 3 (Instruments), not by this IO spike.
+
+---
+
 ## Sources
 
 - [Hugging Face: Using Stable Diffusion with Core ML on Apple Silicon](https://huggingface.co/blog/diffusers-coreml)
