@@ -12,9 +12,6 @@
 namespace wmr {
 namespace fs = std::filesystem;
 
-// (Helpers are added in later tasks. This stub only declares the entry point
-//  so the build harness compiles.)
-
 struct FetchResult {
     bool ok = false;
     int http_code = 0;
