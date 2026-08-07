@@ -30,6 +30,7 @@ set(SOURCES
     src/video/notebooklm_gates.cpp
     src/video/geometry_detector.cpp
     src/detection/still_geometry.cpp
+    src/core/paths.cpp
 )
 
 # Executable

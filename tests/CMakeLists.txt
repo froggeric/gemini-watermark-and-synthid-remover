@@ -22,6 +22,7 @@ set(LIB_SOURCES
     ${CMAKE_SOURCE_DIR}/src/video/notebooklm_gates.cpp  # VideoReader-free (pure OpenCV); safe for the test link
     ${CMAKE_SOURCE_DIR}/src/video/geometry_detector.cpp  # VideoReader-free (pure OpenCV); safe for the test link
     ${CMAKE_SOURCE_DIR}/src/detection/still_geometry.cpp  # VideoReader-free (pure OpenCV); safe for the test link
+    ${CMAKE_SOURCE_DIR}/src/core/paths.cpp  # ungated; regenerator.cpp (regen mirror block) calls user_cache_dir()
     # NOTE: src/video/scene_detector.cpp is intentionally excluded — it pulls in
     # VideoReader (FFmpeg), which the test target does not link. No test
     # references SceneDetector today; re-add it (with the FFMPEG link) if a

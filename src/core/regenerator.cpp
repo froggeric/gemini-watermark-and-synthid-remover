@@ -3,6 +3,7 @@
 #include "core/model_downloader.hpp"
 #include "core/regen_tiling.hpp"
 #include "core/regen_backend.hpp"
+#include "core/paths.hpp"
 #ifdef WMR_BUILD_AI_COREML_SD
 #include "core/coreml_sd_pipeline.hpp"
 #include "core/coreml_sd_model_fetch.hpp"
@@ -53,14 +54,7 @@ fs::path exe_dir() {
     return fs::current_path();
 }
 fs::path cache_dir() {
-    const char* home = std::getenv("HOME");
-#ifdef _WIN32
-    if (!home) home = std::getenv("USERPROFILE");
-#endif
-    fs::path cache = (home && home[0]) ? fs::path(home) / ".cache" / "wmr"
-                                       : fs::current_path() / "wmr-cache";
-    fs::create_directories(cache);
-    return cache;
+    return wmr::user_cache_dir();
 }
 fs::path resolve_model(const RegenConfig& cfg) {
     if (!cfg.model_path.empty()) return cfg.model_path;
