@@ -126,7 +126,8 @@ endif()
 if(WMR_UPDATE_CHECK)
     target_sources(wmr_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/src/core/update_check.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/update_check_test.cpp)
+        ${CMAKE_SOURCE_DIR}/tests/unit/update_check_test.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/update_check_smoke_test.cpp)
     target_link_libraries(wmr_tests PRIVATE CURL::libcurl)
     target_compile_definitions(wmr_tests PRIVATE WMR_UPDATE_CHECK=1 APP_VERSION="0.0.0")
 endif()
