@@ -291,6 +291,22 @@ WMR_AI_MIGAN=1 WMR_AI_DENOISE=1 scripts/build.sh
 
 Tests: `ctest --test-dir build --output-on-failure`.
 
+## Update check
+
+wmr checks once per day whether a newer release is available and prints a short
+notice to stderr after your command finishes. It is on by default and is
+**notify-only**: it never downloads or replaces the binary.
+
+- **Zero payload.** The check is a single HTTPS GET of the latest release tag
+  with a versionless `User-Agent: wmr`. No version, OS, arch, or id is sent.
+- **Opt out:** `--no-update-check`, `WMR_NO_UPDATE_CHECK=1`, or it auto-disables
+  when stderr is not a terminal, when `CI` is set, or when `DO_NOT_TRACK=1`.
+- **Throttle:** at most once per 24 h; override with
+  `WMR_UPDATE_CHECK_INTERVAL=<seconds>` (use `0` for tests).
+- **Cache:** `~/.cache/wmr/update-check.json`.
+
+Build without it: `cmake -DWMR_UPDATE_CHECK=OFF ...`.
+
 ## Architecture
 
 Single-pass C++20 tool. Everything compiles into one `wmr` binary. Pipeline: **detect → remove → inpaint**, orchestrated by `WatermarkEngine`.
