@@ -1,0 +1,63 @@
+{
+  "planPath": "docs/superpowers/plans/2026-08-07-update-check.md",
+  "specPath": "docs/superpowers/specs/2026-08-07-update-check-design.md",
+  "nativeTaskIds": { "0": 52, "1": 53, "2": 54, "3": 55, "4": 56, "5": 57, "6": 58, "7": 59 },
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 1: Extract user_cache_dir() to src/core/paths",
+      "status": "pending",
+      "description": "**Goal:** Move cache-directory resolution out of regenerator.cpp into a shared, ungated src/core/paths.{hpp,cpp} so both regen and the update check use one source of truth, zero behavior change.\n\n**Files:** Create src/core/paths.hpp, src/core/paths.cpp; modify src/core/regenerator.cpp (delegate cache_dir()), CMakeLists.txt (add src/core/paths.cpp to SOURCES at :17), tests/CMakeLists.txt (add src/core/paths.cpp to the test LIB_SOURCES at :17, required so the regen mirror block's regenerator.cpp links).\n\n**Acceptance Criteria:** user_cache_dir() exists ungated, returns ~/.cache/wmr (or <cwd>/wmr-cache fallback); regenerator.cpp cache_dir() delegates, call sites unchanged; paths.cpp in BOTH top-level SOURCES and test LIB_SOURCES; WMR_BUILD_REGEN=ON build + tests link, regen tests pass/SKIP.\n\n**Verify:** scripts/build.sh; ./build/tests/wmr_tests \"[regen]\"; ./build/wmr --version.\n\n```json:metadata\n{\"files\": [\"src/core/paths.hpp\", \"src/core/paths.cpp\", \"src/core/regenerator.cpp\", \"CMakeLists.txt\", \"tests/CMakeLists.txt\"], \"verifyCommand\": \"scripts/build.sh && ./build/tests/wmr_tests '[regen]'\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 2: Build wiring for WMR_UPDATE_CHECK (stub + CMake + vcpkg)",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Stand up the compile/test harness: stub update_check.{hpp,cpp}, the WMR_UPDATE_CHECK CMake option + curl link, curl as base vcpkg dep, tests mirror block. ON configures/links; OFF stays clean.\n\n**Files:** Create src/core/update_check.hpp, src/core/update_check.cpp, tests/unit/update_check_test.cpp; modify CMakeLists.txt (option block before :443), tests/CMakeLists.txt (mirror block; does NOT list paths.cpp, which lives in LIB_SOURCES from Task 1), vcpkg.json (curl to base deps).\n\n**Acceptance Criteria:** option(WMR_UPDATE_CHECK ... ON) before add_subdirectory(tests); ON links curl + WMR_UPDATE_CHECK=1; OFF clean; tests mirror block (target_sources) adds update_check.cpp/update_check_test.cpp (NOT paths.cpp), links curl, defines WMR_UPDATE_CHECK=1 APP_VERSION=0.0.0; vcpkg base deps include curl; stub [update-check] test passes.\n\n**Verify:** scripts/build.sh && ./build/tests/wmr_tests \"[update-check]\"; cmake -B build-off -S . -GNinja -DWMR_UPDATE_CHECK=OFF && cmake --build build-off.\n\n```json:metadata\n{\"files\": [\"src/core/update_check.hpp\", \"src/core/update_check.cpp\", \"tests/unit/update_check_test.cpp\", \"CMakeLists.txt\", \"tests/CMakeLists.txt\", \"vcpkg.json\"], \"verifyCommand\": \"scripts/build.sh && ./build/tests/wmr_tests '[update-check]'\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 3: Pure parse/compare/gate/color helpers",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Implement pure helpers (parse_version, compare_versions, parse_tag, parse_release_json, should_show, should_fetch, color_enabled_for + color_enabled) with full unit coverage. No network, no I/O. Spec AC-1..6, AC-9.\n\n**Files:** Modify src/core/update_check.hpp (decls; #include <array> at FILE scope, NOT inside namespace wmr), src/core/update_check.cpp (impls), tests/unit/update_check_test.cpp.\n\n**Acceptance Criteria:** AC-1 parse_version (semver, v/V prefix, missing==0; overflow=>nullopt via errno==ERANGE OR n>UINT_MAX so 99999999999 is rejected on 64-bit where unsigned long is 64-bit and strtoul does NOT set ERANGE; leading-digit guard rejects strtoul sign-skip on '-1'); AC-2 compare_versions -1/0/+1, major wins, malformed current=>+1; AC-3 parse_tag strips one v/V; AC-4 parse_release_json extracts tag_name (nullopt if missing/non-string/unparseable); AC-5 should_show truth table (5 independent inputs); AC-6 should_fetch boundary + negative-age clamp; AC-9 color_enabled_for (PURE policy with injected is_tty/no_color/term so it is CI-testable; color_enabled delegates).\n\n**Verify:** cmake --build build && ./build/tests/wmr_tests \"[update-check]\".\n\n```json:metadata\n{\"files\": [\"src/core/update_check.hpp\", \"src/core/update_check.cpp\", \"tests/unit/update_check_test.cpp\"], \"verifyCommand\": \"cmake --build build && ./build/tests/wmr_tests '[update-check]'\", \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 4: Cache I/O and notice formatting",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**Goal:** Atomic race-safe cache persistence + exact notice rendering sharing kHeaderRule. Spec AC-7, AC-8.\n\n**Files:** Modify src/core/update_check.{hpp,cpp}, src/cli/cli_app.hpp (add kHeaderRule), src/cli/cli_app.cpp (print_header uses kHeaderRule), tests/unit/update_check_test.cpp.\n\n**Acceptance Criteria:** AC-7 cache round-trip identical; truncated/empty/wrong-type/missing=>empty CacheData (never throw); write_cache PID-suffixed temp + same-dir rename, no .tmp. leftover, temp removed on failure; AC-8 format_notice byte-for-byte the three-line block (shared kHeaderRule, two-space indent, ASCII ->, exact URL + disable line) with color off; bold+yellow SGR wrap with color on; nothing to stdout; kHeaderRule single source of truth.\n\n**Verify:** cmake --build build && ./build/tests/wmr_tests \"[update-check]\"; ./build/wmr 2>&1 | head -2.\n\n```json:metadata\n{\"files\": [\"src/core/update_check.hpp\", \"src/core/update_check.cpp\", \"src/cli/cli_app.hpp\", \"src/cli/cli_app.cpp\", \"tests/unit/update_check_test.cpp\"], \"verifyCommand\": \"cmake --build build && ./build/tests/wmr_tests '[update-check]'\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 5: libcurl fetch and the orchestrator (split: gate-free core + gate)",
+      "status": "pending",
+      "blockedBy": [3],
+      "description": "**Goal:** fetch_latest_release (HTTPS GET, gzip fix via CURLOPT_ACCEPT_ENCODING, redirects, timeouts, versionless UA, conditional ETag) + run_update_check (gate-free cache/fetch/notice core, testable in CI) + maybe_check_for_update (the gate, which run_cli calls). Spec AC-10, AC-14. The orchestrator is SPLIT so AC-10 is CI-testable: the original single maybe_check_for_update gated on isatty(stderr)+CI, which is false in CI, so the cache-write assertion could never pass there. run_update_check takes an explicit cache path + interval and has no gate.\n\n**Files:** Modify src/core/update_check.{hpp,cpp} (delete stubs; implement fetch_latest_release + run_update_check + maybe_check_for_update; store parse_tag(*tag) so cached latest_version has no leading v), tests/unit/update_check_test.cpp (AC-10 drives run_update_check with a temp cache path + stub fetch; no HOME/CI/TTY manipulation).\n\n**Acceptance Criteria:** AC-10 run_update_check(temp_cache,0,false,stub) writes the v-stripped latest_version to cache, advances last_check_epoch, no throw, newer/older/304 cases; opt-out-skip is covered by AC-5 should_show truth table + gate structure; AC-14 zero payload; cached latest_version stored WITHOUT leading v; gate flushes stderr, never throws, never changes exit code.\n\n**Verify:** cmake --build build && ./build/tests/wmr_tests \"[update-check]\" (AC-10 green in CI; real network is Task 7).\n\n```json:metadata\n{\"files\": [\"src/core/update_check.hpp\", \"src/core/update_check.cpp\", \"tests/unit/update_check_test.cpp\"], \"verifyCommand\": \"cmake --build build && ./build/tests/wmr_tests '[update-check]'\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 6: Wire the check into run_cli",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** Add --no-update-check and call the orchestrator at one chokepoint at the end of run_cli, reached only after a dispatched subcommand. Spec AC-11, AC-12.\n\n**Files:** Modify src/cli/cli_app.hpp (CliOptions::no_update_check), src/cli/cli_app.cpp (add_common binds flag; restructure run_cli tail to single chokepoint), tests/unit/update_check_test.cpp (AC-11 structural note).\n\n**Acceptance Criteria:** AC-11 --version/--help/remove --help/no-args/bad-flag never reach maybe_check_for_update (structural: return from ParseError catch at :639 or no-args early return at :430, both before the chokepoint); zero network calls; verified by inspection + behavior (wmr --version and piped wmr remove show no banner); AC-12 notice fully flushed before main std::_Exit; check runs after success or failure, rc untouched.\n\n**Verify:** cmake --build build; ./build/wmr --version; ./build/wmr remove test-images/896x1200-test4-gemini36.png -o /tmp/x.png 2>/dev/null.\n\n```json:metadata\n{\"files\": [\"src/cli/cli_app.hpp\", \"src/cli/cli_app.cpp\"], \"verifyCommand\": \"cmake --build build && ./build/wmr --version\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 7: Opt-in network smoke test",
+      "status": "pending",
+      "blockedBy": [5],
+      "description": "**Goal:** Real-network smoke test proving the live fetch returns a parseable tag and a gzip-decoded body. SKIPs unless WMR_NETWORK_TESTS=1.\n\n**Files:** Create tests/unit/update_check_smoke_test.cpp; modify tests/CMakeLists.txt (add source to mirror block).\n\n**Acceptance Criteria:** [update-check][smoke] SKIPs without WMR_NETWORK_TESTS; with it set, fetch_latest_release(\"\") ok, http 200, body contains tag_name (decoded not raw gzip), parse_release_json non-empty, parse_version valid.\n\n**Verify:** ./build/tests/wmr_tests \"[update-check][smoke]\" (SKIP); WMR_NETWORK_TESTS=1 ./build/tests/wmr_tests \"[update-check][smoke]\" (pass).\n\n```json:metadata\n{\"files\": [\"tests/unit/update_check_smoke_test.cpp\", \"tests/CMakeLists.txt\"], \"verifyCommand\": \"WMR_NETWORK_TESTS=1 ./build/tests/wmr_tests '[update-check][smoke]'\", \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 8: README docs + final build verification",
+      "status": "pending",
+      "blockedBy": [6],
+      "description": "**Goal:** Document the feature and verify the full build matrix + zero-payload claim. Spec AC-13, AC-14.\n\n**Files:** Modify README.md.\n\n**Acceptance Criteria:** AC-13 WMR_UPDATE_CHECK=OFF builds clean (no update-check symbols, no curl dep from this feature); ON with WMR_BUILD_REGEN=OFF configures+links; AC-14 README documents default-on, notify-only, zero-payload (versionless UA, no version/OS/id), opt-out (--no-update-check, WMR_NO_UPDATE_CHECK, CI, DO_NOT_TRACK=1), cache path (~/.cache/wmr/update-check.json), 24h throttle + WMR_UPDATE_CHECK_INTERVAL; ctest green (smoke SKIPs).\n\n**Verify:** scripts/build.sh && ctest --test-dir build --output-on-failure; cmake -B build-off -S . -GNinja -DWMR_UPDATE_CHECK=OFF && cmake --build build-off; cmake -B build-noregen -S . -GNinja -DWMR_UPDATE_CHECK=ON -DWMR_BUILD_REGEN=OFF && cmake --build build-noregen.\n\n```json:metadata\n{\"files\": [\"README.md\"], \"verifyCommand\": \"scripts/build.sh && ctest --test-dir build --output-on-failure\", \"modelTier\": \"standard\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-08-07T00:00:00Z"
+}
