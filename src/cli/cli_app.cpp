@@ -24,14 +24,14 @@
 
 namespace {
 void print_header(std::ostream& os) {
-    os << "--------------------------------------------\n"
+    os << wmr::kHeaderRule << "\n"
         << "  wmr v" APP_VERSION " — watermark remover\n"
         << "  Remove Gemini/Veo visible watermarks.\n"
         << "  Remove SynthID invisible watermarks via lossy regen (no detection; validated vs Google's SynthID verifier).\n"
         << "  --synthid-attack regen is lossy (SDXL img2img; ~6.5 GB model + ~335 MB VAE download on first use).\n"
         << "  https://github.com/froggeric/gemini-watermark-and-synthid-remover\n"
         << "  Copyright 2026 Frederic Guigand\n"
-        << "--------------------------------------------\n\n";
+        << wmr::kHeaderRule << "\n\n";
 }
 } // namespace
 

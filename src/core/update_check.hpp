@@ -42,6 +42,19 @@ bool should_fetch(long long age_s, long long interval_s);
 bool color_enabled_for(bool is_tty, const char* no_color, const char* term);
 bool color_enabled();
 
+// Persisted cache of the last check result. read_cache returns an empty instance
+// for any missing/truncated/wrong-type file (never throws).
+struct CacheData {
+    long long last_check_epoch = 0;  // unix seconds of last fetch attempt
+    std::string latest_version;      // empty == unknown
+    std::string etag;                // may be empty
+};
+CacheData read_cache(const fs::path& p);
+bool write_cache(const fs::path& p, const CacheData& d);  // atomic; false on failure
+
+// Render the three-line notice. current/latest are the version strings to show.
+std::string format_notice(std::string_view current, std::string_view latest, bool color);
+
 // Notify-only update check. Never throws, never writes to stdout, never changes
 // the process exit code. `no_update_check` is the --no-update-check flag value.
 void maybe_check_for_update(bool no_update_check,

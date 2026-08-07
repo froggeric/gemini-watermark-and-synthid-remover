@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -10,6 +11,11 @@
 #include "detection/still_geometry.hpp"  // StillGeometryOverride
 
 namespace wmr {
+
+// The dash rule used by print_header and the update-check notice. One literal,
+// shared, so the two framed blocks cannot drift apart.
+inline constexpr std::string_view kHeaderRule =
+    "--------------------------------------------";  // 44 dashes
 
 enum class CliMode {
     AutoRemove,

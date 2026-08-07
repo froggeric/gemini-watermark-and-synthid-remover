@@ -1,10 +1,17 @@
 #ifdef WMR_UPDATE_CHECK
 #include "core/update_check.hpp"
 
+#include "cli/cli_app.hpp"  // wmr::kHeaderRule
+#include "core/paths.hpp"
+
 #include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <limits>
+#include <sstream>
+#include <system_error>
 
 #ifdef _WIN32
 #include <io.h>       // _isatty, _fileno
@@ -139,6 +146,83 @@ std::optional<std::string> extract_string_field(std::string_view body, std::stri
 
 std::optional<std::string> parse_release_json(std::string_view body) {
     return extract_string_field(body, "tag_name");
+}
+
+namespace {
+// Tiny JSON string escaper for writing the cache.
+std::string esc(std::string_view s) {
+    std::string out;
+    for (char c : s) {
+        if (c == '"' || c == '\\') { out.push_back('\\'); out.push_back(c); }
+        else if (c == '\n') out += "\\n";
+        else out.push_back(c);
+    }
+    return out;
+}
+}  // namespace
+
+CacheData read_cache(const fs::path& p) {
+    CacheData d;
+    std::ifstream f(p);
+    if (!f) return d;
+    std::stringstream ss; ss << f.rdbuf();
+    std::string body = ss.str();
+    // Reuse the string-field extractor for the two string fields; epoch is numeric.
+    if (auto v = extract_string_field(body, "latest_version")) d.latest_version = *v;
+    if (auto v = extract_string_field(body, "etag")) d.etag = *v;
+    // last_check_epoch: scan for the numeric value after "last_check_epoch".
+    auto pos = body.find("\"last_check_epoch\"");
+    if (pos != std::string::npos) {
+        pos = body.find(':', pos);
+        if (pos != std::string::npos) {
+            d.last_check_epoch = std::strtoll(body.c_str() + pos + 1, nullptr, 10);
+        }
+    }
+    return d;
+}
+
+bool write_cache(const fs::path& p, const CacheData& d) {
+    std::error_code ec;
+    fs::create_directories(p.parent_path(), ec);
+    std::ostringstream ss;
+    ss << "{\"last_check_epoch\":" << d.last_check_epoch
+       << ",\"latest_version\":\"" << esc(d.latest_version) << "\""
+       << ",\"etag\":\"" << esc(d.etag) << "\"}";
+    std::string data = ss.str();
+    // PID-suffixed temp in the SAME directory => rename is atomic (same fs).
+    // Use the global getpid() from <unistd.h> (POSIX), NOT std::getpid (no such
+    // name in std; <cstdlib> does not declare it). <unistd.h> is included via the
+    // Task 3 non-Windows branch; on Windows <process.h> provides _getpid().
+    std::string pid;
+#ifdef _WIN32
+    pid = std::to_string(_getpid());
+#else
+    pid = std::to_string(getpid());
+#endif
+    std::string tmpname = p.filename().string() + ".tmp." + pid;
+    fs::path tmp = p.parent_path() / tmpname;
+    {
+        std::ofstream of(tmp, std::ios::binary);
+        if (!of) return false;
+        of << data;
+        of.flush();
+        if (!of) { std::error_code rm; fs::remove(tmp, rm); return false; }
+    }
+    fs::rename(tmp, p, ec);  // atomic replace on POSIX; MOVEFILE_REPLACE_EXISTING on Windows
+    if (ec) { std::error_code rm; fs::remove(tmp, rm); return false; }
+    return true;
+}
+
+std::string format_notice(std::string_view current, std::string_view latest, bool color) {
+    std::ostringstream os;
+    const char* B = color ? "\033[1m\033[33m" : "";  // bold + yellow
+    const char* R = color ? "\033[0m" : "";
+    os << B << wmr::kHeaderRule << R << "\n"
+       << B << "  A new release of wmr is available: " << current << " -> " << latest << R << "\n"
+       << B << "  Download: https://github.com/froggeric/gemini-watermark-and-synthid-remover/releases/latest" << R << "\n"
+       << B << "  Disable with WMR_NO_UPDATE_CHECK=1 or --no-update-check." << R << "\n"
+       << B << wmr::kHeaderRule << R << "\n";
+    return os.str();
 }
 
 // Filled in across later tasks. The stub fetch + no-op orchestrator let the
