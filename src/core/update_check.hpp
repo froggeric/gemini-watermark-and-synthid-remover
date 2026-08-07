@@ -55,10 +55,24 @@ bool write_cache(const fs::path& p, const CacheData& d);  // atomic; false on fa
 // Render the three-line notice. current/latest are the version strings to show.
 std::string format_notice(std::string_view current, std::string_view latest, bool color);
 
-// Notify-only update check. Never throws, never writes to stdout, never changes
-// the process exit code. `no_update_check` is the --no-update-check flag value.
+// HTTPS GET of /releases/latest. Returns the response body + the ETag header
+// (empty if none). On any failure, ok=false with an error string. Zero payload:
+// versionless UA, no query string, no body.
+FetchResult fetch_latest_release(const std::string& etag);
+
+// Gate-free cache + fetch + notice core. Reads cache_path, shows from cache if a
+// known newer version exists, fetches (via fetch) only if the cache is stale,
+// writes the cache, and shows if newly-found-newer. Takes an explicit cache path
+// and interval so it is deterministic and unit-testable with no TTY/CI/env
+// dependency. Never throws; writes only to stderr.
+void run_update_check(const fs::path& cache_path, long long interval_s,
+                      bool color, FetchFn fetch);
+
+// The gated entry point run_cli calls. Evaluates the opt-out / CI / TTY gate
+// (should_show); if eligible, resolves the cache path + interval + color and
+// delegates to run_update_check. Flushes stderr before returning. Never throws.
 void maybe_check_for_update(bool no_update_check,
-                            FetchFn fetch = {});
+                            FetchFn fetch = fetch_latest_release);
 
 }  // namespace wmr
 

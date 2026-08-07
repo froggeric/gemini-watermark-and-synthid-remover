@@ -5,6 +5,7 @@
 #include "core/paths.hpp"
 
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +13,8 @@
 #include <limits>
 #include <sstream>
 #include <system_error>
+
+#include <curl/curl.h>
 
 #ifdef _WIN32
 #include <io.h>       // _isatty, _fileno
@@ -38,6 +41,34 @@ bool stderr_is_tty() {
 #else
     return isatty(STDERR_FILENO) != 0;
 #endif
+}
+
+// libcurl write/header buffers for fetch_latest_release. Mirrors the
+// model_downloader.cpp idiom (separate body + ETag capture).
+struct CurlBuf {
+    std::string body;
+    std::string etag;
+};
+size_t uc_write_cb(char* ptr, size_t sz, size_t n, void* ud) {
+    auto* b = static_cast<CurlBuf*>(ud);
+    b->body.append(ptr, sz * n);
+    return sz * n;
+}
+size_t uc_header_cb(char* buf, size_t sz, size_t n, void* ud) {
+    auto* b = static_cast<CurlBuf*>(ud);
+    size_t len = sz * n;
+    std::string h(buf, len);
+    // Match "ETag:" (case-insensitive on the key prefix).
+    if (len > 5 && (h[0] == 'E' || h[0] == 'e') &&
+        (h[1] == 'T' || h[1] == 't') && (h[2] == 'a' || h[2] == 'A') &&
+        (h[3] == 'g' || h[3] == 'G') && h[4] == ':') {
+        std::string v = h.substr(5);
+        // trim whitespace + trailing CR/LF
+        while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.erase(0, 1);
+        while (!v.empty() && (v.back() == '\r' || v.back() == '\n' || v.back() == ' ')) v.pop_back();
+        b->etag = v;
+    }
+    return len;
 }
 }  // namespace
 
@@ -225,17 +256,127 @@ std::string format_notice(std::string_view current, std::string_view latest, boo
     return os.str();
 }
 
-// Filled in across later tasks. The stub fetch + no-op orchestrator let the
-// build harness link before any real logic exists.
-FetchResult fetch_latest_release(const std::string& /*etag*/) {
-    return {/*ok=*/false, /*http_code=*/0, /*body=*/"", /*etag=*/"", /*error=*/"unimplemented"};
+// HTTPS GET of /releases/latest. Zero payload: versionless UA, no query string,
+// no body, no version/OS/arch/id header. CURLOPT_ACCEPT_ENCODING "" is REQUIRED:
+// api.github.com returns gzip by default and without it the body arrives as raw
+// gzip bytes (parse_release_json then silently fails to find tag_name).
+FetchResult fetch_latest_release(const std::string& etag) {
+    FetchResult r;
+    CURL* curl = curl_easy_init();
+    if (!curl) { r.error = "curl_easy_init failed"; return r; }
+    CurlBuf buf;
+    constexpr const char* kUrl =
+        "https://api.github.com/repos/froggeric/gemini-watermark-and-synthid-remover/releases/latest";
+    struct curl_slist* hdrs = nullptr;
+    hdrs = curl_slist_append(hdrs, "Accept: application/vnd.github+json");
+    std::string inm;
+    if (!etag.empty()) { inm = "If-None-Match: " + etag; hdrs = curl_slist_append(hdrs, inm.c_str()); }
+
+    curl_easy_setopt(curl, CURLOPT_URL, kUrl);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "wmr");           // versionless
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");         // auto-decompress gzip (REQUIRED)
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 1500L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 3000L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, uc_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, uc_header_cb);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &buf);
+
+    CURLcode rc = curl_easy_perform(curl);
+    long code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+    curl_slist_free_all(hdrs);
+    curl_easy_cleanup(curl);
+
+    if (rc != CURLE_OK) { r.error = std::string("curl: ") + curl_easy_strerror(rc); return r; }
+    r.ok = true;
+    r.http_code = static_cast<int>(code);
+    r.body = std::move(buf.body);
+    r.etag = std::move(buf.etag);
+    return r;
 }
 
-// Resolves the default fetch when the caller omits it. Defined out-of-line so
-// the header's default argument `FetchFn fetch = {}` can be replaced by a real
-// default at the call site in run_cli (which passes fetch_latest_release).
-void maybe_check_for_update(bool /*no_update_check*/, FetchFn /*fetch*/) {
-    // no-op for now
+namespace {
+long long now_epoch() {
+    using namespace std::chrono;
+    return duration_cast<seconds>(system_clock::now().time_since_epoch()).count();
+}
+long long parse_interval_env() {
+    const char* v = std::getenv("WMR_UPDATE_CHECK_INTERVAL");
+    if (!v || !*v) return 86400;
+    char* end = nullptr;
+    errno = 0;
+    // strtoll (not strtoul) so the return type matches `long long` with no
+    // implementation-defined cast: a value > LLONG_MAX trips ERANGE -> default
+    // (instead of wrapping to a negative and making should_fetch always true),
+    // and a leading '-' parses negative -> rejected below (spec: huge = never
+    // fetch; negative is not a valid throttle).
+    long long n = std::strtoll(v, &end, 10);
+    if (end == v || errno == ERANGE || n < 0) return 86400;  // empty/garbage/overflow/negative
+    return n;
+}
+#ifndef APP_VERSION
+#define APP_VERSION "0.0.0"
+#endif
+}  // namespace
+
+// Gate-free core. Deterministic + unit-testable (takes the cache path and interval
+// explicitly, reads no TTY/CI env here). Writes only to stderr; never throws.
+void run_update_check(const fs::path& cache_path, long long interval_s,
+                      bool color, FetchFn fetch) {
+    CacheData cd = read_cache(cache_path);
+    bool printed = false;
+
+    // 1) Show from cache if a known newer version exists (no network).
+    if (!cd.latest_version.empty() &&
+        compare_versions(APP_VERSION, cd.latest_version) < 0) {
+        std::fputs(format_notice(APP_VERSION, cd.latest_version, color).c_str(), stderr);
+        printed = true;
+    }
+
+    // 2) Fetch only if the cache is stale.
+    long long now = now_epoch();
+    long long age = now - cd.last_check_epoch;
+    if (should_fetch(age, interval_s) && fetch) {
+        FetchResult fr = fetch(cd.etag);
+        if (fr.ok && fr.http_code == 200) {
+            // parse_tag strips the leading v/V so the stored value AND the notice
+            // show "1.16.4" (matching the spec cache schema + notice format), not
+            // "v1.16.4". compare_versions is v-tolerant either way, but display is not.
+            if (auto tag = parse_release_json(fr.body)) cd.latest_version = parse_tag(*tag);
+            // else: malformed body -> keep previous latest_version
+        }  // 304 or any failure: keep previous latest_version
+        if (!fr.etag.empty()) cd.etag = fr.etag;
+        cd.last_check_epoch = now;
+        write_cache(cache_path, cd);
+
+        if (!printed && !cd.latest_version.empty() &&
+            compare_versions(APP_VERSION, cd.latest_version) < 0) {
+            std::fputs(format_notice(APP_VERSION, cd.latest_version, color).c_str(), stderr);
+        }
+    }
+}
+
+// The gated entry point run_cli calls. Evaluates the opt-out / CI / TTY gate
+// (should_show); if eligible, resolves the cache path + interval + color and
+// delegates to run_update_check. Flushes stderr before returning. Never throws.
+void maybe_check_for_update(bool no_update_check, FetchFn fetch) {
+    try {
+        if (!should_show(no_update_check,
+                         env_nonempty("WMR_NO_UPDATE_CHECK"),
+                         env_nonempty("CI"),
+                         env_equals("DO_NOT_TRACK", "1"),
+                         stderr_is_tty())) {
+            return;  // not eligible: no network, no notice
+        }
+        fs::path cache_path = user_cache_dir() / "update-check.json";
+        run_update_check(cache_path, parse_interval_env(), color_enabled(), fetch);
+    } catch (...) {
+        // never propagate past the boundary
+    }
+    std::fflush(stderr);
 }
 
 }  // namespace wmr

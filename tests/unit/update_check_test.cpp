@@ -132,4 +132,46 @@ TEST_CASE("format_notice exact string", "[update-check]") {
     // Same visible text present in the color version too.
     REQUIRE(c.find("1.16.3 -> 1.16.4") != std::string::npos);
 }
+
+// AC-10: drives the gate-free core directly with a temp cache path and a stubbed
+// fetch, so it needs NO HOME/CI/TTY manipulation and passes identically in CI and
+// locally. (APP_VERSION is "0.0.0" in the test target, so a v9.9.9 tag is newer
+// and the cache-write path is exercised. The exact notice string is pinned by
+// AC-8; this case asserts the core consumes the fetch result + stores the
+// v-stripped tag.) Opt-out-skip is covered by AC-5's should_show truth table +
+// the gate structure, not by this network-free case.
+TEST_CASE("run_update_check: newer fetch updates cache (v stripped); no throw", "[update-check]") {
+    fs::path cache = tfs::temp_directory_path() / ("wmr_uc_core_" + std::to_string(getpid()) + ".json");
+    tfs::remove(cache);
+
+    FetchResult newer; newer.ok = true; newer.http_code = 200;
+    newer.body = R"({"tag_name":"v9.9.9","assets":[]})";
+    CHECK_NOTHROW(run_update_check(cache, /*interval_s=*/0, /*color=*/false,
+                                   [&](const std::string&){ return newer; }));
+    REQUIRE(read_cache(cache).latest_version == "9.9.9");  // parse_tag stripped the leading v
+
+    // last_check_epoch was written (the fetch ran, interval=0 => always).
+    REQUIRE(read_cache(cache).last_check_epoch > 0);
+    tfs::remove(cache);
+
+    // Older tag: still consumed into the cache (no throw), but the notice path is
+    // the not-newer branch (the exact notice bytes are pinned by the AC-8 test).
+    FetchResult older; older.ok = true; older.http_code = 200;
+    older.body = R"({"tag_name":"v0.0.1"})";
+    CHECK_NOTHROW(run_update_check(cache, 0, false,
+                                   [&](const std::string&){ return older; }));
+    REQUIRE(read_cache(cache).latest_version == "0.0.1");
+    tfs::remove(cache);
+
+    // 304 / fetch failure: previous latest_version is preserved, epoch advances.
+    {
+        std::ofstream f(cache); f << R"({"last_check_epoch":1,"latest_version":"1.0.0","etag":""})";
+    }
+    FetchResult notmod; notmod.ok = true; notmod.http_code = 304;  // 304 -> keep previous
+    CHECK_NOTHROW(run_update_check(cache, 0, false,
+                                   [&](const std::string&){ return notmod; }));
+    REQUIRE(read_cache(cache).latest_version == "1.0.0");  // unchanged
+    REQUIRE(read_cache(cache).last_check_epoch > 1);        // epoch advanced
+    tfs::remove(cache);
+}
 #endif
