@@ -2,6 +2,7 @@
 #include "cli/batch_processor.hpp"
 #include "core/watermark_engine.hpp"
 #include "core/types.hpp"
+#include "core/update_check.hpp"
 #include "video/video_processor.hpp"
 
 #include <opencv2/imgcodecs.hpp>
@@ -435,6 +436,8 @@ int run_cli(int argc, char* argv[]) {
     // Common options shared across subcommands
     auto add_common = [&](CLI::App* cmd) {
         cmd->add_flag("-v,--verbose", opts.verbose, "Verbose output");
+        cmd->add_flag("--no-update-check", opts.no_update_check,
+                      "Skip the startup update check (also WMR_NO_UPDATE_CHECK=1)");
     };
 
     // Still-image geometry flags shared by remove / visible / detect.
@@ -681,13 +684,16 @@ int run_cli(int argc, char* argv[]) {
         opts.mode = CliMode::AutoRemove;
     }
 
+    int rc = 0;
     try {
         switch (opts.mode) {
             case CliMode::Detect:
-                return process_detect(opts);
+                rc = process_detect(opts);
+                break;
 
             case CliMode::Video:
-                return process_video(opts);
+                rc = process_video(opts);
+                break;
 
             case CliMode::AutoRemove:
             case CliMode::VisibleOnly:
@@ -695,17 +701,26 @@ int run_cli(int argc, char* argv[]) {
                 // Check if input is a directory → batch mode
                 if (std::filesystem::is_directory(opts.input_path)) {
                     auto result = batch_process(opts);
-                    return result.failed > 0 ? 1 : 0;
+                    rc = result.failed > 0 ? 1 : 0;
+                } else {
+                    rc = process_single_image(opts);
                 }
-                return process_single_image(opts);
+                break;
             }
         }
     } catch (const std::exception& e) {
         spdlog::error("Error: {}", e.what());
-        return 1;
+        rc = 1;
     }
 
-    return 0;
+#ifdef WMR_UPDATE_CHECK
+    // Reached ONLY after a dispatched subcommand (the no-args path returned
+    // before parse; --version/--help/parse errors returned from the
+    // CLI::ParseError catch above and never reach here). Never throws, never
+    // changes rc, writes only to stderr.
+    wmr::maybe_check_for_update(opts.no_update_check);
+#endif
+    return rc;
 }
 
 } // namespace wmr

@@ -33,6 +33,7 @@ struct CliOptions {
     bool force_small = false;
     bool force_large = false;
     bool verbose = false;
+    bool no_update_check = false;   // --no-update-check (skip the startup update check)
     bool detect_only = false;
     float inpaint_strength = 0.85f;
     bool recursive = false;
