@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 _Nothing yet._
 
+## [1.16.4] - 2026-08-07
+
+### Update check (notify-only, default ON)
+
+- **Automatic update check.** On a real subcommand, when a human is at a TTY and has not opted out, wmr compares its version to the latest GitHub release tag (fetched once per 24h, cached) and prints a styled three-line notice to stderr when a newer release exists. The notice prints AFTER the command's real output, never to stdout, and never delays or breaks the command.
+- **Notify-only and zero-payload.** wmr never downloads a binary or runs fetched code. The single HTTPS GET to `api.github.com/.../releases/latest` sends only a versionless `User-Agent: wmr`, the fixed `Accept` header, and the optional GitHub-issued `If-None-Match` ETag. No version, OS, arch, or id is transmitted. For a visible-only user this is the first network call wmr makes, so it is documented in the README and the notice itself.
+- **Opt-out.** `--no-update-check`; `WMR_NO_UPDATE_CHECK=1`; auto-suppressed when stderr is not a TTY, when `CI` is set, or when `DO_NOT_TRACK=1`. `--version`, `--help`, no-args, and parse errors never trigger it.
+- **Build.** Behind `WMR_UPDATE_CHECK` (default ON), which links curl (now a base vcpkg dependency) and is fully `#ifdef`-guarded. `WMR_UPDATE_CHECK=OFF` builds with zero update-check symbols and no curl from this feature. An opt-in `[update-check][smoke]` network test is SKIP unless `WMR_NETWORK_TESTS=1`.
+- **Internals.** Gate-free `run_update_check` core (CI-testable) plus the gated `maybe_check_for_update` entry hooked at a single chokepoint at the end of `run_cli`. The gzip default of api.github.com requires `CURLOPT_ACCEPT_ENCODING ""` or the body is unreadable. Cache at `~/.cache/wmr/update-check.json`. The cache-path helper `src/core/paths.cpp` (`user_cache_dir()`) was extracted from `regenerator.cpp` so it resolves when regen is OFF.
+
 ## [1.16.3] - 2026-08-06
 
 ### macOS CoreML regen: ORIGINAL attention + cache/placement fixes
