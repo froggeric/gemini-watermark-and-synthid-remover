@@ -117,3 +117,16 @@ if(WMR_BUILD_AI_COREML_SD)
     target_link_libraries(wmr_tests PRIVATE ${ACCELERATE_LIB} ${COREML_LIB} ${FOUNDATION_LIB})
     target_compile_definitions(wmr_tests PRIVATE WMR_BUILD_AI_COREML_SD=1)
 endif()
+
+# Update check (notify-only): mirrors the main CMakeLists block.
+# NOTE: src/core/paths.cpp is intentionally NOT listed here; Task 1 added it to the
+# unconditional LIB_SOURCES list above (regenerator.cpp, compiled by the regen mirror
+# block, also needs it). Listing it here would be a duplicate-source error when
+# WMR_BUILD_REGEN is ON too.
+if(WMR_UPDATE_CHECK)
+    target_sources(wmr_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core/update_check.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/update_check_test.cpp)
+    target_link_libraries(wmr_tests PRIVATE CURL::libcurl)
+    target_compile_definitions(wmr_tests PRIVATE WMR_UPDATE_CHECK=1 APP_VERSION="0.0.0")
+endif()

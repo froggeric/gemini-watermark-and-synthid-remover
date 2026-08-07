@@ -437,6 +437,18 @@ if(WMR_BUILD_AI_COREML_SD)
     target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_BUILD_AI_COREML_SD=1)
 endif()
 
+# Update check (notify-only). Runs BEFORE add_subdirectory(tests) so the tests
+# mirror block below sees the cached option.
+option(WMR_UPDATE_CHECK "Check for a newer wmr release on startup (notify-only)" ON)
+if(WMR_UPDATE_CHECK)
+    find_package(CURL REQUIRED)
+    # paths.cpp lives in the top-level SOURCES list (ungated; regen also uses
+    # it), so it is NOT listed here again (would be a duplicate-source error).
+    target_sources(${PROJECT_NAME} PRIVATE src/core/update_check.cpp)
+    target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_UPDATE_CHECK=1)
+endif()
+
 # Tests
 option(WMR_BUILD_TESTS "Build test suite" ON)
 if(WMR_BUILD_TESTS)

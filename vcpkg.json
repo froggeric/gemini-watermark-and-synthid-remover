@@ -8,6 +8,7 @@
     "cli11",
     "spdlog",
     "catch2",
+    "curl",
     { "name": "ffmpeg", "features": ["x264"] }
   ],
   "features": {
