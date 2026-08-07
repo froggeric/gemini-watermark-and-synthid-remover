@@ -348,7 +348,7 @@ void run_update_check(const fs::path& cache_path, long long interval_s,
             if (auto tag = parse_release_json(fr.body)) cd.latest_version = parse_tag(*tag);
             // else: malformed body -> keep previous latest_version
         }  // 304 or any failure: keep previous latest_version
-        if (!fr.etag.empty()) cd.etag = fr.etag;
+        if (fr.ok && (fr.http_code == 200 || fr.http_code == 304) && !fr.etag.empty()) cd.etag = fr.etag;
         cd.last_check_epoch = now;
         write_cache(cache_path, cd);
 
