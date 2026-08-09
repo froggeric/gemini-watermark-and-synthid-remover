@@ -104,3 +104,6 @@ vcpkg_installed/
 # scratch test outputs
 /test.mp4
 /smoke_out.png
+
+# Tool / skill artifacts
+.playwright-cli/
