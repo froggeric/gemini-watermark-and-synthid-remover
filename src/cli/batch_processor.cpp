@@ -82,10 +82,14 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
         auto try_remove = [&](WatermarkVariant v,
                               std::optional<WatermarkPosition> force_pos,
                               const cv::Mat* alpha_override) -> bool {
-            bool snap = force_pos.has_value() ||
+            // An explicit --rect/--geo-preset forces removal at exactly that position;
+            // do not let the snap refinement override it. Auto-geometry (and the
+            // V2-small default) still snaps to refine its approximate position.
+            const bool snap = !explicit_override && (
+                force_pos.has_value() ||
                 (v == WatermarkVariant::V2 &&
                  force_size.value_or(get_watermark_size(image.cols, image.rows))
-                     == WatermarkSize::Small);
+                     == WatermarkSize::Small));
             auto detection = engine.detect_watermark(image, force_size, force_pos,
                                                      alpha_override, v, snap);
             if (!detection.detected && !(explicit_override && force_pos.has_value())) {

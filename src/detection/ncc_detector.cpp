@@ -100,8 +100,52 @@ DetectionResult NccDetector::detect(
     // Trust the snapped offset only when correlation is strong; busy backgrounds
     // can otherwise pull the match toward content artefacts.
     if (enable_snap && spatial_score >= 0.60) {
-        pos.x = x1 + match_loc.x;
-        pos.y = y1 + match_loc.y;
+        // Content-suppressed refinement. The raw NCC peak (match_loc) can straddle two
+        // integer cells on busy content, and minMaxLoc then picks the wrong one: a 1px
+        // error that a hard-edged diamond (a near step edge at ~0.30 alpha) turns into a
+        // visible light/shadow emboss. Suppress slow content with a median filter and
+        // re-localize the mark on the prominence (integer cell). Gemini places the mark
+        // at an integer margin, so integer localization is exact here. A sub-pixel alpha
+        // shift was tried and rejected: on busy content the averaged alpha template is
+        // not an exact per-instance match, which biases the parabolic peak (~0.4px) and
+        // the shift then reintroduces the emboss. Validated: exact on a clean black-bg
+        // capture; correct integer on busy content.
+        cv::Point snap_loc = match_loc;
+        constexpr int kMedianKernel = 9;        // odd; radius = kernel/2 of median context
+        const int mr = kMedianKernel / 2;
+        const int mx1 = std::max(0, x1 - mr);
+        const int my1 = std::max(0, y1 - mr);
+        const int mx2 = std::min(image.cols, x2 + mr);
+        const int my2 = std::min(image.rows, y2 + mr);
+        if (mx2 - mx1 >= alpha_map.cols + 2 && my2 - my1 >= alpha_map.rows + 2) {
+            cv::Mat med_region = image(cv::Rect(mx1, my1, mx2 - mx1, my2 - my1));
+            cv::Mat med_gray;
+            if (med_region.channels() >= 3)
+                cv::cvtColor(med_region, med_gray, cv::COLOR_BGR2GRAY);
+            else
+                med_gray = med_region.clone();
+            cv::Mat med_bg;
+            cv::medianBlur(med_gray, med_bg, kMedianKernel);
+            cv::Mat med_gray_f, med_bg_f;
+            med_gray.convertTo(med_gray_f, CV_32F);
+            med_bg.convertTo(med_bg_f, CV_32F);
+            cv::Mat prominence = med_gray_f - med_bg_f;   // suppresses slow content
+
+            // Search restricted to the original +/-snap_pad window (in med coords).
+            const cv::Mat prom_search = prominence(cv::Rect(x1 - mx1, y1 - my1,
+                                                            x2 - x1, y2 - y1));
+            if (prom_search.cols >= alpha_map.cols && prom_search.rows >= alpha_map.rows) {
+                cv::Mat hp_match;
+                cv::matchTemplate(prom_search, alpha_map, hp_match, cv::TM_CCOEFF_NORMED);
+                if (!hp_match.empty()) {
+                    cv::Point hp_loc;
+                    cv::minMaxLoc(hp_match, nullptr, nullptr, nullptr, &hp_loc);
+                    snap_loc = cv::Point(x1 + hp_loc.x, y1 + hp_loc.y);
+                }
+            }
+        }
+        pos.x = snap_loc.x;
+        pos.y = snap_loc.y;
         result.region = cv::Rect(pos.x, pos.y, alpha_map.cols, alpha_map.rows);
     }
 
