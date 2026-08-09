@@ -132,7 +132,11 @@ static int process_detect(const CliOptions& opts) {
             const bool is_v2 = (v == WatermarkVariant::V2);
             const std::optional<WatermarkPosition> fp = is_v2 ? resolved.pos : std::nullopt;
             const cv::Mat* alpha_ov = is_v2 ? resolved.alpha : nullptr;
-            const bool snap = fp.has_value() || (is_v2 && sz == WatermarkSize::Small);
+            // An explicit --rect/--geo-preset forces the reported position; do not
+            // let the snap refinement override it (consistent with the remove path).
+            const bool explicit_ov = gov.rect.has_value() || gov.preset.has_value();
+            const bool snap = !explicit_ov && (
+                fp.has_value() || (is_v2 && sz == WatermarkSize::Small));
             auto result = engine.detect_watermark(image, std::nullopt, fp,
                                                   alpha_ov, v, snap);
             const char* tag = (v == WatermarkVariant::V1) ? "[VISIBLE V1]" : "[VISIBLE V2]";
@@ -203,10 +207,14 @@ static int process_single_image(const CliOptions& opts) {
         auto try_remove = [&](WatermarkVariant v,
                               std::optional<WatermarkPosition> force_pos,
                               const cv::Mat* alpha_override) -> bool {
-            bool snap = force_pos.has_value() ||
+            // An explicit --rect/--geo-preset forces removal at exactly that position;
+            // do not let the snap refinement override it. Auto-geometry (and the
+            // V2-small default) still snaps to refine its approximate position.
+            const bool snap = !explicit_override && (
+                force_pos.has_value() ||
                 (v == WatermarkVariant::V2 &&
                  force_size.value_or(get_watermark_size(image.cols, image.rows))
-                     == WatermarkSize::Small);
+                     == WatermarkSize::Small));
             auto detection = engine.detect_watermark(image, force_size, force_pos,
                                                      alpha_override, v, snap);
             if (!detection.detected) {

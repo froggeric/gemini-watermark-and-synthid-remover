@@ -202,6 +202,32 @@ TEST_CASE("V2 small detection uses 36x36 alpha + snap", "[v2]") {
     REQUIRE(det.region.height == 36);
 }
 
+TEST_CASE("V2 small snap recovers the exact mark position on busy content", "[v2]") {
+    // Regression for the 1px position drift that left a faint light/shadow emboss after
+    // diamond removal. On busy content the raw NCC peak straddles two integer cells and
+    // minMaxLoc picks the wrong one; the snap's content-suppressed re-localization must
+    // recover the true cell. We forward-blend the 48px mark at a known position, start
+    // the snap 1px off (as the geometry search can on busy content), and require the
+    // detected region to land exactly on the true top-left.
+    cv::Mat original = textured(928, 1152, cv::Scalar(50, 70, 110));
+    cv::Mat watermarked = original.clone();
+
+    WatermarkEngine engine;
+    const cv::Point true_pos(784, 1008);   // 96px bottom-right margin on 928x1152
+    const cv::Mat& alpha = engine.get_v2_diamond_alpha_48_still();
+    REQUIRE(alpha.cols == 48);
+    add_watermark_alpha_blend(watermarked, alpha, true_pos, 255.0f);
+
+    // Start the search 1px low (margin_bottom 95 instead of 96 -> pos (784,1009)).
+    const WatermarkPosition start{96, 95, 48};
+    auto det = engine.detect_watermark(watermarked, WatermarkSize::Small, start, &alpha,
+                                       WatermarkVariant::V2, /*enable_snap=*/true);
+    CAPTURE(det.spatial_score, det.confidence, det.region.x, det.region.y);
+    REQUIRE(det.detected);
+    CHECK(det.region.x == true_pos.x);
+    CHECK(det.region.y == true_pos.y);   // must snap up to 1008, not stay at 1009
+}
+
 TEST_CASE("V1 legacy path still works via default detect", "[v2]") {
     cv::Mat original = textured(1024, 1024, cv::Scalar(70, 80, 90));
     cv::Mat watermarked = original.clone();

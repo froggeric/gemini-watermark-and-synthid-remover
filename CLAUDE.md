@@ -164,10 +164,18 @@ for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
   dark-on-bright mark the geometry search localizes can still be rejected by the
   downstream fusion. Bright marks (the common case) confirm; inverted marks fall
   back to `--rect`/`--geo-preset`.
-- **Snap generalization:** `enable_snap` was `V2 && Small` only; it is now
-  `force_position.has_value() || (V2 && Small)`, updated at the two CLI sites
-  (`process_single_image`'s `try_remove`, `process_detect`'s `report`) and mirrored
-  in the batch path. `remove_watermark` (`--force`) is unchanged (no force_position).
+- **Snap generalization + content-suppressed refinement:** `enable_snap` is
+  `!explicit_override && (force_position.has_value() || (V2 && Small))` at the three
+  CLI sites (`process_single_image`'s `try_remove`, `process_detect`'s `report`, the
+  batch path). An explicit `--rect`/`--geo-preset` DISABLES the snap (1.16.8): the snap
+  was overriding the user's forced position, so `--rect` was silently ignored. When the
+  snap fires (spatial NCC >= 0.60) it re-localizes on a median-background-subtracted
+  prominence (kernel 9), not the raw image: on busy content the raw NCC peak straddles
+  two integer cells and minMaxLoc picks the wrong one, and the hard diamond edge (a
+  ~0.30 plateau, ~1px boundary) turns a 1px error into a visible light/shadow emboss.
+  Integer localization only (Gemini places marks at integer margins); a sub-pixel alpha
+  shift was tried and reverted (it biased ~0.4px on busy content and reintroduced the
+  emboss). `remove_watermark` (`--force`) is unchanged (no force_position, no snap).
 - **Follow-up:** recalibrate `v2_small_config_from_dims` (or grow the preset table)
   once more 3.6 resolutions are measured, so the model fallback is accurate too.
 
@@ -332,7 +340,7 @@ CLI11 subcommands in src/cli/: `remove` (default), `synthid`, `detect`, `video`,
   the median of deviations from the median is 0). Derive from one half of the frames, test
   on the other, and prefer dark/smooth-background frames, since bg-estimation noise can
   mask small alpha differences.
-- Still-image watermark geometry is profile-aware (`WatermarkVariant::V1`/`V2`, default V2 with auto V2→V1 fallback; `--legacy` pins V1): V1 (legacy, pre-3.5) → 48×48 if either dim ≤ 1024 else 96×96, margins {32,32}/{64,64}; V2 (Gemini 3.5+) → large 96×96 @192px, small 36×36 with aspect-aware margin (`v2_small_config_from_dims`) + ±3px NCC snap (trusted iff spatial NCC ≥ 0.60). `WatermarkSize` (Small/Large) is a size class, not a pixel count (V2 Small = 36px alpha). Still `WatermarkVariant` is distinct from video `VideoVariant`.
+- Still-image watermark geometry is profile-aware (`WatermarkVariant::V1`/`V2`, default V2 with auto V2→V1 fallback; `--legacy` pins V1): V1 (legacy, pre-3.5) → 48×48 if either dim ≤ 1024 else 96×96, margins {32,32}/{64,64}; V2 (Gemini 3.5+) → large 96×96 @192px, small 36×36 with aspect-aware margin (`v2_small_config_from_dims`) + ±3px NCC snap (trusted iff spatial NCC ≥ 0.60; since 1.16.8 it re-localizes on a median-background-subtracted prominence to land on the exact pixel, and an explicit `--rect`/`--geo-preset` disables it). `WatermarkSize` (Small/Large) is a size class, not a pixel count (V2 Small = 36px alpha). Still `WatermarkVariant` is distinct from video `VideoVariant`.
 - Video encoding defaults: libx264, CRF 14, High profile, slow preset
 - Test executable re-compiles library sources but does NOT link the main binary / `cli_app.cpp` (it is not in `tests/CMakeLists.txt`). So `run_cli`, CLI dispatch, and control-flow changes are NOT covered by `ctest` — verify with manual invocations (`wmr --version`, `wmr` no-args, `wmr <subcmd> <fixture>`, a bad flag). New library sources go in both `CMakeLists.txt` and `tests/CMakeLists.txt`.
 - Feature-gated sources go in a `target_sources(wmr_tests PRIVATE ...)` mirror block under `if(WMR_BUILD_<FEATURE>)` (mirror `WMR_BUILD_AI_DENOISE`), NOT the top `TEST_SOURCES`/`LIB_SOURCES` lists (`wmr_tests` is already created, so list mutation is a no-op). An ungated source shared by a feature and the tests (e.g. `src/core/paths.cpp`) goes in the top-level `SOURCES` AND the test `LIB_SOURCES`, and must NOT be re-listed in a feature mirror block (duplicate-source error when two features are ON).
