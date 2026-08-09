@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 _Nothing yet._
 
+## [1.16.8] - 2026-08-09
+
+### Fixes
+
+- **Still-image diamond removal no longer leaves a faint "emboss" outline.** On busy content the position search could land one pixel off the true mark, and because the Gemini diamond is a near step edge (a flat ~0.30 alpha plateau with a ~1px boundary), that single pixel showed up as a light/shadow ridge along the diamond after removal. The snap refinement now suppresses the background with a median filter and re-localizes the mark on the prominence, so it lands on the exact pixel. Removal is back to the exact reverse alpha-blend. Video was unaffected: it already aggregates about 12 frames and runs the edge cleanup.
+- **`--rect` (and `--geo-preset`) on `remove` is no longer silently overridden.** An explicit rect forced detection, but the snap refinement then moved the position back to its own guess, so the rect had no effect. Explicit geometry now disables the snap and removes exactly where you said.
+
 ## [1.16.7] - 2026-08-09
 
 ### SynthID regen (macOS): wmr now manages its CoreML execution cache

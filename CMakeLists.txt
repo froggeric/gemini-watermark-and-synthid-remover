@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(wmr VERSION 1.16.7 LANGUAGES CXX)
+project(wmr VERSION 1.16.8 LANGUAGES CXX)
 
 # Objective-C++ is needed for the macOS-only .mm sources (MI-GAN CoreML, CoreML SDXL).
 # Enable it once, up front, only on Apple so Linux/Windows never try to locate an
