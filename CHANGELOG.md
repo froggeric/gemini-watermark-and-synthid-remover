@@ -8,6 +8,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 _Nothing yet._
 
+## [1.16.7] - 2026-08-09
+
+### SynthID regen (macOS): wmr now manages its CoreML execution cache
+
+- **wmr now auto-manages its CoreML execution cache on macOS so it can no longer balloon.** CoreML's app-scoped compiled-Metal cache (`~/Library/Caches/wmr/com.apple.e5rt.e5bundlecache/`) has no eviction and was observed accumulating to ~138 GB across model re-pins, wmr upgrades, and macOS upgrades (it also produced stale-entry warnings: `The file "manifest.plist" couldn't be opened`, `Unable to load MPSGraphExecutable`). At CoreML init, wmr now clears it when stale (the wmr version, the model pin, or the macOS version changed since the last clear, tracked via a sidecar) or when it exceeds a size threshold (~6 GB, checked with an early-exit walk that stops at the threshold), then lets CoreML recompile (one-time ~30s). Only the app-scoped cache is touched; the shared `~/Library/Caches/CoreML` and the model `.mlpackage` files are never touched. Linux and Windows are unaffected.
+- **New `wmr cache --clear-coreml` subcommand** clears the CoreML execution cache on demand and exits (reclaims disk; clears after an event the auto-check might miss).
+
+## [1.16.6] - 2026-08-08
+
+### Breaking
+
+- **Removed the `visible` subcommand.** It was functionally identical to `remove` without `--synthid-attack`: both detect and remove the visible watermark through the same pipeline, and `visible` only differed by not exposing the SynthID option, which is already opt-in on `remove`. Use **`wmr remove`** (the default) instead; it is a drop-in replacement. The visible-removal pipeline itself is unchanged and still covered by `tests/integration/visible_pipeline_test.cpp` (which exercises the engine directly).
+
+### SynthID regen: detail-restoration (higher fidelity, luminance-gated, best-effort)
+
+- **New: optional detail-restoration on the regen output** recovers much of the fidelity SDXL regen loses, without reintroducing a detectable SynthID watermark on the content where it is safe. After regen produces `R`, the top-5%-magnitude pixels of the diff `O - R` are restored onto `R` after a characterized-carrier Wiener filter suppresses the watermark component in the low-mid band. On normal-content images this sharpens faces and foliage out of the uncanny valley (several dB PSNR) and still clears Google's "Verify with SynthID"; on dim images it cannot, so it is gated off there automatically.
+- **Automatic by default, luminance-gated.** The tool measures mean luminance: bright images (>= 128) get the restoration; dim images (< 128) get full regen (no restoration). A 10-image clearance study found mean luminance cleanly predicts whether restoration stays clear (10/10, monotone): the SynthID carrier is an additive perturbation whose signal-to-content ratio scales ~1/luminance, so it stays detectable on dim images once the carrier-bearing pixels are restored. Override with `--regen-restore-detail` (force restoration) or `--no-regen-restore-detail` (force full regen, guaranteed removal).
+- **Best-effort, not a guarantee.** There is no in-process SynthID verifier, so success cannot be confirmed in-process, and the luminance gate is empirical (10 images; small sample). Detail-restoration *dilutes* the watermark on the restored pixels (below the detector's aggregate threshold); it does not remove it. Use `--no-regen-restore-detail` when you need guaranteed removal.
+- See `docs/research/synthid-diff-restoration-analysis.md` for the full investigation, the attenuation dose-response, the 10-image study, and the design.
+
+### Progress UX (perception-grounded feedback for long operations)
+
+- **New progress feedback across regen, video, and batch**, designed around how people perceive waiting: a stage frame (`[1/4]`...`[4/4]`) so you always know what is happening and what is next; per-tile / per-frame progress with count, rate, backend, and an honest ETA (rolling average, hidden until enough samples, never a misleading early guess); one-time costs (first-run model download, first CoreML compile) labeled as one-time so they do not read as stalls; bytes/rate on downloads; and elapsed time + tile count + backend on completion.
+- **TTY-aware**: a refreshing progress bar on an interactive terminal; clean append-only milestone lines when piped (CI logs stay linear and greppable). Auto-detected; `--no-progress` suppresses it. Progress writes to stderr, so `wmr ... > /dev/null` still shows it and stdout stays clean.
+- Example (regen, terminal): `[3/4] Regenerating  tile 5/12  coreml-gpu  4.1s/tile  0.24 tile/s  ETA 29s`.
+- See `docs/research/cli-progress-ux-design.md` for the design (perception principles + the per-operation spec).
+
+### Fixes
+
+- **Fixed a shallow-copy buffer corruption in the multi-tile regen path** (`regenerator.cpp`) that silently overwrote the pre-regen original with the regen output before the detail-restoration pass, making restoration a no-op on images larger than 1024px. Caught by an end-to-end diff against the validated reference (the unit tests missed it, since they used separate buffers). One-line fix (`.clone()`); the shipped restore output is now bit-exact to the validated Python reference.
+
+## [1.16.5] - 2026-08-07
+
+### SynthID regen: bounded the model-fetch download against network stalls
+
+- **Fixed an indefinite hang in the regen model-fetch downloader.** When a re-pinned CoreML UNet (or any regen model) triggered a re-download, `download_pinned_file` (`src/core/model_downloader.cpp`) could block forever if the TLS handshake or the byte transfer stalled: it set no `CURLOPT_CONNECTTIMEOUT` and no `CURLOPT_LOW_SPEED_LIMIT`/`CURLOPT_LOW_SPEED_TIME`, so a stalled CDN connection sat in libcurl's `multi_wait` with no timeout (observed: 24+ min at ~4% CPU before a manual kill, blocked in `poly1305_blocks` TLS decryption). External connectivity was fine (`curl -m 10` to the same URL returned 200), so this was purely the missing per-transfer ceiling. The downloader is the only network call the regen path makes.
+- **The fix.** The downloader now sets a 30 s connect/handshake ceiling (`CURLOPT_CONNECTTIMEOUT`) and aborts once the average rate drops under ~1 KB/s for 60 s (`CURLOPT_LOW_SPEED_LIMIT` + `CURLOPT_LOW_SPEED_TIME`), the standard curl stall-detection pair. No absolute `CURLOPT_TIMEOUT` is set, so legitimate slow transfers of the ~5 GB UNet are not killed; even a slow CDN ramp-up stays well above 1 KB/s. Each of the 2 retry attempts is bounded by the same timeouts, and a `spdlog::warn` line now logs the curl rc and HTTP code on each failed attempt. Verified end-to-end against a non-routable blackhole IP (fails at exactly 30 s) and a local connect-then-stall HTTP server (fails at exactly 60 s), both via the real `download_pinned_file` code path. The same downloader is shared by the CPU sdcpp regen path, so cross-platform regen downloads get the same bound.
+
 ## [1.16.4] - 2026-08-07
 
 ### Update check (notify-only, default ON)

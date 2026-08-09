@@ -1,8 +1,15 @@
 #include "cli/cli_app.hpp"
 #include "cli/batch_processor.hpp"
+#include "cli/progress.hpp"
 #include "core/watermark_engine.hpp"
 #include "core/types.hpp"
 #include "core/update_check.hpp"
+#ifdef WMR_BUILD_REGEN
+#include "core/regenerator.hpp"  // last_regen_run_stats() for the SynthID recap
+#endif
+#if defined(WMR_BUILD_AI_COREML_SD) && defined(__APPLE__)
+#include "core/coreml_cache.hpp"  // clear_coreml_execution_cache (the cache subcommand)
+#endif
 #include "video/video_processor.hpp"
 
 #include <opencv2/imgcodecs.hpp>
@@ -31,7 +38,7 @@ void print_header(std::ostream& os) {
         << "  Remove SynthID invisible watermarks via lossy regen (no detection; validated vs Google's SynthID verifier).\n"
         << "  --synthid-attack regen is lossy (SDXL img2img; ~6.5 GB model + ~335 MB VAE download on first use).\n"
         << "  https://github.com/froggeric/gemini-watermark-and-synthid-remover\n"
-        << "  Copyright 2026 Frederic Guigand\n"
+        << "  Copyright 2026 Frédéric Guigand\n"
         << wmr::kHeaderRule << "\n\n";
 }
 } // namespace
@@ -163,7 +170,7 @@ static int process_single_image(const CliOptions& opts) {
     bool did_work = false;
 
     // Visible watermark removal
-    if (opts.mode == CliMode::AutoRemove || opts.mode == CliMode::VisibleOnly) {
+    if (opts.mode == CliMode::AutoRemove) {
         WatermarkEngine engine;
         std::optional<WatermarkSize> force_size;
         if (opts.force_small) force_size = WatermarkSize::Small;
@@ -208,9 +215,12 @@ static int process_single_image(const CliOptions& opts) {
                              "(confidence {:.1f}% below the detection gate)",
                              detection.confidence * 100.0f);
             } else {
-                spdlog::info("Visible watermark detected ({:.1f}%, {}), removing...",
+                // S2: surface auto-geometry's decision (position + matched size)
+                // so the user can see what was resolved.
+                spdlog::info("Visible watermark detected ({:.1f}%, {}) at ({},{}) size={}, removing...",
                              detection.confidence * 100.0f,
-                             v == WatermarkVariant::V1 ? "V1" : "V2");
+                             v == WatermarkVariant::V1 ? "V1" : "V2",
+                             detection.region.x, detection.region.y, detection.region.width);
             }
             const cv::Mat& alpha = alpha_override ? *alpha_override
                                                   : engine.get_still_alpha(detection.size, v);
@@ -285,6 +295,12 @@ static int process_single_image(const CliOptions& opts) {
             ic.regen_model_path     = opts.regen_model_path;
             ic.regen_vae_path       = opts.regen_vae_path;
             ic.regen_backend        = opts.regen_backend;
+            // Resolve the detail-restoration mode (default Auto: bright >=128 -> restore,
+            // dim -> full regen). --regen-restore-detail forces On; --no- forces Off;
+            // neither is Auto. Both at once is rejected below (the mutex check).
+            ic.regen_restore.mode = opts.regen_restore_detail   ? RestoreMode::On
+                                  : opts.no_regen_restore_detail ? RestoreMode::Off
+                                                                  : RestoreMode::Auto;
             DetectionResult dr{};  // regen ignores visible-mark detection (whole-image scrub)
             dr.detected = false;
             dr.confidence = 0.0f;
@@ -297,7 +313,37 @@ static int process_single_image(const CliOptions& opts) {
                 spdlog::warn("SynthID regen did not complete (no model/backend, or it failed); output is unchanged.");
                 return 1;
             }
-            spdlog::info("SynthID regen complete (lossy; verify via Google's SynthID tool if you need to confirm)");
+            // Recap line: elapsed + tile count + backend. The stats come from the
+            // regenerator singleton (written at the end of regen()); the honesty
+            // caveat is unchanged.
+            const auto stats = wmr::last_regen_run_stats();
+            // Clean duration string for the recap (seconds / m+s / h+m), never the
+            // "<10s"/"--" progress-ETA forms.
+            auto recap_dur = [](double s) -> std::string {
+                if (s <= 0.0) return "";
+                int total = static_cast<int>(s + 0.5);
+                if (total < 60) return fmt::format("{}s", total);
+                if (total < 3600) return fmt::format("{}m{}s", total / 60, total % 60);
+                return fmt::format("{}h{}m", total / 3600, (total % 3600) / 60);
+            };
+            std::string recap = "SynthID regen complete";
+            std::string paren;
+            if (stats.tiles > 0) {
+                paren = fmt::format("{} tile{}, {}", stats.tiles,
+                                    stats.tiles == 1 ? "" : "s", stats.backend);
+            } else if (!stats.backend.empty()) {
+                paren = stats.backend;
+            }
+            std::string dur = recap_dur(stats.elapsed_seconds);
+            if (!dur.empty() && !paren.empty()) {
+                recap += fmt::format(" in {} ({})", dur, paren);
+            } else if (!dur.empty()) {
+                recap += fmt::format(" in {}", dur);
+            } else if (!paren.empty()) {
+                recap += fmt::format(" ({})", paren);
+            }
+            spdlog::info("{} (lossy; verify via Google's SynthID tool if you need to confirm)",
+                         recap);
             did_work = true;
 #else
             spdlog::error("--synthid-attack regen: this wmr build is regen-free (WMR_BUILD_REGEN off). "
@@ -418,6 +464,37 @@ static int process_video(const CliOptions& opts) {
     return result.success ? 0 : 1;
 }
 
+// `wmr cache` — manage wmr's local caches. Today only `--clear-coreml` (macOS):
+// remove_all the app-scoped e5bundlecache so CoreML recompiles fresh on the next
+// regen. The shared ~/Library/Caches/CoreML is NEVER touched. On Linux/Windows
+// (or a CoreML-SD-OFF build) the flag is accepted but logs a no-op message and
+// exits 0, so help text stays cross-platform consistent.
+static int process_cache(const CliOptions& opts) {
+    if (!opts.cache_clear_coreml) {
+        // No flag: surface the available cache ops. (Today only one.)
+        spdlog::info("wmr cache manages wmr's local caches. "
+                     "Available: --clear-coreml (macOS).");
+        return 0;
+    }
+#if defined(WMR_BUILD_AI_COREML_SD) && defined(__APPLE__)
+    std::filesystem::path cache_dir = wmr::coreml_app_cache_dir();
+    std::filesystem::path e5 = cache_dir / "com.apple.e5rt.e5bundlecache";
+    bool ok = wmr::clear_coreml_execution_cache(cache_dir);
+    if (ok) {
+        spdlog::info("Cleared the CoreML execution cache ({}).", e5.string());
+        spdlog::info("CoreML will recompile on the next regen (one-time, ~30s).");
+        return 0;
+    }
+    // A clear failure is non-fatal (warns were already emitted by the removal
+    // helper). Do not block the user; surface the partial result.
+    spdlog::warn("CoreML execution cache clear was partial (see warnings above).");
+    return 0;
+#else
+    spdlog::info("No CoreML execution cache on this platform (macOS only).");
+    return 0;
+#endif
+}
+
 int run_cli(int argc, char* argv[]) {
     CLI::App app{"", APP_NAME};
     app.set_version_flag("-V,--version",
@@ -436,6 +513,8 @@ int run_cli(int argc, char* argv[]) {
     // Common options shared across subcommands
     auto add_common = [&](CLI::App* cmd) {
         cmd->add_flag("-v,--verbose", opts.verbose, "Verbose output");
+        cmd->add_flag("--no-progress", opts.no_progress,
+                      "Suppress progress output (errors + final summary only)");
         cmd->add_flag("--no-update-check", opts.no_update_check,
                       "Skip the startup update check (also WMR_NO_UPDATE_CHECK=1)");
     };
@@ -521,6 +600,15 @@ int run_cli(int argc, char* argv[]) {
                         "(Apple Silicon native CoreML SDXL; opt-in only).")
             ->capture_default_str()
             ->check(CLI::IsMember({"auto", "cpu", "metal", "vulkan", "coreml"}));
+        cmd->add_flag("--regen-restore-detail", opts.regen_restore_detail,
+                      "regen: restore detail lost to regen (top-5% diff slice + carrier "
+                      "Wiener attenuation) to recover fidelity on bright images. FORCES "
+                      "restoration on dim content too (user accepts the risk; verify via "
+                      "Google's SynthID tool). Mutually exclusive with --no-regen-restore-detail.");
+        cmd->add_flag("--no-regen-restore-detail", opts.no_regen_restore_detail,
+                      "regen: never restore detail; guaranteed full SynthID removal "
+                      "(the safe path on dim content). Mutually exclusive with "
+                      "--regen-restore-detail.");
         return atk;
     };
 
@@ -558,26 +646,6 @@ int run_cli(int argc, char* argv[]) {
                          "Report only the current (Gemini 3.5+) V2 profile");
     add_still_geometry(detect_cmd);
     add_common(detect_cmd);
-
-    // --- visible ---
-    auto* visible_cmd = app.add_subcommand("visible", "Remove visible watermark only");
-    visible_cmd->add_option("input", opts.input_path, "Input image")
-        ->required()
-        ->check(CLI::ExistingFile);
-    visible_cmd->add_flag("-f,--force", opts.force, "Skip detection");
-    visible_cmd->add_flag("--force-small", opts.force_small, "Force 48x48");
-    visible_cmd->add_flag("--force-large", opts.force_large, "Force 96x96");
-    visible_cmd->add_flag("--legacy", opts.still_legacy,
-                          "Use legacy Gemini (pre-3.5) V1 watermark profile");
-    visible_cmd->add_flag("--no-legacy", opts.still_no_legacy,
-                          "Pin current (Gemini 3.5+) V2 profile; disable auto fallback");
-    visible_cmd->add_option("--inpaint-strength", opts.inpaint_strength,
-                            "Inpaint strength 0.0-1.0")
-        ->check(CLI::Range(0.0f, 1.0f));
-    add_denoise(visible_cmd);
-    visible_cmd->add_option("-o,--output", opts.output_path, "Output path (required)");
-    add_still_geometry(visible_cmd);
-    add_common(visible_cmd);
 
     // --- synthid ---
     // The synthid subcommand's whole purpose is the SynthID scrub, so regen runs
@@ -634,6 +702,18 @@ int run_cli(int argc, char* argv[]) {
         ->check(CLI::Range(0.0f, 1.0f));
     add_common(video_cmd);
 
+    // --- cache ---
+    // Manages wmr's local caches. Today only --clear-coreml (macOS): clears the
+    // app-scoped e5bundlecache so CoreML recompiles fresh on the next regen.
+    auto* cache_cmd = app.add_subcommand("cache", "Manage wmr's local caches");
+    cache_cmd->add_flag("--clear-coreml", opts.cache_clear_coreml,
+                        "Clear wmr's app-scoped CoreML execution cache "
+                        "(~/Library/Caches/wmr/com.apple.e5rt.e5bundlecache/ on macOS). "
+                        "CoreML recompiles on the next regen (one-time, ~30s). "
+                        "Does NOT touch ~/Library/Caches/CoreML or the model .mlpackage files. "
+                        "No-op on Linux/Windows.");
+    add_common(cache_cmd);
+
     // Default subcommand: if no subcommand given, treat as positional for backward compat
     app.require_subcommand(0, 1);
 
@@ -657,12 +737,21 @@ int run_cli(int argc, char* argv[]) {
         spdlog::set_level(spdlog::level::info);
     }
 
+    // Master switch for the progress UX. Applied once, before any subcommand
+    // dispatch, so every reporter constructed below (download / load / tile /
+    // frame / batch) honors it. Errors + final summary always print regardless.
+    wmr::set_progress_enabled(!opts.no_progress);
+
     if (opts.force_small && opts.force_large) {
         spdlog::error("Cannot use both --force-small and --force-large");
         return 1;
     }
     if (opts.still_legacy && opts.still_no_legacy) {
         spdlog::error("Cannot use both --legacy and --no-legacy");
+        return 2;
+    }
+    if (opts.regen_restore_detail && opts.no_regen_restore_detail) {
+        spdlog::error("Cannot use both --regen-restore-detail and --no-regen-restore-detail");
         return 2;
     }
 
@@ -674,12 +763,12 @@ int run_cli(int argc, char* argv[]) {
     // Determine mode from subcommand
     if (detect_cmd->parsed()) {
         opts.mode = CliMode::Detect;
-    } else if (visible_cmd->parsed()) {
-        opts.mode = CliMode::VisibleOnly;
     } else if (synthid_cmd->parsed()) {
         opts.mode = CliMode::SynthidOnly;
     } else if (video_cmd->parsed()) {
         opts.mode = CliMode::Video;
+    } else if (cache_cmd->parsed()) {
+        opts.mode = CliMode::Cache;
     } else {
         opts.mode = CliMode::AutoRemove;
     }
@@ -695,8 +784,11 @@ int run_cli(int argc, char* argv[]) {
                 rc = process_video(opts);
                 break;
 
+            case CliMode::Cache:
+                rc = process_cache(opts);
+                break;
+
             case CliMode::AutoRemove:
-            case CliMode::VisibleOnly:
             case CliMode::SynthidOnly: {
                 // Check if input is a directory → batch mode
                 if (std::filesystem::is_directory(opts.input_path)) {

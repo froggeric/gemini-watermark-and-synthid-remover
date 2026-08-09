@@ -46,7 +46,7 @@ bool extract_tar_gz(const fs::path& archive, const fs::path& target_dir) {
     // Build tar command: tar -xzf <archive> -C <target_dir>
     std::string cmd = "tar -xzf \"" + archive.string() + "\" -C \"" + target_dir.string() + "\"";
 
-    spdlog::info("regen: extracting {} to {}", archive.filename().string(), target_dir.string());
+    spdlog::debug("regen: extracting {} to {}", archive.filename().string(), target_dir.string());
 
 #ifdef _WIN32
     // Use Windows-specific command
@@ -153,6 +153,12 @@ bool ensure_coreml_models(const fs::path& models_dir, bool allow_download) {
     };
     return ensure_coreml_model_files(models_dir, kFiles, allow_download, kHfRepoUrl);
 }
+
+// Thin accessors over the file-local pins so other TUs can re-derive the same
+// key set without the constants needing external linkage.
+const char* coreml_unet_sha256() { return kSha256Unet; }
+const char* coreml_vae_encoder_sha256() { return kSha256VaeEncoder; }
+const char* coreml_vae_decoder_sha256() { return kSha256VaeDecoder; }
 
 }  // namespace wmr
 #endif

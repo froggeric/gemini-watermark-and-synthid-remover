@@ -20,9 +20,9 @@ inline constexpr std::string_view kHeaderRule =
 enum class CliMode {
     AutoRemove,
     Detect,
-    VisibleOnly,
     SynthidOnly,
     Video,
+    Cache,
 };
 
 struct CliOptions {
@@ -33,6 +33,7 @@ struct CliOptions {
     bool force_small = false;
     bool force_large = false;
     bool verbose = false;
+    bool no_progress = false;       // --no-progress (suppress the progress UX; errors + summary only)
     bool no_update_check = false;   // --no-update-check (skip the startup update check)
     bool detect_only = false;
     float inpaint_strength = 0.85f;
@@ -63,6 +64,9 @@ struct CliOptions {
     float denoise_strength_pct = 120.0f; // --strength 0-300 (percent; /100 internally)
     int denoise_radius = 10;            // --radius 1-25
 
+    // `cache` subcommand: clear wmr's local caches. Today only CoreML on macOS.
+    bool cache_clear_coreml = false;
+
     // SynthID attack selection. The spectral detector/suppressor was removed in
     // 1.16.0 (it did not work; see docs/research/synthid-spectral-removal-record.md),
     // so "regen" (lossy SDXL img2img) is the only method and the default for the
@@ -82,6 +86,14 @@ struct CliOptions {
     std::string regen_model_path;
     std::string regen_vae_path;
     std::string regen_backend = "auto";   // auto|cpu|metal|vulkan (auto->CPU on Apple Silicon)
+    // Post-regen detail restoration toggles. Default is Auto (luminance-gated):
+    //   neither flag             -> Auto (bright >=128 -> restore; dim -> full regen)
+    //   --regen-restore-detail   -> On  (force restore)
+    //   --no-regen-restore-detail-> Off (force full regen, the guaranteed-removal path)
+    // Both flags at once is rejected post-parse (a "third state" default makes the
+    // mutex unlike the binary --legacy/--no-legacy pair).
+    bool regen_restore_detail = false;
+    bool no_regen_restore_detail = false;
 };
 
 // Resolve the still-image profile variant from CLI flags.

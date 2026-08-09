@@ -1,12 +1,16 @@
 #include "cli/batch_processor.hpp"
+#include "cli/progress.hpp"
 #include "core/watermark_engine.hpp"
 #include "core/types.hpp"
 
 #include <opencv2/imgcodecs.hpp>
 #include <spdlog/spdlog.h>
+#include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <vector>
 #include <algorithm>
+#include <fmt/format.h>
 
 namespace fs = std::filesystem;
 
@@ -43,13 +47,13 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
     cv::Mat image = cv::imread(input.string(), cv::IMREAD_COLOR);
     if (image.empty()) {
         spdlog::error("Failed to load: {}", input.filename().string());
-        return 1;
+        return 2;  // load failure -> batch counts as skipped (distinct from a processing failure)
     }
 
     WatermarkEngine engine;
 
     // Visible watermark processing
-    if (opts.mode == CliMode::AutoRemove || opts.mode == CliMode::VisibleOnly) {
+    if (opts.mode == CliMode::AutoRemove) {
         std::optional<WatermarkSize> force_size;
         if (opts.force_small) force_size = WatermarkSize::Small;
         else if (opts.force_large) force_size = WatermarkSize::Large;
@@ -135,6 +139,9 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
             ic.regen_model_path     = opts.regen_model_path;
             ic.regen_vae_path       = opts.regen_vae_path;
             ic.regen_backend        = opts.regen_backend;
+            ic.regen_restore.mode   = opts.regen_restore_detail   ? RestoreMode::On
+                                      : opts.no_regen_restore_detail ? RestoreMode::Off
+                                                                     : RestoreMode::Auto;
             DetectionResult dr{};  // regen ignores visible-mark detection
             bool ok = engine.remove_watermark_detected(image, dr, ic);
             if (!ok) {
@@ -201,7 +208,7 @@ BatchResult batch_process(const CliOptions& opts, const ProgressCallback& progre
 
     // Validate the still geometry override once (--rect), so a malformed value fails
     // the whole batch with a single error rather than one per file.
-    if (opts.mode == CliMode::AutoRemove || opts.mode == CliMode::VisibleOnly) {
+    if (opts.mode == CliMode::AutoRemove) {
         StillGeometryOverride gov;
         if (!resolve_still_geometry_override(opts, gov)) {
             return result;  // error already logged
@@ -210,29 +217,63 @@ BatchResult batch_process(const CliOptions& opts, const ProgressCallback& progre
 
     spdlog::info("Processing {} images...", result.total);
 
+    // B1: progress-stream header naming the output dir, gated on --no-progress so
+    // it only appears with the rest of the progress UX. (The reporter itself is a
+    // no-op when progress is disabled, so the header must be gated to match.)
+    if (progress_enabled()) {
+        std::string out_dir = opts.output_path.empty()
+            ? (opts.input_path + "/cleaned")
+            : opts.output_path;
+        std::fprintf(stderr, "Batch: %d image%s -> %s\n",
+                     result.total, result.total == 1 ? "" : "s", out_dir.c_str());
+        std::fflush(stderr);
+    }
+
+    // Live batch progress (stderr). The per-image index line that used to go to
+    // stdout is replaced by the reporter's extra (filename + per-item time); the
+    // per-image "saved -> path" line from process_single still goes to stdout.
+    // B1: unit "img" -> rate renders as "img/s" (was "image/s").
+    ProgressReporter batch_rep("  batch", result.total, "img");
+
     for (int i = 0; i < result.total; ++i) {
         const auto& file = files[i];
-        spdlog::info("[{}/{}] {}", i + 1, result.total, file.filename().string());
 
         if (progress) {
             progress(i + 1, result.total, file.filename().string());
         }
 
+        int rc = 1;
+        auto t_item_start = std::chrono::steady_clock::now();
         try {
-            int rc = process_single(file, opts);
-            if (rc == 0) {
-                ++result.succeeded;
-            } else {
-                ++result.failed;
-            }
+            rc = process_single(file, opts);
         } catch (const std::exception& e) {
             spdlog::error("  Error: {}", e.what());
-            ++result.failed;
+            rc = 1;
         }
-    }
+        double item_sec = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - t_item_start).count();
 
-    spdlog::info("Batch complete: {} ok, {} failed, {} skipped of {} total",
-                 result.succeeded, result.failed, result.skipped, result.total);
+        // B2: rc==2 = load failure (skipped), rc==0 = ok, else failed.
+        if (rc == 0) ++result.succeeded;
+        else if (rc == 2) ++result.skipped;
+        else ++result.failed;
+
+        // B1: per-item time in the extra field, e.g. "a.png (1.2s)". C3 moves
+        // extra before the bar so the filename leads the line.
+        batch_rep.update(i + 1,
+                         fmt::format("{} ({:.1f}s)", file.filename().string(), item_sec));
+    }
+    batch_rep.finish();
+
+    // B2: only mention "skipped" when it is non-zero (the field is otherwise
+    // inert now that load failures are the only thing that increments it).
+    if (result.skipped > 0) {
+        spdlog::info("Batch complete: {} ok, {} failed, {} skipped of {} total",
+                     result.succeeded, result.failed, result.skipped, result.total);
+    } else {
+        spdlog::info("Batch complete: {} ok, {} failed of {} total",
+                     result.succeeded, result.failed, result.total);
+    }
 
     return result;
 }

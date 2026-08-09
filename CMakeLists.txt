@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(wmr VERSION 1.16.4 LANGUAGES CXX)
+project(wmr VERSION 1.16.7 LANGUAGES CXX)
 
 # Objective-C++ is needed for the macOS-only .mm sources (MI-GAN CoreML, CoreML SDXL).
 # Enable it once, up front, only on Apple so Linux/Windows never try to locate an
@@ -31,6 +31,7 @@ set(SOURCES
     src/video/geometry_detector.cpp
     src/detection/still_geometry.cpp
     src/core/paths.cpp
+    src/cli/progress.cpp
 )
 
 # Executable
@@ -399,6 +400,23 @@ if(WMR_BUILD_REGEN)
 
     add_subdirectory(${SD_SUBMODULE} stable-diffusion)
 
+    # Vendored kissfft (BSD-3-Clause) for the regen detail-restoration 2D FFT.
+    # Floating-point build (default kiss_fft_scalar = float); the inverse is NOT
+    # scaled by 1/N internally, regen_restore.cpp applies 1/N to match numpy. The
+    # C sources compile under the C standard already enabled by the regen block's
+    # enable_language(C) above. A small STATIC library keeps the C/C++ boundary
+    # clean and lets MSVC pick up /bigobj-free C flags from the parent scope.
+    add_library(kissfft STATIC
+        external/kissfft/kiss_fft.c
+        external/kissfft/kiss_fftnd.c
+    )
+    target_include_directories(kissfft PUBLIC external/kissfft)
+    if(MSVC)
+        target_compile_options(kissfft PRIVATE /W1)  # kissfft is clean C; /W4 is noisy on it
+    else()
+        target_compile_options(kissfft PRIVATE -w)   # silence kissfft's own warnings
+    endif()
+
     find_package(CURL REQUIRED)
     find_package(OpenSSL REQUIRED)
     # Task 1's link probe (tests/unit/regen_link_probe.cpp) proved the vendor links;
@@ -409,8 +427,9 @@ if(WMR_BUILD_REGEN)
         src/core/regen_tiling.cpp
         src/core/model_downloader.cpp
         src/core/regenerator.cpp
+        src/core/regen_restore.cpp
     )
-    target_link_libraries(${PROJECT_NAME} PRIVATE stable-diffusion CURL::libcurl OpenSSL::Crypto)
+    target_link_libraries(${PROJECT_NAME} PRIVATE stable-diffusion CURL::libcurl OpenSSL::Crypto kissfft)
     target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_BUILD_REGEN=1)
 endif()
 
@@ -432,6 +451,7 @@ if(WMR_BUILD_AI_COREML_SD)
         src/core/coreml_sd_scheduler.cpp
         src/core/coreml_sd_pipeline.mm
         src/core/coreml_sd_model_fetch.cpp
+        src/core/coreml_cache.cpp
     )
     target_link_libraries(${PROJECT_NAME} PRIVATE ${ACCELERATE_LIB} ${COREML_LIB} ${FOUNDATION_LIB})
     target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_BUILD_AI_COREML_SD=1)

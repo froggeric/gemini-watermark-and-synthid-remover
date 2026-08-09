@@ -10,6 +10,7 @@ set(TEST_SOURCES
     unit/geometry_detector_test.cpp
     unit/still_geometry_test.cpp
     unit/synthid_attack_cli_test.cpp
+    unit/progress_test.cpp
     integration/visible_pipeline_test.cpp
 )
 
@@ -23,6 +24,7 @@ set(LIB_SOURCES
     ${CMAKE_SOURCE_DIR}/src/video/geometry_detector.cpp  # VideoReader-free (pure OpenCV); safe for the test link
     ${CMAKE_SOURCE_DIR}/src/detection/still_geometry.cpp  # VideoReader-free (pure OpenCV); safe for the test link
     ${CMAKE_SOURCE_DIR}/src/core/paths.cpp  # ungated; regenerator.cpp (regen mirror block) calls user_cache_dir()
+    ${CMAKE_SOURCE_DIR}/src/cli/progress.cpp  # ungated; shared by video/remove/batch (always built)
     # NOTE: src/video/scene_detector.cpp is intentionally excluded — it pulls in
     # VideoReader (FFmpeg), which the test target does not link. No test
     # references SceneDetector today; re-add it (with the FFMPEG link) if a
@@ -79,18 +81,32 @@ endif()
 # already-created wmr_tests target. Backend resolver (Task 2) is the first source;
 # later tasks append their own lines.
 if(WMR_BUILD_REGEN)
+    # Mirror of the main CMakeLists kissfft static lib (regen_restore uses it).
+    add_library(kissfft_tests STATIC
+        ${CMAKE_SOURCE_DIR}/external/kissfft/kiss_fft.c
+        ${CMAKE_SOURCE_DIR}/external/kissfft/kiss_fftnd.c
+    )
+    target_include_directories(kissfft_tests PUBLIC ${CMAKE_SOURCE_DIR}/external/kissfft)
+    if(MSVC)
+        target_compile_options(kissfft_tests PRIVATE /W1)
+    else()
+        target_compile_options(kissfft_tests PRIVATE -w)
+    endif()
+
     target_sources(wmr_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/src/core/regen_backend.cpp
         ${CMAKE_SOURCE_DIR}/src/core/regen_tiling.cpp
         ${CMAKE_SOURCE_DIR}/src/core/model_downloader.cpp
         ${CMAKE_SOURCE_DIR}/src/core/regenerator.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/regen_restore.cpp
         unit/regen_backend_test.cpp
         unit/regen_tiling_test.cpp
         unit/regen_downloader_test.cpp
         unit/regen_smoke_test.cpp
         unit/regen_dispatch_test.cpp
+        unit/regen_restore_test.cpp
     )
-    target_link_libraries(wmr_tests PRIVATE stable-diffusion CURL::libcurl OpenSSL::Crypto)
+    target_link_libraries(wmr_tests PRIVATE stable-diffusion CURL::libcurl OpenSSL::Crypto kissfft_tests)
     target_compile_definitions(wmr_tests PRIVATE WMR_BUILD_REGEN=1)
 endif()
 
@@ -109,13 +125,20 @@ if(WMR_BUILD_AI_COREML_SD)
         ${CMAKE_SOURCE_DIR}/src/core/coreml_sd_scheduler.cpp
         ${CMAKE_SOURCE_DIR}/src/core/coreml_sd_pipeline.mm
         ${CMAKE_SOURCE_DIR}/src/core/coreml_sd_model_fetch.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/coreml_cache.cpp
         unit/coreml_sd_scheduler_test.cpp
         unit/coreml_sd_pipeline_smoke_test.cpp
         unit/coreml_sd_compute_units_test.mm
         unit/coreml_sd_model_cache_test.cpp
+        unit/coreml_cache_test.cpp
     )
     target_link_libraries(wmr_tests PRIVATE ${ACCELERATE_LIB} ${COREML_LIB} ${FOUNDATION_LIB})
-    target_compile_definitions(wmr_tests PRIVATE WMR_BUILD_AI_COREML_SD=1)
+    # regenerator.cpp (compiled by the WMR_BUILD_REGEN mirror block above)
+    # references APP_VERSION inside its CoreML branch. Define it here so the
+    # combination WMR_BUILD_REGEN=ON + WMR_BUILD_AI_COREML_SD=ON compiles. The
+    # WMR_UPDATE_CHECK mirror block also defines APP_VERSION="0.0.0"; identical
+    # redefinition is a no-op for the compiler.
+    target_compile_definitions(wmr_tests PRIVATE WMR_BUILD_AI_COREML_SD=1 APP_VERSION="0.0.0")
 endif()
 
 # Update check (notify-only): mirrors the main CMakeLists block.

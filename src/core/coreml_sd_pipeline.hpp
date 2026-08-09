@@ -73,6 +73,14 @@ public:
     // Returns 1024x1024 BGR output (regenerated tile).
     cv::Mat img2img(const cv::Mat& tile_bgr, float strength, int steps, uint64_t seed);
 
+    // Placement label resolved on the first UNet predict ("coreml" until then,
+    // then "coreml-gpu" or "coreml-cpu" depending on the first-predict latency
+    // band). Surfaces the one runtime placement signal so the tile-line extra +
+    // the SynthID-complete recap can name the actual compute unit.
+    std::string placement_label() const;
+    // The first UNet predict time in ms (0 until the first predict runs).
+    int first_predict_ms() const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;

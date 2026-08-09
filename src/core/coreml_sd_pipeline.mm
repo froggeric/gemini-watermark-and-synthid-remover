@@ -121,6 +121,12 @@ struct CoreMLSDPipeline::Impl {
     CoreMLSDEulerScheduler scheduler;
     bool ready = false;
     bool logged_first_predict = false;  // log the first UNet predict time once per pipeline
+    int first_predict_ms = 0;            // 0 until the first predict runs
+    // Placement resolved on the first UNet predict. Plain "GPU"/"CPU" for the
+    // tile line + recap (the "CoreML models detected" log already names the
+    // runtime; the per-tile label only needs the compute unit). Default "GPU"
+    // since the SDXL ORIGINAL UNet is GPU-bound under MLComputeUnitsAll on mac.
+    std::string placement = "GPU";
 };
 
 CoreMLSDPipeline::CoreMLSDPipeline() : m_impl(std::make_unique<Impl>()) {}
@@ -177,10 +183,10 @@ bool CoreMLSDPipeline::initialize(const std::string& models_dir, const std::stri
         }
         MLModelConfiguration* cfg = [[MLModelConfiguration alloc] init];
         cfg.computeUnits = units;
-        spdlog::info("CoreML SDXL compute units: {}",
-                     units == MLComputeUnitsAll ? "all" :
-                     units == MLComputeUnitsCPUAndGPU ? "cpu+gpu" :
-                     units == MLComputeUnitsCPUAndNeuralEngine ? "cpu+ane" : "cpu");
+        spdlog::debug("CoreML SDXL compute units: {}",
+                      units == MLComputeUnitsAll ? "all" :
+                      units == MLComputeUnitsCPUAndGPU ? "cpu+gpu" :
+                      units == MLComputeUnitsCPUAndNeuralEngine ? "cpu+ane" : "cpu");
 
         // Load UNet
         std::filesystem::path unet_path = models_path / "Stable_Diffusion_version_stabilityai_stable-diffusion-xl-base-1.0_unet.mlpackage";
@@ -246,8 +252,8 @@ bool CoreMLSDPipeline::initialize(const std::string& models_dir, const std::stri
 #endif
 
         m_impl->ready = true;
-        spdlog::info("CoreML SDXL pipeline ready (models={}, embeds={})",
-                     models_dir, embeds_bin);
+        spdlog::debug("CoreML SDXL pipeline ready (models={}, embeds={})",
+                      models_dir, embeds_bin);
     } @catch (NSException* ex) {
         spdlog::warn("CoreML SDXL init exception: {}", [[ex reason] UTF8String]);
         m_impl->ready = false;
@@ -257,6 +263,10 @@ bool CoreMLSDPipeline::initialize(const std::string& models_dir, const std::stri
 }
 
 bool CoreMLSDPipeline::is_ready() const { return m_impl->ready; }
+
+std::string CoreMLSDPipeline::placement_label() const { return m_impl->placement; }
+
+int CoreMLSDPipeline::first_predict_ms() const { return m_impl->first_predict_ms; }
 
 cv::Mat CoreMLSDPipeline::img2img(const cv::Mat& tile_bgr, float strength, int steps, uint64_t seed) {
     if (!m_impl->ready) return {};
@@ -469,11 +479,17 @@ cv::Mat CoreMLSDPipeline::img2img(const cv::Mat& tile_bgr, float strength, int s
             if (!m_impl->logged_first_predict) {
                 auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - t_predict0).count();
-                // CoreML exposes no public chosen-unit API, so this one-per-process log
-                // is the only runtime placement signal: hundreds of ms => the GPU path is
-                // live, ~10000 => CPU. The first predict also pays one-time context setup,
-                // so treat it as a detector, not a steady-state per-tile number.
-                spdlog::info("CoreML SDXL UNet predict #1: {} ms (hundreds => GPU, ~10000 => CPU)", ms);
+                // CoreML exposes no public chosen-unit API, so this one-per-process
+                // measurement is the only runtime placement signal. SDXL ORIGINAL
+                // UNet predict is ~5s on the GPU and ~10s on the CPU (the GPU does
+                // the fp16 attention matmuls; the ANE declines them). So the band
+                // is ~5000ms => GPU, ~10000ms => CPU, with 7000ms as the boundary.
+                m_impl->first_predict_ms = static_cast<int>(ms);
+                m_impl->placement = (ms < 7000) ? "GPU" : "CPU";
+                // The clean GPU/CPU label rides on the tile line; this raw number
+                // is dev-only (verbose), not user output.
+                spdlog::debug("CoreML SDXL UNet predict #1: {} ms (~5000 => GPU, ~10000 => CPU)",
+                              static_cast<long>(ms));
                 m_impl->logged_first_predict = true;
             }
             if (!unet_out) {

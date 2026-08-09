@@ -320,6 +320,7 @@ bool WatermarkEngine::remove_watermark_detected(
         rc.model_path = cfg.regen_model_path;
         rc.vae_path   = cfg.regen_vae_path;   // empty -> resolve + download fp16-fix VAE
         rc.backend    = cfg.regen_backend;    // auto|cpu|metal|vulkan (auto->CPU on Apple Silicon)
+        rc.restore    = cfg.regen_restore;    // post-regen detail restoration (Off/Auto/On)
         Regenerator& reg = regenerator();
         if (!reg.is_ready() && !reg.initialize(rc)) {
             spdlog::warn("SynthID regen unavailable (no model/backend); image unchanged.");

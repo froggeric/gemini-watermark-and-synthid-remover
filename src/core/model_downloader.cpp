@@ -149,6 +149,17 @@ DownloadResult download_pinned_file(const std::string& url, const fs::path& dest
         if (st.have > 0) {
             curl_easy_setopt(curl, CURLOPT_RESUME_FROM_LARGE, static_cast<curl_off_t>(st.have));
         }
+        // Defensive timeouts so a stalled handshake or a mid-transfer stall fails
+        // fast instead of hanging forever (a 5 GB model fetch on a flaky CDN was
+        // observed blocked for 24+ min in curl's multi_wait with no timeout). No
+        // absolute CURLOPT_TIMEOUT: that would kill legitimate slow transfers of a
+        // 5 GB file. CONNECTTIMEOUT bounds DNS+TCP+TLS; LOW_SPEED_* abort once the
+        // average rate drops under ~1 KB/s for 60 s (a true stall — even a slow CDN
+        // ramp-up stays well above this). The xferinfo cb only aborts on a
+        // user-cancel, so it cannot detect a stall by itself.
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);
 
         spdlog::info("regen: downloading {} (resume from {} bytes, attempt {})",
                      url, st.have, attempt + 1);
@@ -160,6 +171,8 @@ DownloadResult download_pinned_file(const std::string& url, const fs::path& dest
         // 416 = our resume offset >= content length -> the .part is already complete.
         if (rc != CURLE_OK && rc != CURLE_HTTP_RETURNED_ERROR) {
             r.error = std::string("curl: ") + curl_easy_strerror(rc);
+            spdlog::warn("regen: download attempt {} failed (rc={}, http={}): {}",
+                         attempt + 1, static_cast<int>(rc), http, r.error);
             // KEEP .part for resume on the next attempt; do NOT remove.
             continue;
         }

@@ -3,18 +3,24 @@
 #include "core/model_downloader.hpp"
 #include "core/regen_tiling.hpp"
 #include "core/regen_backend.hpp"
+#include "core/regen_restore.hpp"
 #include "core/paths.hpp"
+#include "cli/progress.hpp"
 #ifdef WMR_BUILD_AI_COREML_SD
 #include "core/coreml_sd_pipeline.hpp"
 #include "core/coreml_sd_model_fetch.hpp"
+#include "core/coreml_cache.hpp"  // manage_coreml_execution_cache
 #endif
 #include <spdlog/spdlog.h>
+#include <fmt/format.h>
 #include <stable-diffusion.h>
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <cstdlib>
 #include <vector>
@@ -95,15 +101,21 @@ constexpr const char* kRegenVaeUrl =
 constexpr const char* kRegenVaeSha256 =
     "235745af8d86bf4a4c1b5b4f529868b37019a10f7c0b2e79ad0abca3a22bc6e1";
 
-// Print byte milestones (~5%) so a 6.5 GB first-run fetch is not silent. Returns true.
-DownloadProgressFn make_progress_logger(const std::string& what) {
-    auto last = std::make_shared<int>(-1);
-    return [what, last](uint64_t done, uint64_t total) -> bool {
-        if (total == 0) return true;
-        int pct = (int)(done * 100 / total);
-        int step = (pct / 5) * 5;
-        if (step != *last) { *last = step; spdlog::info("regen: {} {}%", what, pct); }
-        return true;
+// Last-run stats (tile count + elapsed + resolved backend label), read by the
+// CLI for the SynthID-complete recap. Mutex-guarded for the (single-threaded
+// in practice) write/read pair; regen is not called concurrently.
+std::mutex g_stats_mu;
+RegenRunStats g_last_stats{};
+
+// Byte-progress-driven download callback. Strips the URL to the filename,
+// shows bytes / rate / ETA / bar (TTY) or milestone lines (non-TTY). The total
+// arrives lazily via curl's xferinfo (Content-Length / Content-Range), so it is
+// set on the first non-zero total; returns true to never cancel.
+DownloadProgressFn make_byte_progress(const std::string& filename) {
+    auto bp = std::make_shared<ByteProgress>("  " + filename, 0ull);
+    return [bp](uint64_t done, uint64_t total) -> bool {
+        if (total > 0) bp->set_total(total);
+        return bp->update(done);
     };
 }
 
@@ -148,6 +160,17 @@ struct Regenerator::Impl {
     RegenConfig cfg{};
     fs::path vae_path_resolved;
     bool ready = false;
+    // Backend label for the tile-line extra + the SynthID-complete recap.
+    // Plain compute-unit names: "GPU"/"CPU" (CoreML), "CPU"/"Metal"/"Vulkan"/"CUDA"
+    // (sdcpp). For CoreML it is refined after the first predict.
+    std::string backend_label;
+    // Adaptive stage numbering: 4 stages when a first-run download happens
+    // (download -> load -> regen -> restore), 3 stages when models are cached
+    // (load -> regen -> restore). Computed once in initialize(); regen() reads it.
+    int stage_total = 4;
+    int load_stage_idx = 2;
+    int regen_stage_idx = 3;
+    int restore_stage_idx = 4;
 #ifdef WMR_BUILD_AI_COREML_SD
     std::unique_ptr<CoreMLSDPipeline> coreml_pipeline;
 #endif
@@ -242,21 +265,44 @@ void Regenerator::ImplDeleter::operator()(Impl* p) const {
 bool Regenerator::initialize(const RegenConfig& cfg) {
     m_impl->cfg = cfg;
 
-    // 1) Resolve + download the model (base SDXL fp16 checkpoint).
+    // 1) Resolve + download the model (base SDXL fp16 checkpoint) and the fp16-fix VAE.
+    //    The download is a first-run-only cost; on a warm cache neither file is needed.
     fs::path model = resolve_model(cfg);
-    if (!fs::exists(model) || fs::file_size(model) < (1ull<<30)) {  // <1GB => missing/incomplete
-        if (!cfg.allow_download) { spdlog::warn("regen: model absent and download disabled"); return false; }
-        auto r = download_pinned_file(kRegenModelUrl, model, kRegenModelSha256, true,
-                                      /*allow_empty_hash=*/false, make_progress_logger("model"));
-        if (!r.ok) { spdlog::warn("regen: model download failed: {}", r.error); return false; }
-    }
-    // 2) Resolve + download the fp16-fix VAE (REQUIRED; the embedded fp16 VAE NaNs).
+    const bool need_model_dl = !fs::exists(model) || fs::file_size(model) < (1ull<<30);
     fs::path vae = resolve_vae(cfg);
     m_impl->vae_path_resolved = vae;
-    if (vae.empty() || !fs::exists(vae) || fs::file_size(vae) < (1ull<<24)) {  // <16MB => missing
-        if (!cfg.allow_download) { spdlog::warn("regen: fp16-fix VAE absent and download disabled"); return false; }
+    const bool need_vae_dl = vae.empty() || !fs::exists(vae) || fs::file_size(vae) < (1ull<<24);
+    const bool any_download = (need_model_dl || need_vae_dl) && cfg.allow_download;
+    if ((need_model_dl || need_vae_dl) && !cfg.allow_download) {
+        spdlog::warn("regen: model/VAE absent and download disabled");
+        return false;
+    }
+    // Adaptive stage numbering: the download stage only counts when it actually
+    // runs. Cached -> 3 stages (load/regen/restore -> [1/3]/[2/3]/[3/3]); a
+    // first-run download -> 4 stages ([1/4]..[4/4]). This avoids showing "[2/4]"
+    // when the user never saw a "[1/4]". Computed once here; regen() reads it.
+    if (any_download) {
+        m_impl->stage_total = 4;
+        m_impl->load_stage_idx = 2;
+        m_impl->regen_stage_idx = 3;
+        m_impl->restore_stage_idx = 4;
+        Stage dl_stage(1, m_impl->stage_total, "Downloading model", "one-time first run");
+    } else {
+        m_impl->stage_total = 3;
+        m_impl->load_stage_idx = 1;
+        m_impl->regen_stage_idx = 2;
+        m_impl->restore_stage_idx = 3;
+    }
+    if (need_model_dl) {
+        auto r = download_pinned_file(kRegenModelUrl, model, kRegenModelSha256, true,
+                                      /*allow_empty_hash=*/false,
+                                      make_byte_progress(model.filename().string()));
+        if (!r.ok) { spdlog::warn("regen: model download failed: {}", r.error); return false; }
+    }
+    if (need_vae_dl) {
         auto r = download_pinned_file(kRegenVaeUrl, vae, kRegenVaeSha256, true,
-                                      /*allow_empty_hash=*/false, make_progress_logger("vae"));
+                                      /*allow_empty_hash=*/false,
+                                      make_byte_progress(vae.filename().string()));
         if (!r.ok) { spdlog::warn("regen: fp16-fix VAE download failed: {}", r.error); return false; }
     }
 
@@ -276,13 +322,12 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
         // else falls back to CPU (slow but correct).
         if (coreml_models_present()) {
             b = RegenBackend::CoreML;
-            spdlog::info("regen: CoreML models detected, using CoreML backend (fast, correct). "
+            spdlog::info("regen: using the CoreML backend. "
                          "Override with --regen-backend cpu.");
         } else {
             b = RegenBackend::Cpu;
-            spdlog::info("regen: CoreML models not found, using CPU backend (slow, ~3 min for 4K). "
-                         "For fast regen, download the .mlpackage models to ~/.cache/wmr/coreml-sdxl "
-                         "or set WMR_COREML_SD_MODELS_DIR. Override with --regen-backend.");
+            spdlog::info("regen: CoreML models not found, using the CPU backend (~3 min for 4K). "
+                         "Override with --regen-backend.");
         }
 #elif defined(__APPLE__)
         // macOS without CoreML build: CPU only (Metal is broken).
@@ -321,19 +366,48 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
                          "or allow downloads by omitting --regen-no-download.", models_dir.string());
             return false;
         }
+        // Manage the app-scoped CoreML execution cache BEFORE the pipeline
+        // initializes (the first pipeline load triggers the CoreML compile that
+        // POPULATES the e5bundlecache). The key encodes everything that changes
+        // the compile output: wmr version, the three model SHA pins (a re-pin
+        // is the common dev case that ballooned the cache), and the macOS
+        // version. Best-effort; warns on failure and never throws. See
+        // coreml_cache.hpp for the full design + scope.
+        //
+        // NOTE: CoreML writes its compile cache under <HOME>/Library/Caches/wmr/
+        // (the macOS-conventional per-app Caches location), NOT under
+        // user_cache_dir() (~/.cache/wmr/, used for the model fetch). The
+        // coreml_app_cache_dir() helper resolves the right root.
+        {
+            std::string model_key = compose_model_key(
+                APP_VERSION,
+                coreml_unet_sha256(),
+                coreml_vae_encoder_sha256(),
+                coreml_vae_decoder_sha256(),
+                macos_version());
+            manage_coreml_execution_cache(coreml_app_cache_dir(), model_key);
+        }
         m_impl->coreml_pipeline = std::make_unique<CoreMLSDPipeline>();
         fs::path embeds_bin = models_dir / "empty_prompt_embeds.bin";
-        if (!m_impl->coreml_pipeline->initialize(models_dir.string(), embeds_bin.string())) {
-            spdlog::warn("regen: CoreML pipeline initialization failed (models_dir='{}'). "
-                         "Regen did not run; image unchanged.", models_dir.string());
-            return false;
+        {
+            // First-load triggers a one-time CoreML compile (cached by CoreML afterwards).
+            Stage load_stage(m_impl->load_stage_idx, m_impl->stage_total,
+                             "Loading CoreML pipeline", "one-time first-run compile, ~30s");
+            if (!m_impl->coreml_pipeline->initialize(models_dir.string(), embeds_bin.string())) {
+                spdlog::warn("regen: CoreML pipeline initialization failed (models_dir='{}'). "
+                             "Regen did not run; image unchanged.", models_dir.string());
+                return false;
+            }
         }
         if (!m_impl->coreml_pipeline->is_ready()) {
             spdlog::warn("regen: CoreML pipeline not ready after initialization. Regen did not run; image unchanged.");
             return false;
         }
+        // Placement (GPU vs CPU) is resolved at the first predict; default label
+        // is "GPU" until then (CoreML on mac is GPU-bound under MLComputeUnitsAll).
+        m_impl->backend_label = "GPU";
         m_impl->ready = true;
-        spdlog::info("regen: CoreML SDXL pipeline ready, models_dir='{}'", models_dir.string());
+        spdlog::debug("regen: CoreML SDXL pipeline ready, models_dir='{}'", models_dir.string());
         return true;
     }
 #endif
@@ -353,7 +427,20 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
     cp.n_threads = std::max(1, (int)std::thread::hardware_concurrency());
     cp.backend    = backend;           // "" = auto (GPU -> CPU); const char* literal, never null
     cp.flash_attn = true;              // safe on every backend (auto-fallback where unsupported)
-    m_impl->ctx = new_sd_ctx(&cp);
+    {
+        Stage load_stage(m_impl->load_stage_idx, m_impl->stage_total,
+                         "Loading model", "one-time first run");
+        m_impl->ctx = new_sd_ctx(&cp);
+    }
+    // Resolve the backend label for the tile-line extra + recap. b is the resolved
+    // (non-Auto) backend here; plain compute-unit names for the user-facing line.
+    switch (b) {
+        case RegenBackend::Cpu:    m_impl->backend_label = "CPU"; break;
+        case RegenBackend::Metal:  m_impl->backend_label = "Metal"; break;
+        case RegenBackend::Vulkan: m_impl->backend_label = "Vulkan"; break;
+        case RegenBackend::Cuda:   m_impl->backend_label = "CUDA"; break;
+        default: m_impl->backend_label = backend[0] ? backend : "auto"; break;
+    }
     if (!m_impl->ctx || !sd_ctx_supports_image_generation(m_impl->ctx)) {
         spdlog::warn("regen: sd_ctx creation failed (backend='{}', model='{}')",
                      backend[0] ? backend : "auto", model_s);
@@ -361,45 +448,94 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
     }
     m_impl->ready = true;
     g_ctx_alive.store(true);   // the ggml backend is now alive; its static teardown will abort
-    spdlog::info("regen: sd_ctx ready, backend='{}', model='{}', vae='{}'",
-                 backend[0] ? backend : "auto", model_s, vae_s);
+    spdlog::debug("regen: sd_ctx ready, backend='{}', model='{}', vae='{}'",
+                  backend[0] ? backend : "auto", model_s, vae_s);
     return true;
 }
 bool Regenerator::is_ready() const { return m_impl && m_impl->ready; }
 
 // Normalize any input to BGR 8UC3 (grayscale -> BGR, RGBA -> BGR, non-u8 depth -> u8).
 // cv::imread already returns BGR 8UC3 by default; this is a safety net for programmatic callers.
+// MUST return a deep copy: regen() keeps `bgr` as the pre-regen original O and later writes
+// the regen output R back into `image` (blended.convertTo(image) in the tiled path, or
+// cv::resize into image). A shallow `bgr = image` shares the buffer, so that write
+// silently corrupts O -> R, making D = O - R = 0 in restore_detail and zeroing D_att
+// (the Wiener becomes a no-op, R' = R, ~28/255 end-to-end error on the restored region).
 static cv::Mat normalize_to_bgr8u3(const cv::Mat& image) {
     cv::Mat bgr;
     if (image.channels() == 1)      cv::cvtColor(image, bgr, cv::COLOR_GRAY2BGR);
     else if (image.channels() == 4) cv::cvtColor(image, bgr, cv::COLOR_BGRA2BGR);
-    else                            bgr = image;
+    else                            bgr = image.clone();   // deep copy (regen writes into `image`)
     if (bgr.depth() != CV_8U) bgr.convertTo(bgr, CV_8U);
     return bgr;
 }
 
 bool Regenerator::regen(cv::Mat& image, const RegenConfig& cfg) {
     if (!is_ready()) return false;
+    // Reset per-run stats (the recap reads these on success).
+    { std::lock_guard<std::mutex> lk(g_stats_mu); g_last_stats = RegenRunStats{}; }
+    auto t_regen_start = std::chrono::steady_clock::now();
     cv::Mat bgr = normalize_to_bgr8u3(image);   // operate on a normalized copy
     const bool need_tile = cfg.tile && (bgr.cols > cfg.tile_size || bgr.rows > cfg.tile_size);
+
+    // Helper: per-tile timing + the resolved backend label for the reporter extra.
+    // Plain "<GPU|CPU|Metal|...>, <X.X>s/tile" — the per-unit seconds carry the
+    // speed; the rate field on the line handles the rest. (The first-predict ms
+    // is a dev-only debug log now, not crammed into the tile line.)
+    auto backend_extra = [&](double tile_s) -> std::string {
+#ifdef WMR_BUILD_AI_COREML_SD
+        if (m_impl->coreml_pipeline && m_impl->coreml_pipeline->is_ready()) {
+            // The first predict ran inside img2img_tile above and resolved the
+            // placement ("GPU"/"CPU"); fold it into the backend label.
+            std::string label = m_impl->coreml_pipeline->placement_label();
+            if (!label.empty()) m_impl->backend_label = label;
+        }
+#endif
+        return fmt::format("{}, {:.1f}s/tile", m_impl->backend_label, tile_s);
+    };
+    const std::string regen_label =
+        fmt::format("[{}/{}] Regenerating", m_impl->regen_stage_idx, m_impl->stage_total);
+
     if (!need_tile) {
+        ProgressReporter rep(regen_label, 1, "tile");
+        auto t_tile0 = std::chrono::steady_clock::now();
         cv::Mat out;
-        if (!m_impl->img2img_tile(bgr, out, cfg)) return false;
+        if (!m_impl->img2img_tile(bgr, out, cfg)) { rep.finish(); return false; }
+        double tile_s = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - t_tile0).count();
+        rep.update(1, backend_extra(tile_s));
+        rep.finish();
         if (out.size() != image.size())
             cv::resize(out, image, image.size(), 0, 0, cv::INTER_LANCZOS4);
         else image = out;
+        // Detail restoration (post-regen, on the full-res R). `bgr` is O (the
+        // pre-regen original); `image` is R. Always called so the chosen branch
+        // (Auto gate, forced On, or Off) is logged; Off/Auto-skip return R unchanged.
+        Stage restore_stage(m_impl->restore_stage_idx, m_impl->stage_total, "Detail restoration");
+        image = restore_detail(bgr, image, cfg.restore);
+        auto t_end = std::chrono::steady_clock::now();
+        { std::lock_guard<std::mutex> lk(g_stats_mu);
+          g_last_stats = {std::chrono::duration<double>(t_end - t_regen_start).count(),
+                          1, m_impl->backend_label}; }
         return true;
     }
     auto tiles = build_regen_tiles(bgr.cols, bgr.rows, cfg.tile_size, cfg.overlap);
     if (tiles.empty()) return false;
     cv::Mat accum = cv::Mat::zeros(bgr.size(), CV_32FC3);
     cv::Mat wsum  = cv::Mat::zeros(bgr.size(), CV_32FC1);
-    for (const auto& t : tiles) {
+    ProgressReporter rep(regen_label, static_cast<int>(tiles.size()), "tile");
+    for (size_t i = 0; i < tiles.size(); ++i) {
+        const auto& t = tiles[i];
+        auto t_tile0 = std::chrono::steady_clock::now();
         cv::Mat out_tile;
         if (!m_impl->img2img_tile(bgr(t.rect), out_tile, cfg)) {
             spdlog::warn("regen: tile {}x{} at ({},{}) failed", t.rect.width, t.rect.height, t.rect.x, t.rect.y);
+            rep.finish();
             return false;
         }
+        double tile_s = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - t_tile0).count();
+        rep.update(static_cast<int>(i + 1), backend_extra(tile_s));
         if (out_tile.size() != t.rect.size())
             cv::resize(out_tile, out_tile, t.rect.size(), 0, 0, cv::INTER_LANCZOS4);
         cv::Mat out_f; out_tile.convertTo(out_f, CV_32FC3);
@@ -409,14 +545,28 @@ bool Regenerator::regen(cv::Mat& image, const RegenConfig& cfg) {
         cv::add(acc_roi, contrib, acc_roi);
         cv::add(ws_roi, t.weight, ws_roi);
     }
+    rep.finish();
     cv::Mat w3full; cv::merge(std::vector<cv::Mat>{wsum, wsum, wsum}, w3full);
     cv::Mat eps; cv::add(w3full, 1e-6, eps);
     cv::Mat blended; cv::divide(accum, eps, blended);
     blended.convertTo(image, CV_8UC3);   // output is always CV_8UC3, same w/h as input
+    // Detail restoration on the tiled-then-reassembled full-res R (same as the
+    // single-tile path). Always called so the branch is logged.
+    Stage restore_stage(m_impl->restore_stage_idx, m_impl->stage_total, "Detail restoration");
+    image = restore_detail(bgr, image, cfg.restore);
+    auto t_end = std::chrono::steady_clock::now();
+    { std::lock_guard<std::mutex> lk(g_stats_mu);
+      g_last_stats = {std::chrono::duration<double>(t_end - t_regen_start).count(),
+                      static_cast<int>(tiles.size()), m_impl->backend_label}; }
     return true;
 }
 
 bool regenerator_was_used() { return g_ctx_alive.load(); }
+
+RegenRunStats last_regen_run_stats() {
+    std::lock_guard<std::mutex> lk(g_stats_mu);
+    return g_last_stats;
+}
 
 } // namespace wmr
 #endif

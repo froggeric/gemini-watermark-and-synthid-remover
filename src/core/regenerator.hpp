@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include "core/regen_backend.hpp"
+#include "core/regen_restore.hpp"
 namespace wmr {
 
 struct RegenConfig {
@@ -20,6 +21,13 @@ struct RegenConfig {
     std::string prompt;           // empty by default (no conditioning bias)
     std::string backend = "auto"; // auto|cpu|metal|vulkan (auto = sdcpp picks; forced to cpu on
                                   // Apple Silicon because Metal is broken for SDXL img2img)
+
+    // Post-regen detail restoration (luminance-gated dilution + characterized-carrier
+    // Wiener attenuation; see docs/research/synthid-diff-restoration-analysis.md).
+    // Library default is Off (a conservative no-op: regen tests see plain R). The CLI
+    // threads Auto in by default so users get the fidelity boost on bright images
+    // automatically; --regen-restore-detail forces On, --no-regen-restore-detail forces Off.
+    RestoreConfig restore;
 };
 
 // SDXL img2img regenerator over leejet/stable-diffusion.cpp. Holds one sd_ctx_t*
@@ -66,6 +74,17 @@ private:
 // false in a lean build, or a regen run that never created an
 // sd_ctx (model missing / download failed) -> normal exit path.
 bool regenerator_was_used();
+
+// Stats from the most recent Regenerator::regen() call, for the CLI's
+// "SynthID regen complete in X (N tiles, <backend>)" recap line. Cleared at the
+// start of each regen() call; reads as zero/empty before the first call or when
+// regen did not run. Pure data; safe to read from the CLI after regen returns.
+struct RegenRunStats {
+    double elapsed_seconds = 0.0;
+    int tiles = 0;            // number of tiles processed (1 on the single-tile path)
+    std::string backend;      // "coreml-gpu" / "coreml-cpu" / "cpu" / "metal" / "vulkan" / "cuda"
+};
+RegenRunStats last_regen_run_stats();
 
 } // namespace wmr
 #endif

@@ -49,6 +49,14 @@ bool ensure_coreml_model_files(const std::filesystem::path& models_dir,
                                bool allow_download,
                                const std::string& base_url);
 
+// Accessors for the current model SHA256 pins. Exposed so other TUs (the
+// execution-cache key in coreml_cache.cpp) can re-derive the SAME pin set that
+// drives the model-fetch cache — a re-pin then invalidates BOTH caches in
+// lockstep (the e5bundlecache compile + the .sha256.ok sidecar).
+const char* coreml_unet_sha256();
+const char* coreml_vae_encoder_sha256();
+const char* coreml_vae_decoder_sha256();
+
 }  // namespace wmr
 #endif
 #endif

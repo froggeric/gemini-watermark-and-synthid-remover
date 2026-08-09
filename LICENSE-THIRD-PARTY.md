@@ -322,6 +322,36 @@ use-based restrictions (Attachment A). The full text is at
 Downstream users must comply with the license's use-based restrictions; you are
 responsible for checking that your use is permitted.
 
+### kissfft — BSD 3-Clause License
+
+Source: <https://github.com/mborgerding/kissfft> (vendored under `external/kissfft/`).
+A small FFT used by the regen detail-restoration pass: the characterized-carrier Wiener
+filter that suppresses the SynthID component in the diff operates per-channel in the FFT
+domain (`kiss_fftnd`, 2D). Statically linked; gated to `WMR_BUILD_REGEN`.
+
+Copyright (c) 2003-2010 Mark Borgerding. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are
+permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this list of
+   conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice, this list of
+   conditions and the following disclaimer in the documentation and/or other materials
+   provided with the distribution.
+3. Neither the author nor the names of any contributors may be used to endorse or promote
+   products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
+TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 ### madebyollin/sdxl-vae-fp16-fix — MIT License (per the model card)
 
 Source: <https://huggingface.co/madebyollin/sdxl-vae-fp16-fix>

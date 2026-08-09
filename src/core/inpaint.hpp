@@ -2,6 +2,7 @@
 
 #include <opencv2/core.hpp>
 #include <string>
+#include "core/regen_restore.hpp"
 
 namespace wmr {
 
@@ -40,6 +41,8 @@ struct InpaintConfig {
     std::string regen_model_path;       // empty = resolve+download
     std::string regen_vae_path;         // empty = resolve+download the fp16-fix VAE
     std::string regen_backend = "auto"; // auto|cpu|metal|vulkan (auto -> CPU on Apple Silicon)
+    RestoreConfig regen_restore;        // post-regen detail restoration (default Off at the
+                                        // library level; CLI threads Auto by default)
 #endif
 };
 

@@ -5,6 +5,7 @@
 #include "video/geometry_detector.hpp"
 #include "core/watermark_engine.hpp"
 #include "core/inpaint.hpp"
+#include "cli/progress.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -478,6 +479,16 @@ VideoResult VideoProcessor::process(const std::string& input_path,
     VideoResult result;
     const auto t_start = std::chrono::steady_clock::now();
 
+    // V1: silence FFmpeg/libx264 stderr noise (decoder diagnostics like
+    // "mmco: unref short failure" — which this FFmpeg emits at AV_LOG_ERROR, so
+    // AV_LOG_ERROR does NOT suppress it — and the libx264 encode-stats block
+    // dumped at AV_LOG_INFO) that would overwrite the \r progress line on a TTY
+    // and bury `grep frame` in CI logs. QUIET is required to clear the stream
+    // (true decode failures already surface via wmr's own "Frame N: empty /
+    // unexpected dims, skipping" warnings below). Set once at video-path init;
+    // covers the NotebookLM branch below too.
+    av_log_set_level(AV_LOG_QUIET);
+
     // NotebookLM uses a separate path (temporal detection + NS inpaint)
     if (config.profile == VideoProfile::NotebookLM) {
         return process_notebooklm(input_path, output_path, config, encode_opts);
@@ -554,7 +565,14 @@ VideoResult VideoProcessor::process(const std::string& input_path,
         const int pad_width = std::max(3, static_cast<int>(
             std::ceil(std::log10(static_cast<double>(num_scenes) + 1))));
 
-        // Process each scene sequentially (reader stays in position between scenes)
+        // Process each scene sequentially (reader stays in position between scenes).
+        // One reporter spans the whole export; the scene index rides in `extra`.
+        // V2: 500 ms throttle (was 2000) so a short clip renders more than twice
+        // while staying calm on a 45-min export.
+        ProgressReporter scenes_rep("  frame",
+                                     static_cast<int>(reader.frame_count()),
+                                     "frame", ProgressStream::Stderr, 500);
+
         for (int si = 0; si < num_scenes; ++si) {
             const auto& scene = scenes[si];
             const int64_t scene_frames = scene.end_frame - scene.start_frame;
@@ -640,9 +658,15 @@ VideoResult VideoProcessor::process(const std::string& input_path,
                 writer.write_frame(frame);
                 ++scene_processed;
                 ++result.frames_processed;
+                scenes_rep.update(static_cast<int>(result.frames_processed),
+                                  num_scenes > 1
+                                      ? fmt::format("scene {}/{}", si + 1, num_scenes)
+                                      : "");
             }
 
             // Copy audio for this scene's time range
+            Stage scenes_audio_stage(0, 0,
+                fmt::format("Scene {}: audio copied", si + 1));
             if (!writer.copy_audio_range(start_sec, end_sec)) {
                 spdlog::warn("Scene {}: audio range copy failed", si + 1);
             }
@@ -653,6 +677,7 @@ VideoResult VideoProcessor::process(const std::string& input_path,
             spdlog::info("Scene {}/{}: {} done ({} frames, {:.2f}s)",
                          si + 1, num_scenes, out_name, scene_processed, scene_dur);
         }
+        scenes_rep.finish();
 
         reader.close();
 
@@ -686,8 +711,12 @@ VideoResult VideoProcessor::process(const std::string& input_path,
         // Process frames
         cv::Mat frame;
         int64_t frame_idx = 0;
-        int64_t last_progress_frame = 0;
-        auto t_last_progress = t_start;
+        // The progress reporter replaces the old manual "Frame i/N (fps, ETA)" log
+        // line. V2: throttled to 500 ms (was 2 s) so a short clip renders more than
+        // twice while staying calm on a long export; usable in CI logs too.
+        ProgressReporter frame_rep("  frame",
+                                    static_cast<int>(reader.frame_count()),
+                                    "frame", ProgressStream::Stderr, 500);
 
         while (reader.next_frame(frame)) {
             if (frame.empty()) {
@@ -751,27 +780,14 @@ VideoResult VideoProcessor::process(const std::string& input_path,
                 ++result.frames_processed;
             }
 
-            // Progress output
+            // Progress output (throttled inside the reporter; final line on last frame).
             ++frame_idx;
-            auto t_now = std::chrono::steady_clock::now();
-            double since_last = std::chrono::duration<double>(t_now - t_last_progress).count();
-
-            if (frame_idx - last_progress_frame >= kProgressIntervalFrames ||
-                since_last >= 2.0) {
-                double elapsed = std::chrono::duration<double>(t_now - t_start).count();
-                double proc_fps = static_cast<double>(frame_idx) / std::max(elapsed, 1e-9);
-                int64_t remaining = reader.frame_count() - frame_idx;
-                double eta = (remaining > 0) ? (static_cast<double>(remaining) / proc_fps) : 0.0;
-
-                spdlog::info("Frame {}/{} ({:.1f} fps, ETA {:.0f}s)",
-                             frame_idx, reader.frame_count(), proc_fps, eta);
-
-                last_progress_frame = frame_idx;
-                t_last_progress = t_now;
-            }
+            frame_rep.update(static_cast<int>(frame_idx));
         }
+        frame_rep.finish();
 
-        // Copy audio
+        // Copy audio (labeled so the trailing audio pass is not silent).
+        Stage audio_stage(0, 0, "Audio: copied");
         if (!writer.copy_audio()) {
             spdlog::warn("Audio copy failed or no audio stream present");
         }
@@ -944,7 +960,7 @@ VideoResult VideoProcessor::process_notebooklm(const std::string& input_path,
                 ? detector.background_complexity(areader, scenes[i].start_frame,
                                                  scenes[i].end_frame, det.bbox)
                 : 0.0f;
-            spdlog::info("NotebookLM scene {}/{}: frames[{},{}] complexity={:.1f}",
+            spdlog::debug("NotebookLM scene {}/{}: frames[{},{}] complexity={:.1f}",
                          i + 1, scenes.size(), scenes[i].start_frame, scenes[i].end_frame,
                          scene_complexity[i]);
         }
@@ -969,12 +985,23 @@ VideoResult VideoProcessor::process_notebooklm(const std::string& input_path,
             warned_no_migan = true;
         }
         if (need_complexity) {
-            spdlog::info("NotebookLM scene {}/{}: complexity={:.1f} -> inpaint({})",
+            spdlog::debug("NotebookLM scene {}/{}: complexity={:.1f} -> inpaint({})",
                          i + 1, scenes.size(), scene_complexity[i], scene_method[i]);
         } else {
-            spdlog::info("NotebookLM scene {}/{}: complexity=n/a -> inpaint({})",
+            spdlog::debug("NotebookLM scene {}/{}: complexity=n/a -> inpaint({})",
                          i + 1, scenes.size(), scene_method[i]);
         }
+    }
+
+    // V4: one info summary of the per-scene method routing (the per-scene
+    // complexity/method lines above are debug). Replaces ~2 info lines/scene.
+    {
+        int ns_count = 0, migan_count = 0;
+        for (const auto& m : scene_method) {
+            if (m == "migan") ++migan_count; else ++ns_count;
+        }
+        spdlog::info("NotebookLM: {} scene{}: {} NS, {} MI-GAN",
+                     scenes.size(), scenes.size() == 1 ? "" : "s", ns_count, migan_count);
     }
 
     // 5. Open output writer.
@@ -1000,16 +1027,19 @@ VideoResult VideoProcessor::process_notebooklm(const std::string& input_path,
     reader.seek(0);
     cv::Mat frame;
     int64_t frame_idx = 0;
-    int64_t last_progress_frame = 0;
     int64_t frames_inpainted = 0;
     size_t cur_scene = 0;
-    auto t_last_progress = t_start;
+    ProgressReporter frame_rep("  frame",
+                                static_cast<int>(reader.frame_count()),
+                                "frame", ProgressStream::Stderr, 500);
 
     while (reader.next_frame(frame)) {
         // Advance to the scene containing frame_idx (scenes are contiguous).
         while (cur_scene + 1 < scenes.size() && frame_idx >= scenes[cur_scene].end_frame) {
             ++cur_scene;
         }
+        std::string extra = scenes.size() > 1
+            ? fmt::format("scene {}/{}", cur_scene + 1, scenes.size()) : "";
         if (frame.empty()) {
             spdlog::warn("Frame {}: empty, skipping", frame_idx);
             writer.write_frame(frame);
@@ -1033,21 +1063,12 @@ VideoResult VideoProcessor::process_notebooklm(const std::string& input_path,
         ++result.frames_processed;
 
         ++frame_idx;
-        auto t_now = std::chrono::steady_clock::now();
-        double since_last = std::chrono::duration<double>(t_now - t_last_progress).count();
-        if (frame_idx - last_progress_frame >= kProgressIntervalFrames || since_last >= 2.0) {
-            double elapsed = std::chrono::duration<double>(t_now - t_start).count();
-            double proc_fps = static_cast<double>(frame_idx) / std::max(elapsed, 1e-9);
-            int64_t remaining = reader.frame_count() - frame_idx;
-            double eta = (remaining > 0) ? (static_cast<double>(remaining) / proc_fps) : 0.0;
-            spdlog::info("Frame {}/{} ({:.1f} fps, ETA {:.0f}s)",
-                         frame_idx, reader.frame_count(), proc_fps, eta);
-            last_progress_frame = frame_idx;
-            t_last_progress = t_now;
-        }
+        frame_rep.update(static_cast<int>(frame_idx), extra);
     }
+    frame_rep.finish();
 
     // 8. Audio + teardown.
+    Stage audio_stage(0, 0, "Audio: copied");
     if (!writer.copy_audio()) {
         spdlog::warn("Audio copy failed or no audio stream present");
     }
