@@ -9,6 +9,32 @@
 
 Phase 1 (visible watermark removal) is complete. This spec defines Phases 2–7.
 
+## Current Status (updated 2026-08-10, v1.16.8)
+
+This spec was the original plan. The project shipped past it and diverged on SynthID. The design text below is kept as a historical record; the real outcome per phase:
+
+| Phase | Plan | Actual |
+|-------|------|--------|
+| 1. Visible removal | reverse alpha-blend | Shipped. |
+| 2. Detection + inpaint | 3-stage NCC + cleanup | Shipped. The default cleanup is now OFF (pure reverse-blend, the exact inversion); cleanup is opt-in and residual-only. |
+| 3. SynthID spectral removal | FFT codebook subtraction | Built, then **removed in 1.16.0**. It did not work (the detector scored ROC AUC 0.20 against Google-labeled images, and a clean codebook is inert on real content because the carrier sits below the noise floor). Superseded by diffusion regen. Decision record: `docs/research/synthid-spectral-removal-record.md`. |
+| 4. SynthID detection + codebook builder | Bayesian 4-method detector | Resolved as **not achievable**. No reliable third-party SynthID detector exists, and Google's verifier is manual-only with no API, so detection cannot be automated. `wmr detect` is visible-only. Records: `docs/research/synthid-detection-feasibility.md`, `synthid-detection-validation.md`. |
+| 5. Unified CLI + batch | subcommands + directory batch | Shipped (`remove`, `synthid`, `detect`, `video`, `cache`). |
+| 6. AI denoise | FDnCNN cleanup | Shipped (FDnCNN via NCNN+Vulkan), plus MI-GAN inpainting (CoreML on mac, ORT elsewhere), beyond the plan. |
+| 7. Video | frame-by-frame | Shipped, well beyond the plan: Gemini diamond, Veo text, NotebookLM, shot detection and splitting, audio passthrough, per-frame occlusion gate, residual-gated edge cleanup. |
+
+### Beyond the original roadmap (v1.15.0 to v1.16.8)
+
+Major work added after this plan was written:
+
+- **SynthID removal via diffusion regen** (1.15.0 to 1.16.3). Low-strength SDXL img2img is the only SynthID-Image scrub the literature reports as validated. macOS Apple Silicon uses a native CoreML SDXL pipeline (GPU-bound ORIGINAL-attention UNet, fp16-fix VAE, models auto-download from `huggingface.co/froggeric/wmr`); linux, windows, and mac-Intel use the sdcpp CPU backend (cross-platform since 1.16.2). Default strength 0.10 at 50 steps, validated against Google's in-app verifier. Optional detail-restoration (1.16.6) recovers fidelity on bright images.
+- **NotebookLM video watermark removal** (1.6 to 1.10.1). Per-scene MI-GAN inpaint (CoreML on Apple Silicon, ORT elsewhere), complexity-gated.
+- **Update check** (1.16.4). Notify-only GitHub-release check, zero payload, opt-out.
+- **CoreML cache management** (1.16.7). Auto-manages the e5rt execution cache so it cannot balloon.
+- **Still-image auto-geometry** (1.12 to 1.16.8). Content-detected position and size for the Gemini 3.6 48px diamond, with a content-suppressed snap (1.16.8) for exact pixel placement.
+
+Open item: the NotebookLM MI-GAN runtime under Rosetta on Intel Mac is unverified in CI (the link is verified and the `.mlpackage` ships; fallback is a one-line disable for x86_64).
+
 ## Design Decisions
 
 | Decision | Choice | Rationale |
@@ -147,7 +173,7 @@ None (all OpenCV built-ins).
 
 ---
 
-## Phase 3: SynthID Removal Foundation
+## Phase 3: SynthID Removal Foundation — SUPERSEDED (built, removed in 1.16.0; see Current Status)
 
 ### Goal
 
@@ -287,7 +313,7 @@ Note: Phase 5 restructures the CLI into subcommands (`wmr synthid input.png`).
 
 ---
 
-## Phase 4: SynthID Detection + Codebook Building
+## Phase 4: SynthID Detection + Codebook Building — NOT ACHIEVABLE (see Current Status)
 
 ### Goal
 
