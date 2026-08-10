@@ -35,6 +35,12 @@ Major work added after this plan was written:
 
 Open item: the NotebookLM MI-GAN runtime under Rosetta on Intel Mac is unverified in CI (the link is verified and the `.mlpackage` ships; fallback is a one-line disable for x86_64).
 
+## Forward roadmap
+
+### Next: research alternative img2img models for the SynthID regen step
+
+The SynthID scrub is low-strength img2img diffusion regen (SDXL today). It clears Google's verifier (9/9 at strength 0.10) but it is lossy and slow on CPU. Goal: find whether a different img2img model clears SynthID at equal or lower strength with better fidelity and/or speed, with a native (non-Python) path on the platform matrix (CoreML/MLX on mac, sdcpp on CPU, CUDA/Vulkan/DirectML elsewhere). Candidates include SD 1.5/2.1, SD3/3.5, Flux.1, and SDXL Turbo/Lightning, measured against SDXL. Plan and (later) findings: `docs/research/regen-img2img-model-research.md`.
+
 ## Design Decisions
 
 | Decision | Choice | Rationale |
