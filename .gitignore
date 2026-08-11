@@ -107,3 +107,9 @@ vcpkg_installed/
 
 # Tool / skill artifacts
 .playwright-cli/
+
+# Research / experiments (Phase A regen-model sweep): venvs, model caches, sweep outputs
+experiments/regen-model-sweep/.venv/
+experiments/regen-model-sweep/outputs/
+experiments/regen-model-sweep/*.csv
+experiments/regen-model-sweep/__pycache__/
