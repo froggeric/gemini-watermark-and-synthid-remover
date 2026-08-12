@@ -11,6 +11,9 @@ set(TEST_SOURCES
     unit/still_geometry_test.cpp
     unit/synthid_attack_cli_test.cpp
     unit/progress_test.cpp
+    unit/provenance_test.cpp
+    unit/png_chunks_test.cpp
+    unit/jpeg_markers_test.cpp
     integration/visible_pipeline_test.cpp
 )
 
@@ -25,6 +28,9 @@ set(LIB_SOURCES
     ${CMAKE_SOURCE_DIR}/src/detection/still_geometry.cpp  # VideoReader-free (pure OpenCV); safe for the test link
     ${CMAKE_SOURCE_DIR}/src/core/paths.cpp  # ungated; regenerator.cpp (regen mirror block) calls user_cache_dir()
     ${CMAKE_SOURCE_DIR}/src/cli/progress.cpp  # ungated; shared by video/remove/batch (always built)
+    ${CMAKE_SOURCE_DIR}/src/metadata/provenance.cpp  # ungated; provenance strip (no OpenCV/FFmpeg)
+    ${CMAKE_SOURCE_DIR}/src/metadata/png_chunks.cpp   # ungated; pure TU, paths.cpp precedent
+    ${CMAKE_SOURCE_DIR}/src/metadata/jpeg_markers.cpp # ungated; pure TU, paths.cpp precedent
     # NOTE: src/video/scene_detector.cpp is intentionally excluded — it pulls in
     # VideoReader (FFmpeg), which the test target does not link. No test
     # references SceneDetector today; re-add it (with the FFMPEG link) if a

@@ -383,3 +383,43 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## wiltodelta/remove-ai-watermarks: studied reference (MIT License)
+
+Source: <https://github.com/wiltodelta/remove-ai-watermarks>
+
+The byte-level container strip in `src/metadata/` (the `wmr metadata` subcommand and the
+default remove/synthid provenance strip) is a from-scratch C++20 implementation. The
+approach was studied against this project (its byte-scan over PNG chunks and JPEG APP
+markers to locate and drop C2PA / AI-provenance metadata without decoding pixels). **No
+verbatim code was copied**; `src/metadata/` is an independent implementation written from
+the published container specifications (C2PA 2.4, ISO/IEC 19566-5 JUMBF, W3C PNG) and
+verified against the `contentauth/c2pa-rs` reference implementation.
+
+Copyright (c) the wiltodelta/remove-ai-watermarks authors.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+### Note on cebeuq/Synthid-Bypass
+
+`cebeuq/Synthid-Bypass` (<https://github.com/cebeuq/Synthid-Bypass>) carries **no license
+file**. No code or design was copied from it. It is listed here only for the record, so
+the provenance strip is attributed solely to `wiltodelta/remove-ai-watermarks` (MIT) above.

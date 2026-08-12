@@ -6,7 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **New `wmr metadata` subcommand** reports and strips C2PA / AI-provenance metadata from PNG and JPEG images. It is a container-level, lossless-on-pixels strip: it reads raw bytes, drops the C2PA manifest chunk/marker, the AI-specific `tEXt` / `iTXt` keys (ComfyUI, A1111, InvokeAI, Midjourney, Stable Diffusion parameters/prompt/workflow), and APP1 XMP / APP13 IPTC AI markers, and copies the image bytes (PNG IDAT, JPEG entropy) verbatim. It never decodes pixels. Supports `--dry-run` (report only), `--strip-all` (also drop non-AI metadata), and batch directories. This is a distinct concern from the visible diamond removal (reverse alpha-blend) and from SynthID (lossy SDXL regen). See the spec at `docs/research/provenance-metadata-strip-plan.md`.
+- **`wmr remove` and `wmr synthid` now strip provenance metadata from the output by default.** Opt out with `--keep-provenance`. Honest note: on today's OpenCV output this strip is a no-op scan. `cv::imwrite` already drops all container metadata on write and injects nothing (a PNG output is exactly `IHDR + IDAT(s) + IEND`; a JPEG output is a default APP0/JFIF plus the entropy tables), so the post-write scan finds nothing to strip and leaves the file untouched. The pass exists so the output stays provenance-free independent of the encoder. The active, load-bearing path is the standalone `wmr metadata`, which losslessly strips input files that do carry metadata.
+- **New `--keep-provenance` flag** on `remove`, `synthid`, and `video`. It is the opt-out for the default strip. On `video` it is a documented no-op (the FFmpeg re-encode already writes a fresh container with no carried-over input C2PA boxes).
+- **v1 scope: PNG and JPEG.** WebP, AVIF, HEIF, and JPEG-XL are sniffed and reported as unsupported (bytes copied unchanged); MP4/MOV C2PA is not explicitly stripped (the video re-encode already drops it). These are later phases.
 
 ## [1.16.8] - 2026-08-09
 

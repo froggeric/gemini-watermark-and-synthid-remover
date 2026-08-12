@@ -23,6 +23,7 @@ enum class CliMode {
     SynthidOnly,
     Video,
     Cache,
+    Metadata,
 };
 
 struct CliOptions {
@@ -66,6 +67,14 @@ struct CliOptions {
 
     // `cache` subcommand: clear wmr's local caches. Today only CoreML on macOS.
     bool cache_clear_coreml = false;
+
+    // Provenance / C2PA metadata (v1 = PNG + JPEG; lossless on pixels).
+    // remove/synthid/video: opt OUT of the default post-write strip.
+    bool keep_provenance = false;
+    // `metadata` subcommand: report only, do not write.
+    bool metadata_dry_run = false;
+    // `metadata` subcommand: drop ALL non-essential metadata, not just AI markers.
+    bool metadata_strip_all = false;
 
     // SynthID attack selection. The spectral detector/suppressor was removed in
     // 1.16.0 (it did not work; see docs/research/synthid-spectral-removal-record.md),
@@ -130,6 +139,34 @@ inline std::string synthid_attack_help_text() {
         "regen does NOT remove the VISIBLE Gemini diamond (strength ~0.10 cannot); in "
         "SynthidOnly mode, visible-clean the image first if you need that too "
         "(AutoRemove mode runs visible removal first).";
+}
+
+// The user-facing description of the provenance metadata strip (the honesty-lock
+// string). Exported and INLINE here so the wording test (the metadata honesty
+// lock) can assert on it directly without spawning a subprocess and without
+// linking the heavy cli_app.cpp TU (which drags in FFmpeg/video). There is ONE
+// place to change the caveat text: this definition. Keep it in sync with the
+// wording test. Plain factual description, no over-claim (DECISION B).
+inline std::string provenance_strip_help_text() {
+    return
+        "Provenance metadata strip (C2PA / AI markers). "
+        "Operates on container bytes only (PNG chunks, JPEG markers); it never "
+        "decodes pixels and is lossless on pixels (PNG IDAT and JPEG entropy bytes "
+        "are copied verbatim, only metadata chunks/markers are dropped). "
+        "v1 covers PNG and JPEG; WebP, AVIF, HEIF, JPEG-XL and MP4/MOV are reported "
+        "as unsupported and passed through unchanged (later phases). "
+        "On remove and synthid the strip runs as a default post-write pass on the "
+        "output file (opt out with --keep-provenance). On today's OpenCV output that "
+        "pass finds nothing to strip (OpenCV already drops all metadata on write), so "
+        "the file is not rewritten; the pass is a guarantee that holds regardless of "
+        "the encoder. The standalone `wmr metadata` subcommand losslessly strips a "
+        "user input file that does carry metadata. "
+        "AI markers covered: the C2PA manifest (PNG caBX chunk, JPEG APP11 JUMBF "
+        "envelope), the AI-specific tEXt/iTXt/zTXt keys (ComfyUI, A1111, InvokeAI, "
+        "Midjourney, SD parameters, etc.), and APP1/XMP, APP13/IPTC, APP1/EXIF "
+        "segments that carry an AI marker. --strip-all drops every non-essential "
+        "chunk/marker (keeps only what decode needs, plus APNG structural chunks). "
+        "Fail-safe: a malformed input is copied UNCHANGED, never truncated.";
 }
 
 // Parse a "x,y,w,h" rect string. Returns nullopt for an empty OR malformed string;

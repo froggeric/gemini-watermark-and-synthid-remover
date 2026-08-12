@@ -19,6 +19,7 @@
   - [Video](#video)
   - [Residual cleanup (optional)](#residual-cleanup-optional)
   - [cache subcommand](#cache-subcommand)
+  - [Provenance metadata](#provenance-metadata)
 - [How it works (for researchers)](#how-it-works-for-researchers)
   - [Visible-mark pipeline](#visible-mark-pipeline)
   - [SynthID reality](#synthid-reality)
@@ -39,10 +40,13 @@
 | Veo video watermark | Veo videos | Per-frame reverse alpha-blend + edge cleanup | Exact removal |
 | NotebookLM logo + wordmark | NotebookLM videos | Per-scene AI inpaint (MI-GAN on the Neural Engine or ONNX Runtime CPU) | Inpaint |
 | SynthID (invisible) | Gemini images | Lossy SDXL img2img regeneration | Lossy; validated against Google's official manual verifier (see below) |
+| C2PA / AI provenance metadata | AI-generated images | Lossless container-level strip (PNG, JPEG); default on remove/synthid | Lossless on pixels |
 
 `detect` locates the **visible** watermark without modifying the file. wmr does **not** detect SynthID: Google's "Verify with SynthID" is a manual in-app tool with no API wmr can drive, and the spectral detector shipped before 1.16.0 had no discriminative power (it scored ROC AUC 0.20 on images labeled by that Google verifier, so it was removed). See [`docs/research/synthid-spectral-removal-record.md`](docs/research/synthid-spectral-removal-record.md) for the full evidence.
 
 The SynthID removal is **lossy** and cannot be confirmed in-process (there is no verifier API). The default strength was validated against Google's manual verifier on a small, varied set including a double-watermarked image; see [SynthID reality](#synthid-reality) and the linked research docs for the honest scope.
+
+**What this does not do.** Removing the visible mark, SynthID, and provenance metadata takes them out of the file. It does not erase any server-side record: the service that generated the image may still associate it with the account that created it. The `metadata` strip is container-level only (labels and manifests); it does not touch pixel-level watermarks, which is what the visible-mark and SynthID paths handle.
 
 ## Quick start
 
@@ -219,6 +223,28 @@ wmr cache --clear-coreml   # clear the CoreML execution cache; CoreML recompiles
 
 `--clear-coreml` removes wmr's app-scoped compiled-Metal cache (`~/Library/Caches/wmr/com.apple.e5rt.e5bundlecache/`). It never touches the shared `~/Library/Caches/CoreML` or the model `.mlpackage` files. It is a no-op on Linux and Windows. See [CoreML cache management](#coreml-cache-management).
 
+### Provenance metadata
+
+`wmr metadata` reports and strips C2PA / AI-provenance metadata from PNG and JPEG images at the container level. It reads raw bytes and rewrites the container, dropping the C2PA manifest chunk/marker, the AI-specific `tEXt` / `iTXt` keys (ComfyUI, A1111, InvokeAI, Midjourney, Stable Diffusion parameters, prompt, workflow), and APP1 XMP / APP13 IPTC AI markers. It never decodes pixels: PNG IDAT bytes and JPEG entropy bytes are copied verbatim, so the image is bit-identical. This is a distinct concern from the visible diamond (reverse alpha-blend) and from SynthID (lossy regen).
+
+```bash
+wmr metadata image.png                 # report findings on image.png
+wmr metadata image.png -o clean.png    # report + lossless strip to clean.png
+wmr metadata folder/ -o clean/ -r      # batch a directory (recursive)
+wmr metadata image.png --strip-all -o clean.png   # also drop non-AI metadata
+```
+
+| Flag | Description |
+|------|-------------|
+| `-o, --output` | Output path (file; for a directory input, defaults to `<input>_clean/`) |
+| `--dry-run` | Report findings only; do not write |
+| `--strip-all` | Also drop non-AI metadata (author, copyright, camera settings). Default keeps those. |
+| `-r, --recursive` | Process directories recursively |
+
+`wmr remove` and `wmr synthid` also strip provenance metadata from the output by default. Opt out with `--keep-provenance`. Honest note: on today's OpenCV output this strip is a no-op scan. `cv::imwrite` already drops all container metadata on write and injects nothing, so the post-write scan finds nothing to strip and leaves the file untouched. The pass exists so the output stays provenance-free independent of the encoder. The active, load-bearing path is the standalone `wmr metadata`, which losslessly strips input files that do carry metadata.
+
+v1 scope: PNG and JPEG. WebP, AVIF, HEIF, JPEG-XL, and MP4/MOV are sniffed and reported as unsupported (bytes copied unchanged); they are later phases. On `video`, `--keep-provenance` is accepted for CLI symmetry and is a documented no-op (the FFmpeg re-encode already produces a fresh container with no carried-over input boxes).
+
 ## How it works (for researchers)
 
 This section is for technical readers who want the mechanism and the evidence. The detailed findings live under [`docs/research/`](docs/research/); the links below are the entry points.
@@ -337,4 +363,5 @@ Built on research and code from:
 - [GeminiWatermarkTool](https://github.com/allenk/GeminiWatermarkTool) and [VeoWatermarkRemover](https://github.com/allenk/VeoWatermarkRemover): reverse alpha-blend, NCC detection, inpainting, FDnCNN conversion (Allen Kuo)
 - [reverse-SynthID](https://github.com/aloshdenny/reverse-SynthID): SynthID spectral analysis
 - [Picsart-AI-Research/MI-GAN](https://github.com/Picsart-AI-Research/MI-GAN): MI-GAN inpainting (MIT, ICCV 2023)
+- [wiltodelta/remove-ai-watermarks](https://github.com/wiltodelta/remove-ai-watermarks): studied and reimplemented the byte-level container strip approach for C2PA / AI provenance (MIT; no verbatim code copied)
 - [KAIR/FDnCNN](https://github.com/csjcai/KAIR), [Tencent/ncnn](https://github.com/Tencent/ncnn), [zeux/volk](https://github.com/zeux/volk), [microsoft/onnxruntime](https://github.com/microsoft/onnxruntime): AI inference stack

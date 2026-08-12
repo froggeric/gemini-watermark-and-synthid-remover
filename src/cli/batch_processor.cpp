@@ -2,6 +2,7 @@
 #include "cli/progress.hpp"
 #include "core/watermark_engine.hpp"
 #include "core/types.hpp"
+#include "metadata/provenance.hpp"
 
 #include <opencv2/imgcodecs.hpp>
 #include <spdlog/spdlog.h>
@@ -193,6 +194,16 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
     if (!cv::imwrite(out_path.string(), image, params)) {
         spdlog::error("Failed to save: {}", out_path.string());
         return 1;
+    }
+
+    // Guaranteed provenance-free output (DECISION A). Defensive on today's OpenCV
+    // output (which already strips all metadata on write): the scan finds nothing
+    // and the file is not rewritten. The guarantee holds if the encoder changes.
+    if (!opts.keep_provenance) {
+        auto pr = wmr::provenance::post_write_provenance_strip(out_path.string(),
+                                                               /*keep_standard=*/true);
+        if (pr.rewritten && pr.items_removed > 0)
+            spdlog::info("    stripped {} provenance item(s)", pr.items_removed);
     }
 
     spdlog::info("  → {}", out_path.string());

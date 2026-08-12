@@ -32,6 +32,9 @@ set(SOURCES
     src/detection/still_geometry.cpp
     src/core/paths.cpp
     src/cli/progress.cpp
+    src/metadata/provenance.cpp
+    src/metadata/png_chunks.cpp
+    src/metadata/jpeg_markers.cpp
 )
 
 # Executable

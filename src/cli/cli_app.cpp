@@ -4,6 +4,7 @@
 #include "core/watermark_engine.hpp"
 #include "core/types.hpp"
 #include "core/update_check.hpp"
+#include "metadata/provenance.hpp"
 #ifdef WMR_BUILD_REGEN
 #include "core/regenerator.hpp"  // last_regen_run_stats() for the SynthID recap
 #endif
@@ -17,8 +18,10 @@
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <sstream>
 #include <vector>
 
@@ -393,6 +396,15 @@ static int process_single_image(const CliOptions& opts) {
         return 1;
     }
 
+    // Guaranteed provenance-free output (DECISION A). Defensive on today's OpenCV
+    // output (which already strips all metadata on write): the scan finds nothing
+    // and the file is not rewritten. The guarantee holds if the encoder changes.
+    if (!opts.keep_provenance) {
+        auto pr = wmr::provenance::post_write_provenance_strip(output, /*keep_standard=*/true);
+        if (pr.rewritten && pr.items_removed > 0)
+            spdlog::info("Stripped {} provenance item(s) from output", pr.items_removed);
+    }
+
     spdlog::info("Saved: {}", output);
     return 0;
 }
@@ -501,6 +513,180 @@ static int process_cache(const CliOptions& opts) {
     spdlog::info("No CoreML execution cache on this platform (macOS only).");
     return 0;
 #endif
+}
+
+namespace {
+
+// Read a whole file into a byte buffer. Returns nullopt on any IO error.
+// Used by `wmr metadata`, which reads raw container bytes itself (it does not
+// go through cv::imread; the metadata path is lossless byte IO, never a pixel
+// decode/re-encode).
+std::optional<std::vector<std::byte>> read_whole_file(const std::string& path) {
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) return std::nullopt;
+    const std::streamoff sz = f.tellg();
+    if (sz < 0) return std::nullopt;
+    f.seekg(0, std::ios::beg);
+    std::vector<std::byte> buf(static_cast<std::size_t>(sz));
+    if (sz > 0) {
+        f.read(reinterpret_cast<char*>(buf.data()), sz);
+        if (!f) return std::nullopt;
+    }
+    return buf;
+}
+
+bool write_whole_file(const std::filesystem::path& path,
+                      const std::byte* data, std::size_t n) {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    if (n > 0)
+        f.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(n));
+    return static_cast<bool>(f);
+}
+
+const char* provenance_format_name(provenance::ContainerFormat f) {
+    switch (f) {
+        case provenance::ContainerFormat::Png: return "PNG";
+        case provenance::ContainerFormat::Jpeg: return "JPEG";
+        case provenance::ContainerFormat::WebPRiff: return "WebP";
+        case provenance::ContainerFormat::IsobmffImage:
+            return "ISOBMFF image (AVIF/HEIF/JPEG-XL)";
+        case provenance::ContainerFormat::IsobmffVideo:
+            return "ISOBMFF video (MP4/MOV)";
+        default: return "unknown";
+    }
+}
+
+void print_provenance_report(const std::string& label,
+                             const provenance::MetadataReport& rep) {
+    spdlog::info("{}: {} ({})", label, provenance_format_name(rep.format),
+                 rep.supported ? "supported" : "unsupported, passed through");
+    if (rep.has_c2pa) {
+        spdlog::info("  C2PA manifest detected{}",
+                     rep.c2pa_note ? ("; possible issuer/tool: " + *rep.c2pa_note)
+                                   : "");
+    }
+    for (const auto& f : rep.findings)
+        spdlog::info("  {}: {}", f.where, f.detail);
+    if (rep.supported && rep.findings.empty())
+        spdlog::info("  no provenance metadata found");
+}
+
+} // namespace
+
+// `wmr metadata`: report and losslessly strip C2PA / AI-provenance metadata.
+// Operates on raw container bytes only (never decodes pixels). This is a
+// SEPARATE lightweight byte-IO loop, NOT batch_process (which loads into a
+// cv::Mat and re-encodes via OpenCV, which would be lossy on pixels and would
+// itself drop all metadata).
+static int process_metadata(const CliOptions& opts) {
+    namespace fs = std::filesystem;
+
+    // Core: read one file, report, and (unless --dry-run) write stripped output.
+    // out_path is nullopt when not writing (single-file --dry-run, or directory
+    // --dry-run). Returns 0 on success, 1 on error.
+    auto handle_one = [&](const fs::path& in_path,
+                          const std::optional<fs::path>& out_path) -> int {
+        auto data = read_whole_file(in_path.string());
+        if (!data) {
+            spdlog::warn("{}: read error, skipped", in_path.string());
+            return 1;
+        }
+        const auto rep = provenance::report_provenance(*data);
+        print_provenance_report(in_path.string(), rep);
+
+        if (opts.metadata_dry_run || !out_path) return 0;
+
+        provenance::StripOptions sopts;
+        sopts.keep_standard = !opts.metadata_strip_all;
+        sopts.dry_run = false;
+        const auto sr = provenance::strip_provenance(*data, sopts);
+
+        const fs::path& op = *out_path;
+        std::error_code ec;
+        if (!op.parent_path().empty())
+            fs::create_directories(op.parent_path(), ec);
+
+        // Fail-safe: when supported and something was stripped, write `out`.
+        // Otherwise (clean / unsupported / malformed) copy the input through
+        // UNCHANGED so the user still gets an output file.
+        bool wrote = false;
+        if (sr.ok && sr.supported && sr.items_removed > 0 && !sr.out.empty()) {
+            wrote = write_whole_file(op, sr.out.data(), sr.out.size());
+        } else {
+            wrote = write_whole_file(op, data->data(), data->size());
+        }
+        if (!wrote) {
+            spdlog::error("{}: failed to write output", op.string());
+            return 1;
+        }
+        if (sr.ok && sr.supported && sr.items_removed > 0)
+            spdlog::info("  stripped {} item(s) -> {}", sr.items_removed, op.string());
+        else
+            spdlog::info("  copied through -> {}", op.string());
+        return 0;
+    };
+
+    if (fs::is_directory(opts.input_path)) {
+        const fs::path input_dir(opts.input_path);
+        fs::path out_dir;
+        if (!opts.output_path.empty()) {
+            out_dir = fs::path(opts.output_path);
+        } else {
+            out_dir = input_dir.parent_path() /
+                      (input_dir.filename().string() + "_clean");
+        }
+        std::error_code ec;
+        fs::create_directories(out_dir, ec);
+
+        int total = 0, failed = 0;
+        auto visit = [&](const fs::path& in_file) {
+            ec.clear();
+            if (!fs::is_regular_file(in_file, ec)) return;
+            ++total;
+            const auto rel = fs::relative(in_file, input_dir, ec);
+            if (ec) {
+                spdlog::warn("{}: relative-path error, skipped", in_file.string());
+                ++failed;
+                return;
+            }
+            std::optional<fs::path> out_file;
+            if (!opts.metadata_dry_run)
+                out_file = out_dir / rel;
+            if (handle_one(in_file, out_file) != 0) ++failed;
+        };
+        if (opts.recursive) {
+            for (auto it = fs::recursive_directory_iterator(input_dir, ec);
+                 it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                if (ec) break;
+                visit(it->path());
+            }
+        } else {
+            for (auto it = fs::directory_iterator(input_dir, ec);
+                 it != fs::directory_iterator(); it.increment(ec)) {
+                if (ec) break;
+                visit(it->path());
+            }
+        }
+        spdlog::info("Processed {} file(s){}; {} failed",
+                     total,
+                     opts.metadata_dry_run ? " (dry run)" : "",
+                     failed);
+        return failed > 0 ? 1 : 0;
+    }
+
+    // Single file.
+    const fs::path input(opts.input_path);
+    std::optional<fs::path> out_path;
+    if (!opts.metadata_dry_run) {
+        if (!opts.output_path.empty()) {
+            out_path = fs::path(opts.output_path);
+        } else {
+            out_path = input.parent_path() /
+                       (input.stem().string() + "_clean" + input.extension().string());
+        }
+    }
+    return handle_one(input, out_path);
 }
 
 int run_cli(int argc, char* argv[]) {
@@ -640,6 +826,11 @@ int run_cli(int argc, char* argv[]) {
     CLI::Option* remove_attack_opt = add_synthid_attack(remove_cmd);
     remove_cmd->add_flag("-r,--recursive", opts.recursive, "Process directories recursively");
     remove_cmd->add_option("-o,--output", opts.output_path, "Output path (required for files; batch defaults to cleaned/)");
+    remove_cmd->add_flag("--keep-provenance", opts.keep_provenance,
+        "Keep C2PA/AI-provenance metadata in the output (default: strip it). "
+        "v1 strip covers PNG and JPEG and is lossless on pixels; the default "
+        "post-write pass is a no-op on today's OpenCV output (which already "
+        "drops all metadata). See `wmr metadata`.");
     add_still_geometry(remove_cmd);
     add_common(remove_cmd);
 
@@ -667,6 +858,11 @@ int run_cli(int argc, char* argv[]) {
         ->check(CLI::ExistingFile);
     synthid_cmd->add_flag("-f,--force", opts.force, "Skip detection");
     synthid_cmd->add_option("-o,--output", opts.output_path, "Output path (required)");
+    synthid_cmd->add_flag("--keep-provenance", opts.keep_provenance,
+        "Keep C2PA/AI-provenance metadata in the output (default: strip it). "
+        "v1 strip covers PNG and JPEG and is lossless on pixels; the default "
+        "post-write pass is a no-op on today's OpenCV output (which already "
+        "drops all metadata). See `wmr metadata`.");
     add_synthid_attack(synthid_cmd);
     add_common(synthid_cmd);
 
@@ -708,6 +904,10 @@ int run_cli(int argc, char* argv[]) {
     video_cmd->add_option("--inpaint-strength", opts.inpaint_strength,
                            "Inpaint strength 0.0-1.0")
         ->check(CLI::Range(0.0f, 1.0f));
+    video_cmd->add_flag("--keep-provenance", opts.keep_provenance,
+        "Accepted for CLI symmetry. wmr video re-encodes via FFmpeg (a fresh "
+        "container), so input C2PA boxes are not carried into the output by "
+        "construction; an explicit provenance strip is a later phase (v1).");
     add_common(video_cmd);
 
     // --- cache ---
@@ -721,6 +921,25 @@ int run_cli(int argc, char* argv[]) {
                         "Does NOT touch ~/Library/Caches/CoreML or the model .mlpackage files. "
                         "No-op on Linux/Windows.");
     add_common(cache_cmd);
+
+    // --- metadata ---
+    // Report and losslessly strip C2PA / AI-provenance metadata from a PNG or
+    // JPEG. Operates on container bytes only; never decodes pixels. v1 covers
+    // PNG and JPEG; WebP/AVIF/HEIF/JPEG-XL/MP4 are reported and passed through.
+    auto* metadata_cmd = app.add_subcommand(
+        "metadata", "Report and strip C2PA / AI-provenance metadata (lossless on pixels)");
+    metadata_cmd->add_option("input", opts.input_path, "Input image or directory")
+        ->required()
+        ->check(CLI::ExistingPath);
+    metadata_cmd->add_option("-o,--output", opts.output_path,
+        "Output path (file; for a directory input defaults to <input>_clean/)");
+    metadata_cmd->add_flag("--dry-run", opts.metadata_dry_run,
+        "Report findings only; do not write");
+    metadata_cmd->add_flag("--strip-all", opts.metadata_strip_all,
+        "Drop all non-essential metadata, not just AI markers");
+    metadata_cmd->add_flag("-r,--recursive", opts.recursive,
+        "Process directories recursively");
+    add_common(metadata_cmd);
 
     // Default subcommand: if no subcommand given, treat as positional for backward compat
     app.require_subcommand(0, 1);
@@ -777,6 +996,8 @@ int run_cli(int argc, char* argv[]) {
         opts.mode = CliMode::Video;
     } else if (cache_cmd->parsed()) {
         opts.mode = CliMode::Cache;
+    } else if (metadata_cmd->parsed()) {
+        opts.mode = CliMode::Metadata;
     } else {
         opts.mode = CliMode::AutoRemove;
     }
@@ -794,6 +1015,10 @@ int run_cli(int argc, char* argv[]) {
 
             case CliMode::Cache:
                 rc = process_cache(opts);
+                break;
+
+            case CliMode::Metadata:
+                rc = process_metadata(opts);
                 break;
 
             case CliMode::AutoRemove:
