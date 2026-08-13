@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - _Nothing yet._
 
+## [1.16.10] - 2026-08-13
+
+### Fixed
+
+- **Automated detection of the Gemini watermark on large images.** Plain `wmr remove` now finds and removes the watermark on large (over 1024px) Gemini 3.6 exports, such as 2400x1792 images. These carry the same 48px diamond as smaller exports, but the old size rule (over 1024px means the older 96px mark) sent detection down the wrong path, so the watermark was missed unless you passed `--force-small`. The position-and-size content search now runs on every image regardless of the size class. Genuine older Gemini 3.5 images that carry the real 96px mark are unchanged: the 48px template does not match them, so they keep using the 96px model with byte-for-byte identical output.
+
 ## [1.16.9] - 2026-08-12
 
 ### Added
