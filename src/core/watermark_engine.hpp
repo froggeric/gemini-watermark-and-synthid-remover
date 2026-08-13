@@ -101,12 +101,13 @@ public:
 
     // Resolve the still-image watermark position via the hybrid auto-geometry search
     // (Gemini 3.5+/3.6 small diamond), honoring --rect / --geo-preset overrides. Runs
-    // the content search only for V2 small; other variants return {nullopt, nullptr}
-    // (use the model) unless an explicit --rect override is given. Returns pos=nullopt
-    // when the result is the model position, so detect_watermark derives it itself (and
-    // the V2->V1 fallback path is unaffected). Call this ONCE per image, before the
-    // variant loop, and feed pos as detect_watermark's force_position + alpha as its
-    // custom_alpha.
+    // the content search for all V2 profiles (small and large); a genuine Gemini 3.5
+    // large image (real 96px mark) finds nothing trusted and falls back to the model,
+    // byte-identical. V1 returns {nullopt, nullptr} (use the model) unless an explicit
+    // --rect override is given. Returns pos=nullopt when the result is the model
+    // position, so detect_watermark derives it itself (and the V2->V1 fallback path is
+    // unaffected). Call this ONCE per image, before the variant loop, and feed pos as
+    // detect_watermark's force_position + alpha as its custom_alpha.
     StillResolveResult resolve_still_geometry(
         const cv::Mat& image,
         WatermarkVariant variant,

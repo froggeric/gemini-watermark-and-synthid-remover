@@ -153,6 +153,54 @@ TEST_CASE("still_geometry: regression gate boundaries (reused from video)",
     CHECK(decide_auto_geometry(false, 0.60f, kStillHighConfidence) == AutoGeometryVerdict::UseRaw);
 }
 
+// Gemini 3.6 stamps a 48px diamond at margin (96,96) even on large (>1024px) outputs.
+// The size heuristic calls these "Large" (96px model); the content search must still
+// recover the real 48px mark. kLgW/kLgH match the paintings-wm fixtures (2400x1792).
+static constexpr int kLgW = 2400, kLgH = 1792;
+
+TEST_CASE("still_geometry: Large Gemini 3.6 (48px @ 96,96) resolves via the search",
+          "[still_geometry]") {
+    WatermarkEngine engine;
+    const cv::Mat a48 = engine.get_v2_diamond_alpha_48_still();
+    REQUIRE(a48.cols == 48);
+
+    // Stamp the 48px mark at the real Gemini 3.6 large geometry: margin (96,96).
+    const cv::Point pos(kLgW - 96 - 48, kLgH - 96 - 48);  // (2256, 1648)
+    cv::Mat frame = textured(kLgW, kLgH, cv::Scalar(70, 90, 110));
+    add_watermark_alpha_blend(frame, a48, pos, 255.0f);
+
+    // Size heuristic says Large; the member search must run anyway and find the 48px.
+    StillGeometryOverride o;
+    auto r = engine.resolve_still_geometry(frame, WatermarkVariant::V2,
+                                           WatermarkSize::Large, o);
+    REQUIRE(r.pos.has_value());
+    CHECK(r.pos->margin_right == 96);
+    CHECK(r.pos->margin_bottom == 96);
+    CHECK(r.pos->logo_size == 48);
+    REQUIRE(r.alpha != nullptr);
+    CHECK(r.alpha->cols == 48);
+}
+
+TEST_CASE("still_geometry: Large Gemini 3.5 (96px) falls back to model, no 48px false hit",
+          "[still_geometry]") {
+    WatermarkEngine engine;
+    const cv::Mat a96 = engine.get_v2_diamond_alpha_large();
+    REQUIRE(a96.cols == 96);
+
+    // Stamp the real 96px mark at the Gemini 3.5 large geometry: margin (192,192).
+    const cv::Point pos(kLgW - 192 - 96, kLgH - 192 - 96);  // (2112, 1504)
+    cv::Mat frame = textured(kLgW, kLgH, cv::Scalar(70, 90, 110));
+    add_watermark_alpha_blend(frame, a96, pos, 255.0f);
+
+    // The 48px template must not score high enough to be trusted, so this resolves to
+    // the model (pos = nullopt) and V2-large removal stays byte-identical.
+    StillGeometryOverride o;
+    auto r = engine.resolve_still_geometry(frame, WatermarkVariant::V2,
+                                           WatermarkSize::Large, o);
+    CHECK_FALSE(r.pos.has_value());
+    CHECK(r.alpha == nullptr);
+}
+
 TEST_CASE("still_geometry: resolve_still_geometry precedence + matched alpha size",
           "[still_geometry]") {
     WatermarkEngine engine;

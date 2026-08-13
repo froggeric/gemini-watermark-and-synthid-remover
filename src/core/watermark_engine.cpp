@@ -222,9 +222,14 @@ WatermarkEngine::StillResolveResult WatermarkEngine::resolve_still_geometry(
         WatermarkPosition p = rect_to_still_position(*override.rect, W, H, override.rect->width);
         return {p, alpha_for_logo(p.logo_size)};
     }
-    // The content search only covers the V2 small path (the variant with a known model
-    // error and content-matchable diamond). V1/V2-large keep the model.
-    if (variant != WatermarkVariant::V2 || size != WatermarkSize::Small || !has_v2_) {
+    // The content search runs for every V2 profile. Gemini 3.6 places a 48px diamond at
+    // margin (96,96) even on large (>1024px) outputs, where the size heuristic wrongly
+    // picks the 96px Large model and detection fails; the search recovers that 48px mark.
+    // On a genuine Gemini 3.5 large image (real 96px mark) the 48px template scores
+    // ~0.43, below both the 0.45 min-confidence and the 0.60 raw-trust bars, so the
+    // search finds nothing trusted and returns the model position -> V2-large stays
+    // byte-identical. V1 keeps the model.
+    if (variant != WatermarkVariant::V2 || !has_v2_) {
         return {std::nullopt, nullptr};
     }
 

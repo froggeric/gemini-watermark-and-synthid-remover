@@ -142,13 +142,19 @@ for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
   calibrated preset (`snap_still_to_known`, center L1 <= 40 within the size +
   short-side-tier gate) is trusted at `kStillMinConfidence` (0.45); a raw off-table
   hit must clear `kStillHighConfidence` (0.60) or it falls back to the model.
-- **Scope:** the search runs only for `V2 && Small`. V1 and V2-large keep today's
-  exact model, byte-identical. `WatermarkEngine::resolve_still_geometry` is called
-  **once** at the CLI layer (not inside `detect_watermark`, which runs per variant
-  attempt) and returns `{pos, alpha}` — the matched alpha is threaded as
-  `custom_alpha` through `detect_watermark` and the remover, so a 48px detection
-  removes with the 48px alpha (and a `--rect`/`--geo-preset` override too, not the
-  default 36px).
+- **Scope:** the search runs for **every V2 profile** (small AND large), not just
+  V2-small. Gemini 3.6 stamps a 48px diamond at margin (96,96) even on large (>1024px)
+  outputs (e.g. 2400x1792), where `get_watermark_size` wrongly picks Large (96px model)
+  and plain `remove` used to find nothing; the search recovers that 48px mark via the
+  bottom-right corner window. **V2-large stays byte-identical:** on a real Gemini 3.5
+  large image (genuine 96px mark) the 48px template scores ~0.43, below the 0.45
+  min-confidence and the 0.60 raw-trust bars, so the search finds nothing trusted and
+  returns the model position (verified: identical md5 pre/post the un-gate). V1 keeps
+  the model. `WatermarkEngine::resolve_still_geometry` is called **once** at the CLI
+  layer (not inside `detect_watermark`, which runs per variant attempt) and returns
+  `{pos, alpha}`: the matched alpha is threaded as `custom_alpha` through
+  `detect_watermark` and the remover, so a 48px detection removes with the 48px alpha
+  (and a `--rect`/`--geo-preset` override too, not the default 36px).
 - **Calibrated preset table** `kStillPresets[]` (first entry `gemini36-portrait`,
   896x1200 -> 48px @ margin (96,96)); `kStillPresetNames[]` drives the `--geo-preset`
   IsMember validator (help lists names, unknown rejected). The model is the fallback
