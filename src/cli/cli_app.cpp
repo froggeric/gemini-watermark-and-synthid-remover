@@ -7,10 +7,10 @@
 #include "metadata/provenance.hpp"
 #ifdef WMR_BUILD_REGEN
 #include "core/regenerator.hpp"  // last_regen_run_stats() for the SynthID recap
+#include "core/model_downloader.hpp"  // find/remove_leftover_cpu_models (cache --clear-cpu-models)
 #endif
 #if defined(WMR_BUILD_AI_COREML_SD) && defined(__APPLE__)
 #include "core/coreml_cache.hpp"  // clear_coreml_execution_cache (the cache subcommand)
-#include "core/model_downloader.hpp"  // find/remove_leftover_cpu_models (cache --clear-cpu-models)
 #endif
 #include "video/video_processor.hpp"
 
