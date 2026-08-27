@@ -1,9 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <thread>
 #include <vector>
+#include <openssl/sha.h>
 #include "core/model_downloader.hpp"
 namespace fs = std::filesystem;
 using namespace wmr;
@@ -126,3 +132,109 @@ TEST_CASE("regen downloader", "[regen][downloader]") {
 
     fs::remove_all(tmp);
 }
+
+// Regression (seen live on a fresh mac, v1.16.10): a real HuggingFace fetch is a
+// 302 redirect to a CDN. libcurl fires the xferinfo callback during the 302's OWN
+// ~1 KB body too, so the downloader receives dltotal = the redirect page size
+// (observed 996/1000/1022 B, varying with the filename) BEFORE the final 200's
+// real Content-Length. ByteProgress.set_total latched that first bogus value and
+// ignored the real one: "6.46 GiB / 1022 B  678855410%". The downloader must
+// only report progress once the FINAL response's body is flowing.
+#if !defined(_WIN32)
+TEST_CASE("regen downloader redirect total", "[regen][downloader]") {
+    // Same deterministic body as the python server: byte[i] = (i*7+3) & 0xff.
+    constexpr size_t kBodyLen = 262144;
+    constexpr int kPort = 8461;
+
+    if (std::system("python3 --version >/dev/null 2>&1") != 0) {
+        SKIP("python3 not available; skipping redirect-server test");
+    }
+
+    fs::path tmp = fs::temp_directory_path() / "wmr_regen_redir";
+    fs::remove_all(tmp);
+    fs::create_directories(tmp);
+
+    // Minimal redirect server: /redir -> 302 with a ~1 KB body -> /file -> 200
+    // with the 256 KiB body. The 302 body size mimics HuggingFace's redirect page.
+    fs::path script = tmp / "wmr_redir_server.py";
+    {
+        std::ofstream f(script);
+        f << R"PY(
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+BODY = bytes((i*7+3)&0xff for i in range(262144))
+REDIR = b"x" * 1022
+class H(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    def do_GET(self):
+        if self.path.startswith("/redir"):
+            self.send_response(302)
+            self.send_header("Location", "/file")
+            self.send_header("Content-Length", str(len(REDIR)))
+            self.end_headers()
+            self.wfile.write(REDIR)
+        elif self.path.startswith("/file"):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(BODY)))
+            self.end_headers()
+            self.wfile.write(BODY)
+        else:
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+    def log_message(self, *a):
+        pass
+srv = HTTPServer(("127.0.0.1", int(sys.argv[1])), H)
+open(sys.argv[2], "w").write("ok")
+srv.serve_forever()
+)PY";
+    }
+    fs::path ready = tmp / "ready";
+    std::system(("python3 " + script.string() + " " + std::to_string(kPort) +
+                 " " + ready.string() + " >/dev/null 2>&1 &")
+                    .c_str());
+    bool up = false;
+    for (int i = 0; i < 100 && !up; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        up = fs::exists(ready);
+    }
+    if (!up) {
+        std::system("pkill -f wmr_redir_server.py >/dev/null 2>&1");
+        SKIP("local redirect server did not start (port busy?)");
+    }
+
+    // SHA256 of the deterministic body, computed the same way the downloader does.
+    std::vector<unsigned char> body(kBodyLen);
+    for (size_t i = 0; i < body.size(); ++i)
+        body[i] = static_cast<unsigned char>((i * 7 + 3) & 0xff);
+    unsigned char h[SHA256_DIGEST_LENGTH];
+    SHA256(reinterpret_cast<const unsigned char*>(body.data()), body.size(), h);
+    char sha[65];
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i)
+        std::snprintf(sha + i * 2, 3, "%02x", h[i]);
+
+    uint64_t min_total = UINT64_MAX, max_total = 0;
+    int calls = 0;
+    auto r = download_pinned_file("http://127.0.0.1:" + std::to_string(kPort) + "/redir",
+                                  tmp / "out.bin", sha,
+                                  /*allow_download=*/true, /*allow_empty_hash=*/false,
+                                  [&](uint64_t, uint64_t total) {
+                                      ++calls;
+                                      if (total > 0) {
+                                          min_total = std::min(min_total, total);
+                                          max_total = std::max(max_total, total);
+                                      }
+                                      return true;
+                                  });
+    std::system("pkill -f wmr_redir_server.py >/dev/null 2>&1");
+
+    REQUIRE(r.ok);
+    REQUIRE(calls > 0);
+    // Every non-zero total must be the FINAL response's body size, never the
+    // 302 redirect page's ~1 KB Content-Length.
+    REQUIRE(min_total == kBodyLen);
+    REQUIRE(max_total == kBodyLen);
+
+    fs::remove_all(tmp);
+}
+#endif  // !defined(_WIN32)

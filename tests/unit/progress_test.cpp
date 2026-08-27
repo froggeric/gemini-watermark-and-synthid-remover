@@ -174,3 +174,170 @@ TEST_CASE("RateEstimator: skips non-positive unit times", "[progress]") {
     e.sample(2.0);
     REQUIRE(e.sample_count() == 1);
 }
+
+// --- format_byte_line -------------------------------------------------------
+
+// Visible length: byte count excluding ANSI escape sequences (bold labels add
+// \033[1m ... \033[0m, which occupy no terminal columns).
+static size_t visible_len(const std::string& s) {
+    size_t n = 0;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '\033' && i + 1 < s.size() && s[i + 1] == '[') {
+            size_t j = i + 2;
+            while (j < s.size() && (s[j] < 0x40 || s[j] > 0x7e)) ++j;
+            i = j;  // j is the final byte of the CSI sequence; the loop's ++i skips it
+            continue;
+        }
+        ++n;
+    }
+    return n;
+}
+
+TEST_CASE("format_byte_line: percent clamps to 100 when done exceeds total", "[progress]") {
+    // The live bug: a 1 KB redirect-page total latched, then a 6.9 GB download
+    // rendered as "6.46 GiB / 1022 B  678855410%".
+    std::string line = format_byte_line("model", 6940000000ull, 1022, 0.0, false, 0);
+    REQUIRE(line.find("100%") != std::string::npos);
+    REQUIRE(line.find("%") != std::string::npos);
+    REQUIRE(line.find("678") == std::string::npos);
+}
+
+TEST_CASE("format_byte_line: normal uncapped line", "[progress]") {
+    constexpr uint64_t KiB = 1024ull;
+    std::string line = format_byte_line("m.bin", KiB, 2 * KiB, 0.0, false, 0);
+    REQUIRE(line == "m.bin  1.0 KiB / 2.0 KiB  50%  [############------------]");
+}
+
+TEST_CASE("format_byte_line: unknown total shows bytes without percent", "[progress]") {
+    std::string line = format_byte_line("m.bin", 2048, 0, 0.0, false, 0);
+    REQUIRE(line == "m.bin  2.0 KiB");
+    REQUIRE(line.find('%') == std::string::npos);
+}
+
+TEST_CASE("format_byte_line: cap shrinks the bar, then the label, never wraps", "[progress]") {
+    constexpr uint64_t KiB = 1024ull;
+    // Wide terminal: full line, 24-cell bar present.
+    std::string wide = format_byte_line("a-very-long-model-name.safetensors", KiB, 2 * KiB,
+                                        0.0, false, 100);
+    REQUIRE(visible_len(wide) <= 100);
+    REQUIRE(wide.find("####") != std::string::npos);   // bar kept (possibly shrunk)
+
+    // Narrow terminal (60 cols): the label alone is 34 cols; the bar must shrink
+    // or vanish and the visible line must fit.
+    std::string narrow = format_byte_line("a-very-long-model-name.safetensors", KiB, 2 * KiB,
+                                          0.0, false, 60);
+    REQUIRE(visible_len(narrow) <= 60);
+    // Sizes/percent (the information) survive; the label may be truncated.
+    REQUIRE(narrow.find("1.0 KiB / 2.0 KiB") != std::string::npos);
+    REQUIRE(narrow.find("50%") != std::string::npos);
+
+    // Degenerate 30-col terminal: still no wrap, still shows the percent.
+    std::string tiny = format_byte_line("a-very-long-model-name.safetensors", KiB, 2 * KiB,
+                                        0.0, false, 30);
+    REQUIRE(visible_len(tiny) <= 30);
+    REQUIRE(tiny.find("50%") != std::string::npos);
+}
+
+TEST_CASE("format_byte_line: bold codes wrap a truncated label and take no columns", "[progress]") {
+    constexpr uint64_t KiB = 1024ull;
+    std::string line = format_byte_line("a-very-long-model-name.safetensors", KiB, 2 * KiB,
+                                        0.0, true, 60);
+    REQUIRE(visible_len(line) <= 60);
+    // Balanced escapes: bold opens at the start, reset still present after
+    // truncation (a cut reset would leave the rest of the terminal bold).
+    REQUIRE(line.substr(0, 4) == "\033[1m");
+    REQUIRE(line.find("\033[0m") != std::string::npos);
+    // The reset must come before the payload (it closes the label), not just
+    // anywhere: find the FIRST reset and check the payload follows it.
+    size_t reset = line.find("\033[0m");
+    REQUIRE(line.compare(reset + 4, 2, "  ") == 0);
+}
+
+// --- WindowedRate -----------------------------------------------------------
+
+TEST_CASE("WindowedRate: bursty ticks produce a stable windowed rate", "[progress]") {
+    // Per-tick rates alternate 5x above/below the mean (observed live: 5 MiB/s
+    // and 303 MiB/s on consecutive ticks during a HuggingFace fetch). The
+    // displayed rate must reflect the multi-second average, not the bursts.
+    WindowedRate r(4.0);  // 4-second window
+    // Two 4s windows, each carrying 40 MiB total => true rate 10 MiB/s.
+    // Delivered in alternating bursts of 8 MiB and 0 per 0.4s tick.
+    double done = 0.0;
+    double t = 0.0;
+    for (int tick = 0; tick < 20; ++tick) {          // window 1: t 0.0..7.6
+        done += (tick % 2 == 0) ? 8.0 * 1024 * 1024 : 0.0;
+        r.sample(static_cast<uint64_t>(done), t);
+        t += 0.4;
+    }
+    // window 1 closed at t=4.0 with 40 MiB; window 2 closes at t=8.0
+    for (int tick = 0; tick < 10; ++tick) {          // window 2
+        done += (tick % 2 == 0) ? 8.0 * 1024 * 1024 : 0.0;
+        r.sample(static_cast<uint64_t>(done), t);
+        t += 0.4;
+    }
+    double rate = r.rate_per_sec();
+    REQUIRE(rate == Approx(10.0 * 1024 * 1024).epsilon(0.15));
+}
+
+TEST_CASE("WindowedRate: no rate before 2s of data, since-start during first window", "[progress]") {
+    WindowedRate r(4.0);
+    r.sample(0, 0.0);
+    r.sample(2ull * 1024 * 1024, 1.0);   // < 2s: hidden
+    REQUIRE(r.rate_per_sec() == 0.0);
+    REQUIRE_FALSE(r.full_window());
+    r.sample(4ull * 1024 * 1024, 2.5);   // since-start avg = 4 MiB / 2.5s
+    REQUIRE(r.rate_per_sec() == Approx(4.0 * 1024 * 1024 / 2.5).epsilon(0.05));
+    REQUIRE_FALSE(r.full_window());      // no full window closed yet
+}
+
+TEST_CASE("WindowedRate: full window flag flips after TWO windows close", "[progress]") {
+    WindowedRate r(4.0);
+    uint64_t done = 0;
+    double t = 0.0;
+    int i = 0;
+    for (; i <= 80 && !r.full_window(); ++i) {
+        r.sample(done, t);
+        done += 1024 * 1024;
+        t += 0.25;
+    }
+    REQUIRE(r.full_window());
+    REQUIRE(t >= 8.0);  // two 4s windows
+}
+
+TEST_CASE("WindowedRate: a stall decays the rate to zero", "[progress]") {
+    WindowedRate r(4.0);
+    uint64_t done = 0;
+    double t = 0.0;
+    for (; t < 8.0; t += 0.4) {           // 10 MiB/s for 8s
+        done += static_cast<uint64_t>(10.0 * 1024 * 1024 * 0.4);
+        r.sample(done, t);
+    }
+    REQUIRE(r.rate_per_sec() > 5.0 * 1024 * 1024);
+    for (; t < 28.0; t += 0.4) {          // 20s of no progress (5 empty windows)
+        r.sample(done, t);
+    }
+    REQUIRE(r.rate_per_sec() < 1.0 * 1024 * 1024);  // decayed toward 0
+}
+
+TEST_CASE("WindowedRate: non-monotonic time is ignored", "[progress]") {
+    WindowedRate r(4.0);
+    r.sample(1024, 1.0);
+    r.sample(4096, 0.5);   // clock went backwards; must not corrupt state
+    r.sample(8192, 3.5);
+    REQUIRE(r.rate_per_sec() > 0.0);
+}
+
+TEST_CASE("format_byte_line: ETA hidden until the rate is trusted", "[progress]") {
+    constexpr uint64_t KiB = 1024ull;
+    // Rate available but WindowedRate has not closed a full window yet: the
+    // rate shows, the ETA does not (a since-start average over <4s of bursty
+    // CDN data produced ETAs swinging 15s <-> 15min in the field).
+    std::string untrusted = format_byte_line("m.bin", KiB, 2 * KiB,
+                                             static_cast<double>(KiB), false, 0, false);
+    REQUIRE(untrusted.find("/s") != std::string::npos);
+    REQUIRE(untrusted.find("ETA") == std::string::npos);
+    std::string trusted = format_byte_line("m.bin", KiB, 2 * KiB,
+                                           static_cast<double>(KiB), false, 0, true);
+    REQUIRE(trusted.find("ETA") != std::string::npos);
+    REQUIRE(trusted.find("ETA <10s") != std::string::npos);  // 1 MiB left at 1 MiB/s
+}

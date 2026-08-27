@@ -10,6 +10,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - _Nothing yet._
 
+## [1.16.11] - 2026-08-27
+
+### Added
+
+- **Offer to reclaim the leftover CPU regen models on CoreML Macs.** If the sdcpp CPU models (`sd_xl_base_1.0.safetensors` + the fp16-fix VAE, about 7.2 GB) are sitting in the cache from an earlier first run while the CoreML (GPU) backend is in use, wmr prints a visible note and offers to delete them (y/N when running in a terminal, default No). They are never needed while CoreML is active and re-download on demand if you ever pass `--regen-backend cpu`. The same cleanup is available any time as `wmr cache --clear-cpu-models`.
+
+### Fixed
+
+- **Model download progress showed a nonsense total and printed a line per tick.** A HuggingFace fetch is a 302 redirect to a CDN, and curl reports the redirect page's own ~1 KB body size as the download total before the real response arrives. wmr latched that first value, so a 6.9 GB download rendered as `6.46 GiB / 1022 B  678855410%`, and the overflowing percent pushed the progress line past the terminal width (wrapping, so every refresh looked like a new line) and past the log-line bucket (one line per tick when piped). The downloader now ignores redirect-phase progress and reports the final response's size, the percent is clamped, the line is capped to the terminal width (the bar shrinks, then the filename truncates), and piped output only prints on milestone changes. The ETA no longer jumps either: the transfer rate is now a 4-second windowed average (tick-level rates swung between 5 and 300 MiB/s on bursty CDN delivery, taking the ETA from 15 seconds to 15 minutes and back within one refresh), and the ETA stays hidden until two full windows of data exist. Resumed downloads also report the absolute size now (the 206 partial-content detection missed HTTP/2 responses, so a resumed fetch showed over 100%).
+- **A fresh Mac downloaded the 7.2 GB CPU regen models and then used the slow CPU backend instead of CoreML.** The backend was resolved only after the CPU models were already fetched, and auto picked CoreML only if its models were already cached, so a machine without any models always landed on CPU (several times slower than the CoreML GPU path, after a bigger download). The backend is now resolved first: on a CoreML-capable Mac, auto downloads the CoreML models (about 4.7 GB, with progress, which previously downloaded silently) and uses them, falling back to the CPU backend only if that fails or `--regen-no-download` is set. An explicit `--regen-backend coreml` still fails closed instead of silently switching. The CPU models are fetched only when the CPU path actually runs.
+
 ## [1.16.10] - 2026-08-13
 
 ### Fixed

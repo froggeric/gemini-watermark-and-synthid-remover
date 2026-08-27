@@ -4,11 +4,15 @@
 #include <openssl/sha.h>  // SHA256_* (acceptable per correction #3; deprecated in OSSL 3, no -Werror)
 #include <spdlog/spdlog.h>
 #include <curl/curl.h>
+#include "cli/progress.hpp"
+#include "core/paths.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <vector>
 
 namespace wmr {
@@ -45,9 +49,21 @@ struct DlState {
     uint64_t have = 0;           // bytes already in .part when this attempt started
     bool server_partial = false;  // HTTP 206 in the header callback
     bool truncated = false;       // truncate-once guard for the 200-on-Range case
+    int cur_code = 0;             // status of the response whose headers are arriving
+    bool redirecting = false;     // a 3xx+Location was seen; we are NOT on the file body yet
     DownloadProgressFn progress;
     uint64_t written = 0;
 };
+
+// Case-insensitive ASCII prefix compare (`prefix` must already be lowercase).
+bool ieq_prefix(const std::string& s, const char* prefix) {
+    const size_t n = std::strlen(prefix);
+    if (s.size() < n) return false;
+    for (size_t i = 0; i < n; ++i) {
+        if (std::tolower(static_cast<unsigned char>(s[i])) != prefix[i]) return false;
+    }
+    return true;
+}
 
 // Decide append-vs-truncate from the response status: if the server ignored our Range
 // request and returned 200 (full body), the .part must be truncated once before we
@@ -68,14 +84,25 @@ size_t curl_write_cb(char* ptr, size_t sz, size_t n, void* ud) {
     return bytes;
 }
 
-// Mark server_partial on the first 206 status line; capturing total via
-// Content-Range is not required for correctness (we verify the full hash at the end).
+// Track per-response state: 206 detection and, critically, whether the response
+// being received is a redirect that curl will follow (3xx + Location). The status
+// prefix check is "HTTP/" so BOTH "HTTP/1.1 206" and "HTTP/2 206" match (HuggingFace
+// serves HTTP/2; the old "HTTP/1."-only check never saw its status lines).
 size_t curl_header_cb(char* buf, size_t sz, size_t n, void* ud) {
     DlState* st = static_cast<DlState*>(ud);
     std::string line(buf, static_cast<size_t>(sz * n));
-    if (line.substr(0, 7) == "HTTP/1." && line.size() >= 12) {
-        int code = std::atoi(line.c_str() + 9);
-        if (code == 206) st->server_partial = true;
+    if (line.size() >= 5 && line.compare(0, 5, "HTTP/") == 0) {
+        st->redirecting = false;  // a new response begins; its Location (if any) re-sets this
+        size_t sp = line.find(' ');
+        if (sp != std::string::npos && sp + 1 < line.size()) {
+            int code = std::atoi(line.c_str() + sp + 1);
+            st->cur_code = code;
+            if (code == 206) st->server_partial = true;
+        }
+        return sz * n;
+    }
+    if (st->cur_code >= 300 && st->cur_code < 400 && ieq_prefix(line, "location:")) {
+        st->redirecting = true;
     }
     return sz * n;
 }
@@ -83,12 +110,21 @@ size_t curl_header_cb(char* buf, size_t sz, size_t n, void* ud) {
 int curl_xfer_cb(void* ud, curl_off_t dltotal, curl_off_t dlnow,
                  curl_off_t /*ultotal*/, curl_off_t /*ulnow*/) {
     DlState* st = static_cast<DlState*>(ud);
-    if (st->progress) {
-        uint64_t total = dltotal > 0 ? static_cast<uint64_t>(dltotal) : 0;
-        // add the resumed offset so the user sees absolute progress on a resumed fetch
-        uint64_t abs_done = static_cast<uint64_t>(dlnow) + (st->server_partial ? st->have : 0);
-        if (!st->progress(abs_done, total)) return 1;  // non-zero -> abort
+    if (!st->progress) return 0;
+    // libcurl fires this callback during redirect responses too: a HuggingFace fetch
+    // is 302 -> CDN, and the ticks during the 302's OWN ~1 KB body report dltotal =
+    // the redirect page size (observed 996/1000/1022 B), not the file. Forwarding
+    // them latched a bogus total downstream ("6.46 GiB / 1022 B  678855410%").
+    // Suppress everything until the final (non-redirect) response.
+    if (st->redirecting) return 0;
+    uint64_t total = dltotal > 0 ? static_cast<uint64_t>(dltotal) : 0;
+    if (st->server_partial && total > 0) {
+        // 206 resume: dltotal is the REMAINING bytes; report the absolute size.
+        total += st->have;
     }
+    // add the resumed offset so the user sees absolute progress on a resumed fetch
+    uint64_t abs_done = static_cast<uint64_t>(dlnow) + (st->server_partial ? st->have : 0);
+    if (!st->progress(abs_done, total)) return 1;  // non-zero -> abort
     return 0;
 }
 }  // namespace
@@ -202,6 +238,49 @@ DownloadResult download_pinned_file(const std::string& url, const fs::path& dest
     }
     fs::remove(part);
     return r;
+}
+
+DownloadProgressFn make_byte_progress(const std::string& filename) {
+    auto bp = std::make_shared<ByteProgress>("  " + filename, 0ull);
+    return [bp](uint64_t done, uint64_t total) -> bool {
+        // The total arrives lazily via curl's xferinfo once the FINAL response's
+        // headers land (Content-Length / Content-Range); the downloader filters
+        // redirect-page ticks, and set_total lets the last non-zero total win.
+        if (total > 0) bp->set_total(total);
+        return bp->update(done);
+    };
+}
+
+LeftoverCpuModels find_leftover_cpu_models() {
+    // Same filenames resolve_model/resolve_vae fall back to in the user cache,
+    // plus their .part side files from an interrupted fetch.
+    static const char* kNames[] = {
+        "sd_xl_base_1.0.safetensors",
+        "sd_xl_base_1.0.safetensors.part",
+        "sdxl_vae-fp16-fix.safetensors",
+        "sdxl_vae-fp16-fix.safetensors.part",
+    };
+    LeftoverCpuModels out;
+    const fs::path dir = user_cache_dir();
+    for (const char* name : kNames) {
+        std::error_code ec;
+        fs::path p = dir / name;
+        if (fs::exists(p, ec)) {
+            const uintmax_t sz = fs::file_size(p, ec);
+            if (!ec) out.bytes += static_cast<uint64_t>(sz);
+            out.paths.push_back(std::move(p));
+        }
+    }
+    return out;
+}
+
+int remove_leftover_cpu_models(const LeftoverCpuModels& leftovers) {
+    int removed = 0;
+    for (const auto& p : leftovers.paths) {
+        std::error_code ec;
+        if (fs::remove(p, ec) && !ec) ++removed;
+    }
+    return removed;
 }
 
 }  // namespace wmr

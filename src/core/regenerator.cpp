@@ -10,6 +10,11 @@
 #include "core/coreml_sd_pipeline.hpp"
 #include "core/coreml_sd_model_fetch.hpp"
 #include "core/coreml_cache.hpp"  // manage_coreml_execution_cache
+#include "cli/cli_app.hpp"        // wmr::kHeaderRule (the cleanup notice frame)
+#include <cstdio>
+#ifdef __APPLE__
+#include <unistd.h>  // isatty (the interactive y/N offer)
+#endif
 #endif
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
@@ -107,44 +112,38 @@ constexpr const char* kRegenVaeSha256 =
 std::mutex g_stats_mu;
 RegenRunStats g_last_stats{};
 
-// Byte-progress-driven download callback. Strips the URL to the filename,
-// shows bytes / rate / ETA / bar (TTY) or milestone lines (non-TTY). The total
-// arrives lazily via curl's xferinfo (Content-Length / Content-Range), so it is
-// set on the first non-zero total; returns true to never cancel.
-DownloadProgressFn make_byte_progress(const std::string& filename) {
-    auto bp = std::make_shared<ByteProgress>("  " + filename, 0ull);
-    return [bp](uint64_t done, uint64_t total) -> bool {
-        if (total > 0) bp->set_total(total);
-        return bp->update(done);
-    };
-}
-
 int round_down_8(int n) { return std::max(8, (n / 8) * 8); }
 
-// Check if CoreML SDXL models are present at the resolved models directory.
-// Returns true only if BOTH at least one .mlpackage (unet/VAE/encoder) AND empty_prompt_embeds.bin exist.
-// This allows Auto to fall back to CPU on mac when the 6.5 GB models are absent.
-bool coreml_models_present() {
-    fs::path models_dir;
+// Resolve the CoreML models directory: env var, exe-dir/../share/wmr/coreml-sdxl,
+// exe-dir/coreml-sdxl, or ~/.cache/wmr/coreml-sdxl. Shared by the presence check
+// and the fetch so they can never disagree.
+fs::path resolve_coreml_models_dir() {
     const char* env_dir = std::getenv("WMR_COREML_SD_MODELS_DIR");
     if (env_dir && env_dir[0]) {
-        models_dir = fs::path(env_dir);
-    } else {
-        fs::path exe = exe_dir();
-        fs::path share = exe / ".." / "share" / "wmr" / "coreml-sdxl";
-        if (fs::exists(share)) {
-            models_dir = share;
-        } else if (fs::exists(exe / "coreml-sdxl")) {
-            models_dir = exe / "coreml-sdxl";
-        } else {
-            models_dir = cache_dir() / "coreml-sdxl";
-        }
+        return fs::path(env_dir);
     }
+    fs::path exe = exe_dir();
+    fs::path share = exe / ".." / "share" / "wmr" / "coreml-sdxl";
+    if (fs::exists(share)) {
+        return share;
+    }
+    if (fs::exists(exe / "coreml-sdxl")) {
+        return exe / "coreml-sdxl";
+    }
+    return cache_dir() / "coreml-sdxl";
+}
+
+// Check if CoreML SDXL models are present at the models directory.
+// Returns true only if BOTH at least one .mlpackage (unet/VAE/encoder) AND
+// empty_prompt_embeds.bin exist. Used to decide whether Auto needs to fetch them.
+bool coreml_models_present(const fs::path& models_dir) {
     // Check for the embeds binary first (quick check)
     fs::path embeds_bin = models_dir / "empty_prompt_embeds.bin";
     if (!fs::exists(embeds_bin)) return false;
     // Check for at least one .mlpackage (unet, VAE, or text_encoder)
     // The .mlpackage directories have the full HuggingFace-prefixed names
+    std::error_code ec;
+    if (!fs::exists(models_dir, ec)) return false;
     for (const auto& entry : fs::directory_iterator(models_dir)) {
         if (entry.is_directory() && entry.path().extension() == ".mlpackage") {
             return true;
@@ -152,6 +151,54 @@ bool coreml_models_present() {
     }
     return false;
 }
+
+#if defined(__APPLE__) && defined(WMR_BUILD_AI_COREML_SD)
+// After the CoreML pipeline is ready, the sdcpp CPU models that a pre-1.16.11
+// first run auto-downloaded are dead weight (~7.2 GB): Auto routes to CoreML,
+// and --regen-backend cpu re-downloads them on demand. Offer the reclaim with a
+// VISIBLE framed stderr notice (this fixes the users already affected by the
+// old CPU-default order); prompt y/N only when stdin AND stderr are TTYs, so
+// scripted runs never block and just see the notice + the manual command.
+// Runs once per process (initialize runs once per process, incl. batch mode).
+void offer_leftover_cpu_models_cleanup() {
+    LeftoverCpuModels leftovers = find_leftover_cpu_models();
+    if (leftovers.paths.empty()) return;
+    const double gb = static_cast<double>(leftovers.bytes) / (1024.0 * 1024.0 * 1024.0);
+    char size[32];
+    if (gb >= 1.0) std::snprintf(size, sizeof(size), "~%.1f GB", gb);
+    else std::snprintf(size, sizeof(size), "~%.0f MB", gb * 1024.0);
+    const std::string rule(kHeaderRule);
+    std::fputs("\n", stderr);
+    std::fputs(rule.c_str(), stderr);
+    std::fputc('\n', stderr);
+    std::fprintf(stderr, "wmr note: the CPU regen models are still in the cache (%s):\n", size);
+    for (const auto& p : leftovers.paths) {
+        std::fprintf(stderr, "  %s\n", p.string().c_str());
+    }
+    std::fputs("They are no longer needed now that the CoreML (GPU) backend is in use; an\n"
+               "older wmr downloaded them on first run. Deleting is safe: they re-download\n"
+               "on demand if you ever pass --regen-backend cpu.\n", stderr);
+    std::fputs("Reclaim any time with: wmr cache --clear-cpu-models\n", stderr);
+    std::fputs(rule.c_str(), stderr);
+    std::fputc('\n', stderr);
+    std::fflush(stderr);
+    if (!isatty(STDIN_FILENO) || !isatty(STDERR_FILENO)) return;  // scripted: notice only
+    std::fputs("Delete them now? [y/N] ", stderr);
+    std::fflush(stderr);
+    char buf[16] = {0};
+    if (std::fgets(buf, sizeof(buf), stdin) == nullptr) return;  // EOF -> default No
+    if (buf[0] != 'y' && buf[0] != 'Y') {
+        std::fputs("Kept.\n", stderr);
+        return;
+    }
+    const int n = remove_leftover_cpu_models(leftovers);
+    if (n > 0) {
+        std::fprintf(stderr, "Removed %d file(s), reclaimed %s.\n", n, size);
+    } else {
+        std::fputs("Could not remove them; try: wmr cache --clear-cpu-models\n", stderr);
+    }
+}
+#endif
 
 } // namespace
 
@@ -265,8 +312,148 @@ void Regenerator::ImplDeleter::operator()(Impl* p) const {
 bool Regenerator::initialize(const RegenConfig& cfg) {
     m_impl->cfg = cfg;
 
-    // 1) Resolve + download the model (base SDXL fp16 checkpoint) and the fp16-fix VAE.
-    //    The download is a first-run-only cost; on a warm cache neither file is needed.
+    // Adaptive stage numbering: the download stage only counts when it actually
+    // runs. Cached -> 3 stages (load/regen/restore -> [1/3]/[2/3]/[3/3]); a
+    // first-run download -> 4 stages ([1/4]..[4/4]). This avoids showing "[2/4]"
+    // when the user never saw a "[1/4]". Computed per the path that actually
+    // runs below (CoreML vs sdcpp); regen() reads the Impl fields.
+    auto set_stages_no_dl = [&] {
+        m_impl->stage_total = 3;
+        m_impl->load_stage_idx = 1;
+        m_impl->regen_stage_idx = 2;
+        m_impl->restore_stage_idx = 3;
+    };
+    auto set_stages_with_dl = [&] {
+        m_impl->stage_total = 4;
+        m_impl->load_stage_idx = 2;
+        m_impl->regen_stage_idx = 3;
+        m_impl->restore_stage_idx = 4;
+    };
+    bool dl_stage_shown = false;  // a [1/4] download stage was already printed
+
+    // 1) Resolve the backend FIRST, before any model bytes hit the disk. On a
+    //    CoreML-capable mac, Auto prefers the native CoreML pipeline and
+    //    BOOTSTRAPS its models (downloads them on first use, ~6 GB); the sdcpp
+    //    checkpoint (7.2 GB) is only fetched when the sdcpp path actually runs
+    //    (an explicit cpu/metal/vulkan backend, or a CoreML bootstrap failure
+    //    falling back). Before 1.16.11 the sdcpp models were downloaded
+    //    unconditionally BEFORE the backend was chosen, so every fresh Mac
+    //    burned 7.2 GB and then ran the slow CPU path (CoreML was never fetched
+    //    by Auto). Metal is broken (upstream sdcpp/ggml bug). Per upstream
+    //    docs/backend.md, an empty backend string (Auto, non-Apple) makes
+    //    stable-diffusion.cpp auto-select GPU -> integrated GPU -> CPU, so it
+    //    never fails for lack of a device and needs no manual sd_list_devices
+    //    probe. The resolved string is a const char* literal (static storage),
+    //    safe to assign directly to cp.backend.
+    RegenBackend b = regen_backend_from_string(cfg.backend);  // ""/auto->Auto, cpu/metal/vulkan/coreml
+#if defined(__APPLE__) && defined(WMR_BUILD_AI_COREML_SD)
+    if (b == RegenBackend::Auto || b == RegenBackend::CoreML) {
+        const bool explicit_coreml = (b == RegenBackend::CoreML);
+        fs::path models_dir = resolve_coreml_models_dir();
+        const bool present = coreml_models_present(models_dir);
+        if (!present && !cfg.allow_download) {
+            if (explicit_coreml) {
+                spdlog::warn("regen: CoreML models not available (models_dir='{}'). "
+                             "Regen did not run; image unchanged. Use --regen-backend cpu for CPU regen, "
+                             "or allow downloads by omitting --regen-no-download.", models_dir.string());
+                return false;
+            }
+            spdlog::info("regen: CoreML models not cached and download disabled "
+                         "(--regen-no-download); using the CPU backend.");
+            b = RegenBackend::Cpu;
+        } else {
+            if (present) {
+                set_stages_no_dl();
+                if (!explicit_coreml) {
+                    spdlog::info("regen: using the CoreML backend. "
+                                 "Override with --regen-backend cpu.");
+                }
+            } else {
+                set_stages_with_dl();
+                dl_stage_shown = true;
+                spdlog::info("regen: CoreML (GPU) models not cached; downloading them now "
+                             "(one-time first run). Override with --regen-backend cpu to use "
+                             "the CPU backend instead.");
+                Stage dl_stage(1, m_impl->stage_total, "Downloading CoreML models",
+                               "one-time first run");
+            }
+            bool ok = ensure_coreml_models(models_dir, cfg.allow_download,
+                                           /*show_progress=*/true);
+            if (ok) {
+                // Manage the app-scoped CoreML execution cache BEFORE the pipeline
+                // initializes (the first pipeline load triggers the CoreML compile that
+                // POPULATES the e5bundlecache). The key encodes everything that changes
+                // the compile output: wmr version, the three model SHA pins (a re-pin
+                // is the common dev case that ballooned the cache), and the macOS
+                // version. Best-effort; warns on failure and never throws. See
+                // coreml_cache.hpp for the full design + scope.
+                //
+                // NOTE: CoreML writes its compile cache under <HOME>/Library/Caches/wmr/
+                // (the macOS-conventional per-app Caches location), NOT under
+                // user_cache_dir() (~/.cache/wmr/, used for the model fetch). The
+                // coreml_app_cache_dir() helper resolves the right root.
+                {
+                    std::string model_key = compose_model_key(
+                        APP_VERSION,
+                        coreml_unet_sha256(),
+                        coreml_vae_encoder_sha256(),
+                        coreml_vae_decoder_sha256(),
+                        macos_version());
+                    manage_coreml_execution_cache(coreml_app_cache_dir(), model_key);
+                }
+                m_impl->coreml_pipeline = std::make_unique<CoreMLSDPipeline>();
+                fs::path embeds_bin = models_dir / "empty_prompt_embeds.bin";
+                {
+                    // First-load triggers a one-time CoreML compile (cached by CoreML afterwards).
+                    Stage load_stage(m_impl->load_stage_idx, m_impl->stage_total,
+                                     "Loading CoreML pipeline", "one-time first-run compile, ~30s");
+                    if (!m_impl->coreml_pipeline->initialize(models_dir.string(), embeds_bin.string())) {
+                        spdlog::warn("regen: CoreML pipeline initialization failed (models_dir='{}').",
+                                     models_dir.string());
+                        ok = false;
+                    }
+                }
+                if (ok && !m_impl->coreml_pipeline->is_ready()) {
+                    spdlog::warn("regen: CoreML pipeline not ready after initialization.");
+                    ok = false;
+                }
+                if (ok) {
+                    // Placement (GPU vs CPU) is resolved at the first predict; default
+                    // label is "GPU" until then (CoreML on mac is GPU-bound under
+                    // MLComputeUnitsAll).
+                    m_impl->backend_label = "GPU";
+                    m_impl->ready = true;
+                    spdlog::debug("regen: CoreML SDXL pipeline ready, models_dir='{}'",
+                                  models_dir.string());
+                    // Visible only when there is actually something to reclaim.
+                    offer_leftover_cpu_models_cleanup();
+                    return true;
+                }
+            }
+            if (explicit_coreml) {
+                spdlog::warn("regen: CoreML models not available (models_dir='{}'). "
+                             "Regen did not run; image unchanged. Use --regen-backend cpu for CPU regen, "
+                             "or allow downloads by omitting --regen-no-download.", models_dir.string());
+                return false;
+            }
+            spdlog::warn("regen: CoreML backend unavailable; falling back to the CPU backend.");
+            b = RegenBackend::Cpu;
+        }
+    }
+#elif defined(__APPLE__)
+    if (b == RegenBackend::Auto) {
+        // macOS without CoreML build: CPU only (Metal is broken).
+        b = RegenBackend::Cpu;
+        spdlog::warn("regen: Metal backend is broken on Apple Silicon (upstream sdcpp/ggml bug); "
+                     "using CPU (~3x slower, impractical for 4K tiled). Override with "
+                     "--regen-backend {metal,vulkan} at your own risk.");
+    }
+#endif
+
+    // 2) sdcpp path (explicit cpu/metal/vulkan, non-Apple auto, or the CPU
+    //    fallback from a failed CoreML attempt): resolve + download the model
+    //    (base SDXL fp16 checkpoint) and the fp16-fix VAE. The download is a
+    //    first-run-only cost; on a warm cache neither file is needed.
     fs::path model = resolve_model(cfg);
     const bool need_model_dl = !fs::exists(model) || fs::file_size(model) < (1ull<<30);
     fs::path vae = resolve_vae(cfg);
@@ -277,21 +464,11 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
         spdlog::warn("regen: model/VAE absent and download disabled");
         return false;
     }
-    // Adaptive stage numbering: the download stage only counts when it actually
-    // runs. Cached -> 3 stages (load/regen/restore -> [1/3]/[2/3]/[3/3]); a
-    // first-run download -> 4 stages ([1/4]..[4/4]). This avoids showing "[2/4]"
-    // when the user never saw a "[1/4]". Computed once here; regen() reads it.
     if (any_download) {
-        m_impl->stage_total = 4;
-        m_impl->load_stage_idx = 2;
-        m_impl->regen_stage_idx = 3;
-        m_impl->restore_stage_idx = 4;
+        set_stages_with_dl();
         Stage dl_stage(1, m_impl->stage_total, "Downloading model", "one-time first run");
-    } else {
-        m_impl->stage_total = 3;
-        m_impl->load_stage_idx = 1;
-        m_impl->regen_stage_idx = 2;
-        m_impl->restore_stage_idx = 3;
+    } else if (!dl_stage_shown) {
+        set_stages_no_dl();
     }
     if (need_model_dl) {
         auto r = download_pinned_file(kRegenModelUrl, model, kRegenModelSha256, true,
@@ -306,111 +483,6 @@ bool Regenerator::initialize(const RegenConfig& cfg) {
         if (!r.ok) { spdlog::warn("regen: fp16-fix VAE download failed: {}", r.error); return false; }
     }
 
-    // 3) Backend: resolve cfg.backend ("auto"/"cpu"/"metal"/"vulkan"/"coreml").
-    //    On Apple Silicon, Auto prefers CoreML (fast, correct) if the 6.5 GB .mlpackage
-    //    models are present, else falls back to CPU (so a user without models still gets
-    //    working CPU regen, not a silent skip). Metal is broken (upstream sdcpp/ggml bug).
-    //    Override with --regen-backend. Per upstream docs/backend.md, an empty backend
-    //    (Auto, non-Apple) makes stable-diffusion.cpp auto-select GPU -> integrated GPU ->
-    //    CPU, so it never fails for lack of a device and needs no manual sd_list_devices
-    //    probe. The resolved string is a const char* literal (static storage), safe to
-    //    assign directly to cp.backend.
-    RegenBackend b = regen_backend_from_string(cfg.backend);  // ""/auto->Auto, cpu/metal/vulkan/coreml
-    if (b == RegenBackend::Auto) {
-#if defined(__APPLE__) && defined(WMR_BUILD_AI_COREML_SD)
-        // On macOS with CoreML build: Auto prefers CoreML if models are present,
-        // else falls back to CPU (slow but correct).
-        if (coreml_models_present()) {
-            b = RegenBackend::CoreML;
-            spdlog::info("regen: using the CoreML backend. "
-                         "Override with --regen-backend cpu.");
-        } else {
-            b = RegenBackend::Cpu;
-            spdlog::info("regen: CoreML models not found, using the CPU backend (~3 min for 4K). "
-                         "Override with --regen-backend.");
-        }
-#elif defined(__APPLE__)
-        // macOS without CoreML build: CPU only (Metal is broken).
-        b = RegenBackend::Cpu;
-        spdlog::warn("regen: Metal backend is broken on Apple Silicon (upstream sdcpp/ggml bug); "
-                     "using CPU (~3x slower, impractical for 4K tiled). Override with "
-                     "--regen-backend {metal,vulkan} at your own risk.");
-#endif
-    }
-
-#ifdef WMR_BUILD_AI_COREML_SD
-    // CoreML backend: use the native CoreML pipeline instead of sdcpp.
-    // Auto routes to CoreML on mac when models are present.
-    if (b == RegenBackend::CoreML) {
-        // Resolve models directory: env var, exe-dir/../share/wmr/coreml-sdxl,
-        // exe-dir/coreml-sdxl, or ~/.cache/wmr/coreml-sdxl.
-        fs::path models_dir;
-        const char* env_dir = std::getenv("WMR_COREML_SD_MODELS_DIR");
-        if (env_dir && env_dir[0]) {
-            models_dir = fs::path(env_dir);
-        } else {
-            fs::path exe = exe_dir();
-            fs::path share = exe / ".." / "share" / "wmr" / "coreml-sdxl";
-            if (fs::exists(share)) {
-                models_dir = share;
-            } else if (fs::exists(exe / "coreml-sdxl")) {
-                models_dir = exe / "coreml-sdxl";
-            } else {
-                models_dir = cache_dir() / "coreml-sdxl";
-            }
-        }
-        // Fetch models from HuggingFace if missing (unless --regen-no-download)
-        if (!ensure_coreml_models(models_dir, cfg.allow_download)) {
-            spdlog::warn("regen: CoreML models not available (models_dir='{}'). "
-                         "Regen did not run; image unchanged. Use --regen-backend cpu for CPU regen, "
-                         "or allow downloads by omitting --regen-no-download.", models_dir.string());
-            return false;
-        }
-        // Manage the app-scoped CoreML execution cache BEFORE the pipeline
-        // initializes (the first pipeline load triggers the CoreML compile that
-        // POPULATES the e5bundlecache). The key encodes everything that changes
-        // the compile output: wmr version, the three model SHA pins (a re-pin
-        // is the common dev case that ballooned the cache), and the macOS
-        // version. Best-effort; warns on failure and never throws. See
-        // coreml_cache.hpp for the full design + scope.
-        //
-        // NOTE: CoreML writes its compile cache under <HOME>/Library/Caches/wmr/
-        // (the macOS-conventional per-app Caches location), NOT under
-        // user_cache_dir() (~/.cache/wmr/, used for the model fetch). The
-        // coreml_app_cache_dir() helper resolves the right root.
-        {
-            std::string model_key = compose_model_key(
-                APP_VERSION,
-                coreml_unet_sha256(),
-                coreml_vae_encoder_sha256(),
-                coreml_vae_decoder_sha256(),
-                macos_version());
-            manage_coreml_execution_cache(coreml_app_cache_dir(), model_key);
-        }
-        m_impl->coreml_pipeline = std::make_unique<CoreMLSDPipeline>();
-        fs::path embeds_bin = models_dir / "empty_prompt_embeds.bin";
-        {
-            // First-load triggers a one-time CoreML compile (cached by CoreML afterwards).
-            Stage load_stage(m_impl->load_stage_idx, m_impl->stage_total,
-                             "Loading CoreML pipeline", "one-time first-run compile, ~30s");
-            if (!m_impl->coreml_pipeline->initialize(models_dir.string(), embeds_bin.string())) {
-                spdlog::warn("regen: CoreML pipeline initialization failed (models_dir='{}'). "
-                             "Regen did not run; image unchanged.", models_dir.string());
-                return false;
-            }
-        }
-        if (!m_impl->coreml_pipeline->is_ready()) {
-            spdlog::warn("regen: CoreML pipeline not ready after initialization. Regen did not run; image unchanged.");
-            return false;
-        }
-        // Placement (GPU vs CPU) is resolved at the first predict; default label
-        // is "GPU" until then (CoreML on mac is GPU-bound under MLComputeUnitsAll).
-        m_impl->backend_label = "GPU";
-        m_impl->ready = true;
-        spdlog::debug("regen: CoreML SDXL pipeline ready, models_dir='{}'", models_dir.string());
-        return true;
-    }
-#endif
     const char* backend = regen_backend_string(b);  // "" (non-mac auto), "cpu", "metal", "vulkan0"
 
     // 4) Create the ctx. SDXL: clip_l/clip_g are embedded in the base checkpoint, so they

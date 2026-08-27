@@ -18,6 +18,15 @@ TEST_CASE("regen dispatch graceful fallback", "[regen][dispatch]") {
     // ggml-metal static teardown). Cache-independent: passes whether or not the
     // real SDXL model is cached in ~/.cache/wmr/.
     cfg.regen_model_path = "/nonexistent/wmr-regen-no-model-test.safetensors";
+    // Since 1.16.11 auto resolves the backend FIRST and bootstraps CoreML when
+    // its models are present; neutralize that path too (a dev Mac with cached
+    // CoreML models would otherwise succeed). Bracketed: restored below so
+    // other regen tests in this process still see the real dir.
+#ifdef _WIN32
+    _putenv_s("WMR_COREML_SD_MODELS_DIR", "Z:\\nonexistent\\wmr-regen-no-model-test");
+#else
+    setenv("WMR_COREML_SD_MODELS_DIR", "/nonexistent/wmr-regen-no-model-test", 1);
+#endif
 #endif
     DetectionResult dr{}; dr.confidence = 0.0f; dr.detected = false;  // no visible mark; regen runs on whole image regardless
     // The bool return surfaces a failed/no-op regen to the exit code: a failing regen
@@ -31,4 +40,12 @@ TEST_CASE("regen dispatch graceful fallback", "[regen][dispatch]") {
     REQUIRE(ok);                            // non-regen path: alpha-blend no-op'd on no-mark, returns true
 #endif
     REQUIRE(img.size() == before.size());   // survived, sane size
+#ifdef WMR_BUILD_REGEN
+    // Restore the real CoreML models dir for the rest of the test process.
+#ifdef _WIN32
+    _putenv_s("WMR_COREML_SD_MODELS_DIR", "");
+#else
+    unsetenv("WMR_COREML_SD_MODELS_DIR");
+#endif
+#endif
 }

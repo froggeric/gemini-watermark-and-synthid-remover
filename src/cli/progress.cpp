@@ -19,11 +19,19 @@
 
 #ifdef _WIN32
 #  include <io.h>
+#  ifndef NOMINMAX
+#    define NOMINMAX  // windows.h min/max macros break std::min/std::max below
+#  endif
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
 #  define WMR_FILENO_STDERR (_fileno(stderr))
 #  define WMR_FILENO_STDOUT (_fileno(stdout))
 #  define WMR_ISATTY(fd) (_isatty(fd) != 0)
 #else
 #  include <unistd.h>
+#  include <sys/ioctl.h>
 #  define WMR_FILENO_STDERR STDERR_FILENO
 #  define WMR_FILENO_STDOUT STDOUT_FILENO
 #  define WMR_ISATTY(fd) (isatty(fd) != 0)
@@ -53,6 +61,27 @@ int stream_fd(ProgressStream s) {
     return s == ProgressStream::Stderr ? WMR_FILENO_STDERR : WMR_FILENO_STDOUT;
 }
 
+// Visible column count of the terminal behind `f` (fallback 80 when unknown).
+// Refreshing lines are capped to this so a \r-rewrite never wraps to a second
+// terminal row (a wrapped row survives above the cursor, which reads as one
+// new line per refresh).
+int terminal_width(FILE* f) {
+#ifdef _WIN32
+    CONSOLE_SCREEN_BUFFER_INFO ci{};
+    if (GetConsoleScreenBufferInfo(reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(f))), &ci)) {
+        int w = ci.srWindow.Right - ci.srWindow.Left + 1;
+        if (w > 0) return w;
+    }
+    return 80;
+#else
+    struct winsize ws{};
+    if (ioctl(fileno(f), TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0) {
+        return static_cast<int>(ws.ws_col);
+    }
+    return 80;
+#endif
+}
+
 std::string timestamp_now() {
     auto now = std::time(nullptr);
     std::tm tm{};
@@ -64,6 +93,14 @@ std::string timestamp_now() {
     char buf[16];
     std::strftime(buf, sizeof(buf), "%H:%M:%S", &tm);
     return buf;
+}
+
+constexpr const char* kBold = "\033[1m";
+constexpr const char* kReset = "\033[0m";
+
+// Render `text` bold when `color` is on; plain text otherwise.
+std::string bold_if(bool color, const std::string& text) {
+    return color ? (kBold + text + kReset) : text;
 }
 
 } // namespace
@@ -120,6 +157,113 @@ std::string format_bar(double frac, int width) {
     return "[" + std::string(filled, '#') + std::string(width - filled, '-') + "]";
 }
 
+WindowedRate::WindowedRate(double window_s)
+    : window_s_(window_s > 0.5 ? window_s : 0.5) {}
+
+void WindowedRate::sample(uint64_t done, double t) {
+    if (!started_) {
+        started_ = true;
+        win_done_ = done;
+        win_t0_ = t;
+        first_done_ = done;
+        first_t0_ = t;
+        return;
+    }
+    if (t <= win_t0_) return;  // non-monotonic time: ignore the sample
+    const double win = t - win_t0_;
+    if (win >= window_s_) {
+        // A window closed: average over it, lightly blended with the previous
+        // window so the displayed rate steps rather than snaps. A done < anchor
+        // (a server that restarts the transfer) re-anchors without a rate.
+        if (done >= win_done_) {
+            const double inst = static_cast<double>(done - win_done_) / win;
+            rate_ = (rate_ > 0.0) ? (0.5 * inst + 0.5 * rate_) : inst;
+        }
+        ++closed_;
+        win_done_ = done;
+        win_t0_ = t;
+        return;
+    }
+    if (rate_ <= 0.0 && closed_ == 0) {
+        // First window still filling: average since the first sample, shown
+        // only once >= 2s of data exists (a shorter span is one TCP burst).
+        const double span = t - first_t0_;
+        if (span >= 2.0) {
+            rate_ = static_cast<double>(done - first_done_) / span;
+        }
+    }
+    // Otherwise keep the last completed window's rate (display stability).
+}
+
+double WindowedRate::rate_per_sec() const { return rate_; }
+bool WindowedRate::full_window() const { return closed_ >= 2; }
+
+std::string format_byte_line(const std::string& label, uint64_t done, uint64_t total,
+                             double rate_bps, bool bold, int max_cols, bool eta_trusted) {
+    // Clamped percent: a mis-reported total (or a server under-reporting
+    // Content-Length) must never render "678855410%" (seen live on a fresh-mac
+    // model download; it also overflowed the milestone bucket off a TTY).
+    int pct = 0;
+    if (total > 0) {
+        double p = static_cast<double>(done) * 100.0 / static_cast<double>(total);
+        if (p > 0.0) {
+            pct = static_cast<int>(std::lround(p));
+            if (pct > 100) pct = 100;
+        }
+    }
+    std::string payload;
+    if (total > 0) {
+        payload = "  " + format_bytes(done) + " / " + format_bytes(total);
+        payload += fmt::format("  {}%", pct);
+        if (rate_bps > 0.0) {
+            payload += "  " + format_bytes(static_cast<uint64_t>(rate_bps)) + "/s";
+            double eta = (done < total && eta_trusted)
+                ? static_cast<double>(total - done) / rate_bps : 0.0;
+            if (eta > 0.0) payload += "  ETA " + format_eta(eta);
+        }
+    } else {
+        // Total unknown: show what we have.
+        payload = "  " + format_bytes(done);
+        if (rate_bps > 0.0) {
+            payload += "  " + format_bytes(static_cast<uint64_t>(rate_bps)) + "/s";
+        }
+    }
+
+    const double frac = total > 0 ? static_cast<double>(done) / static_cast<double>(total) : 0.0;
+    int bar_w = total > 0 ? 24 : 0;  // rendered bar = "  " + (cells + brackets) = w + 4
+    if (max_cols > 0) {
+        const size_t cap = static_cast<size_t>(max_cols);
+        // Fit in priority order: shrink the bar (24 -> 0), then truncate the label,
+        // then drop the bar / cut the payload on a degenerate (< ~40-col) terminal.
+        // The payload (sizes / rate / ETA) is the information; the bar and label
+        // are decoration.
+        while (bar_w > 0 &&
+               label.size() + payload.size() + static_cast<size_t>(bar_w) + 4 > cap) {
+            --bar_w;
+        }
+        const size_t bar_len = bar_w > 0 ? static_cast<size_t>(bar_w) + 4 : 0;
+        std::string lab = label;
+        if (lab.size() + payload.size() + bar_len > cap) {
+            size_t keep = cap > payload.size() + bar_len ? cap - payload.size() - bar_len : 0;
+            lab = lab.substr(0, std::min(lab.size(), keep));
+        }
+        std::string bar = bar_w > 0 ? "  " + format_bar(frac, bar_w) : std::string();
+        if (lab.size() + payload.size() + bar.size() > cap) {
+            bar.clear();
+            if (lab.size() + payload.size() > cap) {
+                lab.clear();
+                if (payload.size() > cap) payload.resize(cap);
+            }
+        }
+        // Bold AFTER truncation so the ANSI codes stay balanced; escape bytes
+        // never count toward the visible width.
+        return bold_if(bold, lab) + payload + bar;
+    }
+    // Uncapped (non-TTY log lines).
+    std::string bar = bar_w > 0 ? "  " + format_bar(frac, bar_w) : std::string();
+    return bold_if(bold, label) + payload + bar;
+}
+
 // ---------------------------------------------------------------------------
 // RateEstimator
 // ---------------------------------------------------------------------------
@@ -165,13 +309,6 @@ double RateEstimator::avg_unit_seconds() const { return ewma_unit_; }
 // ---------------------------------------------------------------------------
 namespace {
 
-constexpr const char* kBold = "\033[1m";
-constexpr const char* kReset = "\033[0m";
-
-// Render `text` bold when `color` is on; plain text otherwise.
-std::string bold_if(bool color, const std::string& text) {
-    return color ? (kBold + text + kReset) : text;
-}
 
 // Format a discrete rate: "<rate> fps" when unit=="frame", else "<rate> <unit>/s".
 std::string format_rate(double rate_per_sec, const std::string& unit) {
@@ -462,13 +599,11 @@ struct ByteProgress::Impl {
     FILE* file = stderr;
     bool tty = false;
     int64_t throttle_ms = 500;
-    std::chrono::steady_clock::time_point last_sample_time;
     std::chrono::steady_clock::time_point last_print_time;
     uint64_t last_bytes = 0;
     int last_bucket = -1;
     int prev_line_len = 0;
-    double ewma_rate = 0.0;  // bytes/sec
-    int samples = 0;
+    WindowedRate rate{4.0};  // bytes/sec over the last window (see WindowedRate)
     bool final_printed = false;
     bool finished = false;
 };
@@ -483,7 +618,6 @@ ByteProgress::ByteProgress(std::string label, uint64_t total_bytes,
     pimpl_->tty = progress_is_tty(s);
     pimpl_->throttle_ms = throttle_ms;
     auto now = std::chrono::steady_clock::now();
-    pimpl_->last_sample_time = now;
     pimpl_->last_print_time = now;
 }
 
@@ -497,33 +631,10 @@ ByteProgress::~ByteProgress() {
 
 void ByteProgress::set_total(uint64_t total_bytes) {
     if (!pimpl_) return;
-    if (pimpl_->total == 0 && total_bytes > 0) pimpl_->total = total_bytes;
-}
-
-static std::string build_byte_line(bool color, const std::string& label,
-                                   uint64_t done, uint64_t total,
-                                   double rate_bps, int samples) {
-    std::string line = bold_if(color, label);
-    if (total > 0) {
-        int pct = static_cast<int>(static_cast<double>(done) * 100.0 / static_cast<double>(total));
-        line += "  " + format_bytes(done) + " / " + format_bytes(total);
-        line += fmt::format("  {}%", pct);
-        if (samples > 0 && rate_bps > 0.0) {
-            line += "  " + format_bytes(static_cast<uint64_t>(rate_bps)) + "/s";
-            double eta = (done < total)
-                ? static_cast<double>(total - done) / rate_bps : 0.0;
-            if (eta > 0.0) line += "  ETA " + format_eta(eta);
-        }
-        double frac = static_cast<double>(done) / static_cast<double>(total);
-        line += "  " + format_bar(frac);
-    } else {
-        // Total unknown: show what we have.
-        line += "  " + format_bytes(done);
-        if (samples > 0 && rate_bps > 0.0) {
-            line += "  " + format_bytes(static_cast<uint64_t>(rate_bps)) + "/s";
-        }
-    }
-    return line;
+    // Last non-zero total wins: an earlier bogus value (e.g. a redirect page's
+    // Content-Length arriving before the final response) must not latch for the
+    // rest of the transfer ("6.46 GiB / 1022 B" on a real 6.9 GB fetch).
+    if (total_bytes > 0) pimpl_->total = total_bytes;
 }
 
 bool ByteProgress::update(uint64_t done) {
@@ -531,19 +642,11 @@ bool ByteProgress::update(uint64_t done) {
     auto& p = *pimpl_;
 
     auto now = std::chrono::steady_clock::now();
-    if (done > p.last_bytes) {
-        double dt = std::chrono::duration<double>(now - p.last_sample_time).count();
-        uint64_t delta = done - p.last_bytes;
-        if (dt > 0.0 && delta > 0) {
-            double instant = static_cast<double>(delta) / dt;
-            constexpr double kAlpha = 0.3;
-            if (p.samples == 0) p.ewma_rate = instant;
-            else p.ewma_rate = kAlpha * instant + (1.0 - kAlpha) * p.ewma_rate;
-            ++p.samples;
-        }
-        p.last_bytes = done;
-        p.last_sample_time = now;
-    }
+    const double t = std::chrono::duration<double>(now.time_since_epoch()).count();
+    // Sample every tick (even byte-less ones) so a stall closes empty windows
+    // and the displayed rate decays instead of freezing at the last burst.
+    p.rate.sample(done, t);
+    p.last_bytes = done;
 
     bool force = (p.total > 0 && done >= p.total);
     if (!force) {
@@ -551,9 +654,13 @@ bool ByteProgress::update(uint64_t done) {
         if (since_print_ms < static_cast<double>(p.throttle_ms)) return true;
     }
 
-    std::string line = build_byte_line(p.tty, p.label, done, p.total, p.ewma_rate, p.samples);
-
     if (p.tty) {
+        // Capped to the terminal width: an overlong line WRAPS, and the wrapped
+        // row cannot be rewritten by \r (it survives above the cursor), which
+        // reads as one new line per refresh.
+        std::string line = format_byte_line(p.label, done, p.total, p.rate.rate_per_sec(),
+                                            /*bold=*/true, terminal_width(p.file),
+                                            p.rate.full_window());
         std::fputc('\r', p.file);
         std::fputs(line.c_str(), p.file);
         int len = static_cast<int>(line.size());
@@ -563,8 +670,23 @@ bool ByteProgress::update(uint64_t done) {
         p.prev_line_len = len;
         std::fflush(p.file);
     } else {
-        int bucket = (p.total > 0) ? static_cast<int>(done * 20 / p.total) : 0;
-        if (force || bucket != p.last_bucket) {
+        std::string line = format_byte_line(p.label, done, p.total, p.rate.rate_per_sec(),
+                                            /*bold=*/false, /*max_cols=*/0,
+                                            p.rate.full_window());
+        // Milestone bucket from the CLAMPED percent (0..20): with a bogus total
+        // the raw done*20/total quotient exploded past 2^31 and changed every
+        // tick, printing a line per throttle window.
+        int pct = 0;
+        if (p.total > 0) {
+            double v = static_cast<double>(done) * 100.0 / static_cast<double>(p.total);
+            pct = v > 0.0 ? static_cast<int>(std::lround(v)) : 0;
+            if (pct > 100) pct = 100;
+        }
+        int bucket = pct / 5;
+        // force (done == total) prints only ONCE: the final xferinfo ticks of a
+        // fast transfer all report the complete state and would otherwise print
+        // several identical 100% lines.
+        if ((force && !p.final_printed) || bucket != p.last_bucket) {
             std::fprintf(p.file, "[%s] %s\n", timestamp_now().c_str(), line.c_str());
             p.last_bucket = bucket;
         }
@@ -585,8 +707,10 @@ void ByteProgress::finish() {
         p.finished = true;
         return;
     }
-    std::string line = build_byte_line(p.tty, p.label, p.last_bytes, p.total,
-                                       p.ewma_rate, p.samples);
+    std::string line = format_byte_line(p.label, p.last_bytes, p.total, p.rate.rate_per_sec(),
+                                        /*bold=*/p.tty,
+                                        p.tty ? terminal_width(p.file) : 0,
+                                        p.rate.full_window());
     if (p.tty) {
         std::fputc('\r', p.file);
         std::fputs(line.c_str(), p.file);

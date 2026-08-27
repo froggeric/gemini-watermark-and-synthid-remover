@@ -101,7 +101,7 @@ Supported inputs: PNG, JPEG, WebP images; MP4 and other FFmpeg-supported video.
 | `synthid` | Scrub only the SynthID invisible watermark (lossy SDXL regen runs by default). |
 | `video` | Remove watermarks from video (Gemini, Veo, NotebookLM). |
 | `detect` | Detect the visible watermark without modifying. |
-| `cache` | Manage wmr's local caches (today: `--clear-coreml` on macOS). |
+| `cache` | Manage wmr's local caches (`--clear-coreml` on macOS, `--clear-cpu-models`). |
 
 Run `wmr <subcommand> --help` for the full flag list.
 
@@ -154,13 +154,15 @@ wmr remove image.png --synthid-attack regen -o clean.png      # visible diamond 
 
 **What you should expect.** At the strength that reliably scrubs SynthID (0.10) the output is visibly smoothed and simplified. Measured fidelity is about 29 to 41 dB PSNR versus the input across a varied test set. Lowering the strength is **not recommended**: lighter strengths (0.04 to 0.08) cleared singly-watermarked images in testing but missed a double-watermarked image, so 0.10 is the default. Regen also leaves a forensic footprint (a regen output is itself a detectable diffusion output); this is an attack on the watermark, not an invisibility guarantee.
 
-**Model download.** SynthID regen downloads about 6.5 GB on first use (the SDXL base checkpoint and the fp16-fix VAE, SHA256-pinned, cached in `~/.cache/wmr/`). The CoreML backend (macOS Apple Silicon, about 4.5 GB) auto-downloads from `huggingface.co/froggeric/wmr`. Pass `--regen-no-download` to refuse the fetch.
+**Model download.** SynthID regen downloads its models on first use (SHA256-pinned, cached in `~/.cache/wmr/`, fetched from `huggingface.co/froggeric/wmr`). What it fetches depends on the backend: about 4.7 GB of CoreML packages on an Apple Silicon Mac (the default there), or the 7.3 GB SDXL base checkpoint plus the fp16-fix VAE when the CPU backend is used (explicitly, or as the fallback when `--regen-no-download` is set or the CoreML setup fails). Pass `--regen-no-download` to refuse the fetch.
+
+If an earlier version already downloaded the CPU models on your Mac and you are now on CoreML, wmr tells you on the next regen run that they are no longer needed and offers to delete them (about 7.3 GB back). `wmr cache --clear-cpu-models` does the same on demand; they re-download if you ever pass `--regen-backend cpu`.
 
 **Backend selection.** All backends use the same SDXL base model and the same deterministic-Euler img2img schedule, so the validated strength (0.10 @ 50 steps = 5 actual denoise steps) applies uniformly.
 
 | Backend | Platform | Performance | Notes |
 |---------|----------|-------------|-------|
-| `auto` (default) | all | macOS Apple Silicon prefers CoreML when models are present; else CPU | Linux, Windows, and macOS Intel fall back to CPU. |
+| `auto` (default) | all | macOS Apple Silicon uses CoreML and downloads its models on first use; falls back to CPU if that fails or `--regen-no-download` is set | Linux, Windows, and macOS Intel use CPU. |
 | `coreml` | macOS Apple Silicon | about 20s per 1024-tile on M4, plus a one-time ~50s load | Native CoreML SDXL pipeline; much faster than CPU. |
 | `cpu` | all | about 231s per 896x1200 tile | sdcpp via stable-diffusion.cpp. The default on Linux, Windows, and macOS Intel release binaries. |
 | `metal` | macOS Apple Silicon (arm64 binary only) | not recommended | sdcpp Metal backend is unstable upstream on Apple Silicon; prefer `auto` or `coreml`. |
@@ -215,13 +217,16 @@ wmr remove in.png --strength 150 -o out.png    # cleanup strength (0-300%)
 
 ### cache subcommand
 
-`wmr cache` manages wmr's local caches. Today it exposes one operation (macOS only):
+`wmr cache` manages wmr's local caches:
 
 ```bash
-wmr cache --clear-coreml   # clear the CoreML execution cache; CoreML recompiles on the next regen
+wmr cache --clear-coreml       # clear the CoreML execution cache; CoreML recompiles on the next regen
+wmr cache --clear-cpu-models   # delete the cached CPU regen models (about 7.3 GB)
 ```
 
 `--clear-coreml` removes wmr's app-scoped compiled-Metal cache (`~/Library/Caches/wmr/com.apple.e5rt.e5bundlecache/`). It never touches the shared `~/Library/Caches/CoreML` or the model `.mlpackage` files. It is a no-op on Linux and Windows. See [CoreML cache management](#coreml-cache-management).
+
+`--clear-cpu-models` deletes the sdcpp CPU regen models from the user cache. They are only needed for `--regen-backend cpu`; while the CoreML backend is in use they are dead weight, and they re-download on demand if you ever want the CPU path. wmr also offers this cleanup on its own the first time it notices the leftovers while CoreML is active.
 
 ### Provenance metadata
 
@@ -333,7 +338,7 @@ See [`CLAUDE.md`](CLAUDE.md) for the full build matrix, platform quirks, and the
 | Linux x86_64 | exact reverse-blend | ONNX Runtime MI-GAN (CPU) | CPU (sdcpp, slow) | yes |
 | Windows x86_64 | exact reverse-blend | ONNX Runtime MI-GAN (CPU) | CPU (sdcpp, slow) | yes |
 
-All packages ship the visible-removal alpha maps and the MI-GAN model. The SynthID regen model (about 6.5 GB CPU, or 4.5 GB CoreML on macOS) is downloaded on first use, not bundled. macOS packages are Developer ID signed and notarized.
+All packages ship the visible-removal alpha maps and the MI-GAN model. The SynthID regen models (about 4.7 GB CoreML on macOS, 7.3 GB CPU elsewhere) are downloaded on first use, not bundled. macOS packages are Developer ID signed and notarized.
 
 ### Help wanted: faster SynthID regen on Linux and Windows
 

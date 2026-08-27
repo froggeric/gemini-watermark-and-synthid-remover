@@ -67,12 +67,13 @@ struct FetchResult { bool ok = false; bool refetched = false; };
 
 // Fetch one file: present+sidecar-pin-match -> no-op (O(1) warm path);
 // present+SHA-verified -> refresh sidecar, no-op; present+SHA-mismatch -> remove +
-// re-download; absent -> download. allow_download gates the network only.
+// re-download; absent -> download. allow_download gates the network only;
+// show_progress renders a ByteProgress line during the (multi-GB) download.
 // base_url+"/"+filename is the source URL. Reuses download_pinned_file (OpenSSL
 // SHA, true HTTP Range resume, atomic rename).
 FetchResult fetch_one(const std::string& filename, const std::string& sha,
                       const fs::path& models_dir, bool allow_download,
-                      const std::string& base_url) {
+                      const std::string& base_url, bool show_progress) {
     fs::path local_path = models_dir / filename;
     fs::path ok_sidecar = models_dir / (filename + ".sha256.ok");
 
@@ -106,7 +107,8 @@ FetchResult fetch_one(const std::string& filename, const std::string& sha,
     }
 
     std::string url = base_url + "/" + filename;
-    auto result = download_pinned_file(url, local_path, sha, true, false, nullptr);
+    auto result = download_pinned_file(url, local_path, sha, true, false,
+                                       show_progress ? make_byte_progress(filename) : nullptr);
     if (!result.ok) {
         spdlog::error("regen: failed to download {}: {}", filename, result.error);
         return {false, false};
@@ -131,17 +133,20 @@ bool ensure_extracted(const fs::path& models_dir, const CoreMLModelFile& f, bool
 bool ensure_coreml_model_files(const fs::path& models_dir,
                                const std::vector<CoreMLModelFile>& files,
                                bool allow_download,
-                               const std::string& base_url) {
+                               const std::string& base_url,
+                               bool show_progress) {
     fs::create_directories(models_dir);
     for (const auto& f : files) {
-        auto fr = fetch_one(f.filename, f.sha256, models_dir, allow_download, base_url);
+        auto fr = fetch_one(f.filename, f.sha256, models_dir, allow_download, base_url,
+                            show_progress);
         if (!fr.ok) return false;
         if (!ensure_extracted(models_dir, f, fr.refetched)) return false;
     }
     return true;
 }
 
-bool ensure_coreml_models(const fs::path& models_dir, bool allow_download) {
+bool ensure_coreml_models(const fs::path& models_dir, bool allow_download,
+                          bool show_progress) {
     static const std::vector<CoreMLModelFile> kFiles = {
         {kFilenameEmbeds,     kSha256Embeds,     false, nullptr},
         {kFilenameUnet,       kSha256Unet,       true,
@@ -151,7 +156,8 @@ bool ensure_coreml_models(const fs::path& models_dir, bool allow_download) {
         {kFilenameVaeDecoder, kSha256VaeDecoder, true,
          "Stable_Diffusion_version_stabilityai_stable-diffusion-xl-base-1.0_vae_decoder.mlpackage"},
     };
-    return ensure_coreml_model_files(models_dir, kFiles, allow_download, kHfRepoUrl);
+    return ensure_coreml_model_files(models_dir, kFiles, allow_download, kHfRepoUrl,
+                                     show_progress);
 }
 
 // Thin accessors over the file-local pins so other TUs can re-derive the same

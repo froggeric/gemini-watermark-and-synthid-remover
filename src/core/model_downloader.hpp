@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <vector>
+#include "cli/progress.hpp"
 namespace wmr {
 namespace fs = std::filesystem;
 
@@ -44,6 +46,27 @@ DownloadResult download_pinned_file(const std::string& url,
                                     bool allow_download,
                                     bool allow_empty_hash = false,
                                     DownloadProgressFn progress = nullptr);
+
+// A DownloadProgressFn rendering a ByteProgress line for the file being fetched
+// (bytes / percent / rate / ETA + bar on a TTY, timestamped milestone lines when
+// piped). Shared by the sdcpp model/VAE fetch and the CoreML model fetch so
+// every multi-GB download reports the same way.
+DownloadProgressFn make_byte_progress(const std::string& filename);
+
+// The sdcpp (CPU-regen) models that earlier versions auto-downloaded into the
+// user cache on a mac FIRST RUN, before CoreML became the auto default (the
+// pre-1.16.11 order fetched them before resolving the backend). Once the CoreML
+// pipeline is in use they are dead weight (~7.2 GB); they re-download on demand
+// if --regen-backend cpu is ever passed. Only files physically inside the user
+// cache dir are considered, never user-specified (WMR_REGEN_MODEL) or
+// exe-dir-bundled copies.
+struct LeftoverCpuModels {
+    std::vector<fs::path> paths;
+    uint64_t bytes = 0;
+};
+LeftoverCpuModels find_leftover_cpu_models();
+// Removes exactly the listed paths (best-effort). Returns the count removed.
+int remove_leftover_cpu_models(const LeftoverCpuModels& leftovers);
 
 }  // namespace wmr
 #endif

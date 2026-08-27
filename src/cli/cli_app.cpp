@@ -10,6 +10,7 @@
 #endif
 #if defined(WMR_BUILD_AI_COREML_SD) && defined(__APPLE__)
 #include "core/coreml_cache.hpp"  // clear_coreml_execution_cache (the cache subcommand)
+#include "core/model_downloader.hpp"  // find/remove_leftover_cpu_models (cache --clear-cpu-models)
 #endif
 #include "video/video_processor.hpp"
 
@@ -484,35 +485,65 @@ static int process_video(const CliOptions& opts) {
     return result.success ? 0 : 1;
 }
 
-// `wmr cache` — manage wmr's local caches. Today only `--clear-coreml` (macOS):
-// remove_all the app-scoped e5bundlecache so CoreML recompiles fresh on the next
-// regen. The shared ~/Library/Caches/CoreML is NEVER touched. On Linux/Windows
-// (or a CoreML-SD-OFF build) the flag is accepted but logs a no-op message and
-// exits 0, so help text stays cross-platform consistent.
+// `wmr cache` — manage wmr's local caches.
+//   --clear-coreml (macOS): remove_all the app-scoped e5bundlecache so CoreML
+//     recompiles fresh on the next regen. The shared ~/Library/Caches/CoreML is
+//     NEVER touched. On Linux/Windows (or a CoreML-SD-OFF build) the flag is
+//     accepted but logs a no-op message and exits 0, so help text stays
+//     cross-platform consistent.
+//   --clear-cpu-models: delete the sdcpp CPU regen models from the user cache
+//     (~7.2 GB; the ones a pre-1.16.11 first run auto-downloaded before CoreML
+//     became the mac default). Only the cached copies are touched, never
+//     WMR_REGEN_MODEL / exe-dir files; they re-download on demand if
+//     --regen-backend cpu is ever used.
 static int process_cache(const CliOptions& opts) {
-    if (!opts.cache_clear_coreml) {
-        // No flag: surface the available cache ops. (Today only one.)
+    if (!opts.cache_clear_coreml && !opts.cache_clear_cpu_models) {
+        // No flag: surface the available cache ops.
         spdlog::info("wmr cache manages wmr's local caches. "
-                     "Available: --clear-coreml (macOS).");
+                     "Available: --clear-coreml (macOS), --clear-cpu-models.");
         return 0;
     }
-#if defined(WMR_BUILD_AI_COREML_SD) && defined(__APPLE__)
-    std::filesystem::path cache_dir = wmr::coreml_app_cache_dir();
-    std::filesystem::path e5 = cache_dir / "com.apple.e5rt.e5bundlecache";
-    bool ok = wmr::clear_coreml_execution_cache(cache_dir);
-    if (ok) {
-        spdlog::info("Cleared the CoreML execution cache ({}).", e5.string());
-        spdlog::info("CoreML will recompile on the next regen (one-time, ~30s).");
-        return 0;
-    }
-    // A clear failure is non-fatal (warns were already emitted by the removal
-    // helper). Do not block the user; surface the partial result.
-    spdlog::warn("CoreML execution cache clear was partial (see warnings above).");
-    return 0;
+    if (opts.cache_clear_cpu_models) {
+#ifdef WMR_BUILD_REGEN
+        LeftoverCpuModels leftovers = find_leftover_cpu_models();
+        if (leftovers.paths.empty()) {
+            spdlog::info("No CPU regen models in the cache (nothing to clear).");
+        } else {
+            const double gb = static_cast<double>(leftovers.bytes) / (1024.0 * 1024.0 * 1024.0);
+            const int n = remove_leftover_cpu_models(leftovers);
+            if (n > 0) {
+                if (gb >= 1.0) {
+                    spdlog::info("Removed {} CPU regen model file(s), reclaimed ~{:.1f} GB.", n, gb);
+                } else {
+                    spdlog::info("Removed {} CPU regen model file(s), reclaimed ~{:.0f} MB.",
+                                 n, gb * 1024.0);
+                }
+            } else {
+                spdlog::warn("Found the CPU regen models but could not remove them.");
+            }
+        }
 #else
-    spdlog::info("No CoreML execution cache on this platform (macOS only).");
-    return 0;
+        spdlog::info("No CPU regen models on this build (regen disabled).");
 #endif
+    }
+    if (opts.cache_clear_coreml) {
+#if defined(WMR_BUILD_AI_COREML_SD) && defined(__APPLE__)
+        std::filesystem::path cache_dir = wmr::coreml_app_cache_dir();
+        std::filesystem::path e5 = cache_dir / "com.apple.e5rt.e5bundlecache";
+        bool ok = wmr::clear_coreml_execution_cache(cache_dir);
+        if (ok) {
+            spdlog::info("Cleared the CoreML execution cache ({}).", e5.string());
+            spdlog::info("CoreML will recompile on the next regen (one-time, ~30s).");
+        } else {
+            // A clear failure is non-fatal (warns were already emitted by the removal
+            // helper). Do not block the user; surface the partial result.
+            spdlog::warn("CoreML execution cache clear was partial (see warnings above).");
+        }
+#else
+        spdlog::info("No CoreML execution cache on this platform (macOS only).");
+#endif
+    }
+    return 0;
 }
 
 namespace {
@@ -911,8 +942,9 @@ int run_cli(int argc, char* argv[]) {
     add_common(video_cmd);
 
     // --- cache ---
-    // Manages wmr's local caches. Today only --clear-coreml (macOS): clears the
-    // app-scoped e5bundlecache so CoreML recompiles fresh on the next regen.
+    // Manages wmr's local caches: --clear-coreml (macOS) clears the app-scoped
+    // e5bundlecache so CoreML recompiles fresh on the next regen;
+    // --clear-cpu-models deletes the cached sdcpp CPU regen models.
     auto* cache_cmd = app.add_subcommand("cache", "Manage wmr's local caches");
     cache_cmd->add_flag("--clear-coreml", opts.cache_clear_coreml,
                         "Clear wmr's app-scoped CoreML execution cache "
@@ -920,6 +952,12 @@ int run_cli(int argc, char* argv[]) {
                         "CoreML recompiles on the next regen (one-time, ~30s). "
                         "Does NOT touch ~/Library/Caches/CoreML or the model .mlpackage files. "
                         "No-op on Linux/Windows.");
+    cache_cmd->add_flag("--clear-cpu-models", opts.cache_clear_cpu_models,
+                        "Delete the cached sdcpp CPU regen models "
+                        "(sd_xl_base_1.0.safetensors + sdxl_vae-fp16-fix.safetensors, "
+                        "~7.2 GB in the user cache). Not needed while the CoreML (GPU) "
+                        "backend is in use; they re-download on demand if you pass "
+                        "--regen-backend cpu.");
     add_common(cache_cmd);
 
     // --- metadata ---

@@ -25,7 +25,8 @@ namespace fs = std::filesystem;
 //   - coreml-sdxl-vae-decoder.mlpackage.tar.gz (extracted to .mlpackage dir)
 //   - empty_prompt_embeds.bin (copied as-is)
 //
-bool ensure_coreml_models(const fs::path& models_dir, bool allow_download);
+bool ensure_coreml_models(const fs::path& models_dir, bool allow_download,
+                          bool show_progress = false);
 
 // One CoreML model artifact to ensure-present. Decouples the cache/SHA/extract
 // logic from the pinned constants so it is unit-testable against tiny file://
@@ -47,7 +48,8 @@ struct CoreMLModelFile {
 bool ensure_coreml_model_files(const std::filesystem::path& models_dir,
                                const std::vector<CoreMLModelFile>& files,
                                bool allow_download,
-                               const std::string& base_url);
+                               const std::string& base_url,
+                               bool show_progress = false);
 
 // Accessors for the current model SHA256 pins. Exposed so other TUs (the
 // execution-cache key in coreml_cache.cpp) can re-derive the SAME pin set that

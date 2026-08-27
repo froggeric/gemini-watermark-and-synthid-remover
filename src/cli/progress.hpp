@@ -54,6 +54,56 @@ std::string format_eta(double seconds);
 // the count of inner cells (default 24). Filled cells are '#', empty '-'.
 std::string format_bar(double frac, int width = 24);
 
+// Smoothed transfer rate over a re-anchoring window, for byte downloads.
+// Progress ticks arrive many times per second and per-tick instant rates swing
+// wildly on bursty CDN/TCP delivery (observed 5 MiB/s and 303 MiB/s on
+// consecutive ticks during a HuggingFace fetch), which made the displayed rate
+// and the ETA jump between seconds and minutes. The anchor (bytes, time)
+// re-anchors every `window_s` seconds, so the reported rate is the average over
+// the last completed window (lightly blended with the previous one); until the
+// first window fills it is the average since the first sample (hidden for the
+// first second). A stall with no byte progress decays the rate toward zero as
+// windows close empty. Pure; unit-tested.
+class WindowedRate {
+public:
+    explicit WindowedRate(double window_s = 4.0);
+
+    // Record cumulative bytes `done` at monotonic time `t` (seconds, any fixed
+    // epoch). Call on every progress tick, including ticks with no new bytes
+    // (they let empty windows close on a stall).
+    void sample(uint64_t done, double t);
+
+    double rate_per_sec() const;  // 0 until >= 2s of data
+    // True once TWO full windows have closed (enough data for a trustworthy
+    // ETA; one window can still be dominated by a resume burst).
+    bool full_window() const;
+
+private:
+    double window_s_;
+    bool started_ = false;
+    int closed_ = 0;
+    uint64_t win_done_ = 0;
+    uint64_t first_done_ = 0;
+    double win_t0_ = 0.0;
+    double first_t0_ = 0.0;
+    double rate_ = 0.0;
+};
+
+// Pure: one ByteProgress line, "<label>  <done> / <total>  <pct>%  <rate>/s
+// [ETA <eta>]  [bar]" (or "<label>  <done>  <rate>/s" when total == 0). The
+// percent is clamped to [0,100] so a mis-reported total can never render as
+// "678855410%". `max_cols` > 0 (the TTY width) caps the VISIBLE line to that
+// many columns: the bar shrinks first, then the label is truncated (before the
+// bold wrapping, so the ANSI codes stay balanced). A line longer than the
+// terminal wraps, and a wrapped line cannot be rewritten by \r (the wrapped
+// row survives above the cursor), which reads as one new line per refresh.
+// `bold` wraps the label in ANSI bold; codes never count toward max_cols.
+// `eta_trusted` (false until WindowedRate::full_window()) suppresses the ETA
+// while the rate estimate is still noisy; the rate itself still shows.
+std::string format_byte_line(const std::string& label, uint64_t done, uint64_t total,
+                             double rate_bps, bool bold, int max_cols,
+                             bool eta_trusted = true);
+
 // Exponentially-weighted moving average of time-per-unit (e.g. seconds/tile).
 // ETA is hidden (eta_seconds returns 0) until BOTH >=3 samples AND >=5% of the
 // total is done. A "confident" point estimate (vs a wide range) requires more
@@ -139,8 +189,9 @@ public:
     ByteProgress& operator=(const ByteProgress&) = delete;
 
     // For resumable downloads where the total is only known once curl receives
-    // the Content-Length / Content-Range. Calling this after construction with
-    // a non-zero total enables the percent/bar/ETA fields.
+    // the Content-Length / Content-Range. The LAST non-zero total wins (an
+    // earlier value that arrives before the final response, e.g. a redirect
+    // page's Content-Length, must not latch for the rest of the transfer).
     void set_total(uint64_t total_bytes);
 
     // Report `done` cumulative bytes. Returns true to continue, false to abort.

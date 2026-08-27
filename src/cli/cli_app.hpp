@@ -67,6 +67,7 @@ struct CliOptions {
 
     // `cache` subcommand: clear wmr's local caches. Today only CoreML on macOS.
     bool cache_clear_coreml = false;
+    bool cache_clear_cpu_models = false;
 
     // Provenance / C2PA metadata (v1 = PNG + JPEG; lossless on pixels).
     // remove/synthid/video: opt OUT of the default post-write strip.
