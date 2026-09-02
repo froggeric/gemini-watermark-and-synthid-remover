@@ -1,0 +1,965 @@
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 8149e6c..0a90f58 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -43,17 +43,21 @@ jobs:
+           echo "matrix=$picked" >> "$GITHUB_OUTPUT"
+ 
+   # Single full-package build per (OS, arch). Every release binary ships the
+-  # FDnCNN AI denoise (NCNN+Vulkan) + MI-GAN (ONNX Runtime, the default
+-  # NotebookLM intricate-scene inpainter), no lean/full split, no FSR/LaMa.
+-  # Vulkan + MI-GAN handling:
++  # FDnCNN AI denoise (NCNN+Vulkan) + MI-GAN (the default NotebookLM
++  # intricate-scene inpainter) + the anti-detection pipeline, no lean/full
++  # split, no FSR/LaMa.
++  # Vulkan + MI-GAN + antidetect handling:
+   #   - macOS arm64: native + Vulkan_LIBRARY hard-link; bundles the Vulkan loader
+-  #     + MoltenVK (out-of-the-box GPU) + libonnxruntime + the 27MB MI-GAN model.
++  #     + MoltenVK (out-of-the-box GPU) + libonnxruntime (the antidetect
++  #     adversarial stage; MI-GAN itself is CoreML on mac) + the MI-GAN
++  #     .mlpackage.
+   #   - macOS x86_64: cross-compiled on the arm64 runner (the only Intel runner,
+   #     macos-13, was retired). WMR_NCNN_VULKAN=OFF -> CPU-only AI (NCNN's
+   #     simplevk does static Vulkan linkage on APPLE, needs a build-time
+-  #     libvulkan; no x86_64 Vulkan dylib on this arm64 runner). MI-GAN is also
+-  #     OFF here (ORT dropped osx-x86_64 prebuilts after v1.23.0) -> NS fallback.
+-  #     arm64 keeps the GPU + MI-GAN build.
++  #     libvulkan; no x86_64 Vulkan dylib on this arm64 runner). MI-GAN stays ON
++  #     (CoreML, arch-neutral .mlpackage). The antidetect adversarial stage is
++  #     compiled out on this leg (physics-only; no osx-x86_64 ORT binary);
++  #     arm64 keeps the GPU + full-antidetect build.
+   #   - Linux/Windows: no Vulkan at build time (NCNN simplevk dlopens
+   #     libvulkan.so.1 / vulkan-1.dll at runtime); graceful CPU fallback. MI-GAN
+   #     ON (ORT prebuilt fetched at configure) -> the package is an archive
+@@ -115,7 +119,7 @@ jobs:
+       - name: Configure (macOS)
+         if: runner.os == 'macOS'
+         run: |
+-          ARGS="-DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DWMR_BUILD_TESTS=OFF -DWMR_BUILD_AI_DENOISE=ON -DWMR_BUILD_AI_MIGAN=${{ matrix.enable_migan }} -DWMR_BUILD_REGEN=ON -DVCPKG_MANIFEST_FEATURES=ai-denoise;regen -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
++          ARGS="-DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DWMR_BUILD_TESTS=OFF -DWMR_BUILD_AI_DENOISE=ON -DWMR_BUILD_AI_MIGAN=${{ matrix.enable_migan }} -DWMR_BUILD_REGEN=ON -DWMR_BUILD_ANTIDETECT=ON -DVCPKG_MANIFEST_FEATURES=ai-denoise;regen;antidetect -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+           if [ "${{ matrix.macos_arch }}" = "x86_64" ]; then
+             # Cross-compile Intel on Apple Silicon. NCNN's simplevk does STATIC
+             # Vulkan linkage on APPLE and needs a build-time libvulkan; there is
+@@ -127,6 +131,9 @@ jobs:
+             # x86_64 target). CMakeLists.txt disables that probe on a cross-arch
+             # build, and WMR_REGEN_CPU_ONLY forces the sdcpp backends off.
+             # --synthid-attack regen runs on the CPU here (slow but correct).
++            # WMR_BUILD_ANTIDETECT is ON but CMakeLists.txt auto-forces the
++            # adversarial sub-feature OFF on this cross-arch build (ORT 1.27.1
++            # publishes no osx-x86_64 binary), so this leg is physics-only.
+             ARGS="$ARGS -DCMAKE_OSX_ARCHITECTURES=x86_64 -DWMR_NCNN_VULKAN=OFF -DWMR_REGEN_CPU_ONLY=ON"
+           else
+             # Apple Silicon native + bundled MoltenVK for out-of-the-box GPU +
+@@ -145,7 +152,8 @@ jobs:
+             -DWMR_BUILD_AI_DENOISE=ON \
+             -DWMR_BUILD_AI_MIGAN=ON \
+             -DWMR_BUILD_REGEN=ON -DWMR_REGEN_CPU_ONLY=ON \
+-            -DVCPKG_MANIFEST_FEATURES="ai-denoise;regen" \
++            -DWMR_BUILD_ANTIDETECT=ON \
++            -DVCPKG_MANIFEST_FEATURES="ai-denoise;regen;antidetect" \
+             -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} \
+             -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+ 
+@@ -169,7 +177,8 @@ jobs:
+             -DWMR_BUILD_AI_DENOISE=ON ^
+             -DWMR_BUILD_AI_MIGAN=ON ^
+             -DWMR_BUILD_REGEN=ON -DWMR_REGEN_CPU_ONLY=ON ^
+-            -DVCPKG_MANIFEST_FEATURES="ai-denoise;regen" ^
++            -DWMR_BUILD_ANTIDETECT=ON ^
++            -DVCPKG_MANIFEST_FEATURES="ai-denoise;regen;antidetect" ^
+             -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} ^
+             -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+           cmake --build build --config ${{ env.BUILD_TYPE }}
+@@ -191,6 +200,16 @@ jobs:
+           ${{ matrix.binary }} remove test-images/2400x1792-test1-gemini.png --denoise ai -o smoke_out.png
+           test -f smoke_out.png
+ 
++      - name: Anti-detection physics smoke (network-free)
++        # The physics stage needs no models and no network, so this proves the
++        # antidetect CLI + pipeline run on every leg (the x86_64 mac leg is
++        # physics-only by design; the ORT-backed adversarial stage is covered
++        # by the tests job's ORT smoke, which runs when models are provided).
++        shell: bash
++        run: |
++          ${{ matrix.binary }} antidetect test-images/2400x1792-test1-gemini.png --method physics --seed 1 -o ad_smoke.png
++          test -f ad_smoke.png
++
+       - name: Import code-signing certificate
+         # Imports the Developer ID Application cert (from secrets) into an
+         # ephemeral keychain so the packaging steps can sign + notarize. Gated
+@@ -305,12 +324,15 @@ jobs:
+           ditto -x -k dist/wmr-macos-arm64.zip /tmp/verify/
+           ROOT=/tmp/verify/wmr-macos-arm64
+           VK_ICD_FILENAMES=/nonexistent "$ROOT/wmr" remove test-images/2400x1792-test1-gemini.png --denoise ai -o /tmp/verify_out.png
+-          # assert native CoreML (no ORT) + the .mlpackage shipped.
++          # Assert native CoreML + the .mlpackage shipped + the anti-detection
++          # adversarial stage's ORT is linked and bundled (mac arm64 ships ORT
++          # for antidetect; MI-GAN itself is CoreML on mac).
+           otool -L "$ROOT/wmr.bin" | grep -i CoreML
+-          if otool -L "$ROOT/wmr.bin" | grep -qi onnxruntime; then
+-            echo "fail: onnxruntime is linked (mac build must be CoreML-only)"
++          if ! otool -L "$ROOT/wmr.bin" | grep -qi onnxruntime; then
++            echo "fail: onnxruntime is NOT linked (antidetect adversarial stage must ship ORT on mac arm64)"
+             exit 1
+           fi
++          test -f "$ROOT/lib/libonnxruntime.1.dylib"
+           test -d "$ROOT/migan_512_places2_fp16.mlpackage"
+           "$ROOT/wmr" video --help > /tmp/vhelp.txt 2>&1 || true
+           grep -q -- "--notebooklm-method" /tmp/vhelp.txt
+@@ -330,10 +352,13 @@ jobs:
+           ditto -x -k dist/wmr-macos-x86_64.zip /tmp/verify-x86/
+           ROOT=/tmp/verify-x86/wmr-macos-x86_64
+           # x86_64 binary runs on the arm64 host via Rosetta. CoreML MI-GAN present.
++          # ORT must NOT be linked here: the adversarial antidetect stage is
++          # force-compiled-out on the x86_64 cross-build (no osx-x86_64 ORT
++          # binary exists), so this leg is physics-only and ORT-free.
+           VK_ICD_FILENAMES=/nonexistent "$ROOT/wmr" remove test-images/2400x1792-test1-gemini.png --denoise ai -o /tmp/verify_x86_out.png
+           otool -L "$ROOT/wmr" | grep -i CoreML
+           if otool -L "$ROOT/wmr" | grep -qi onnxruntime; then
+-            echo "fail: onnxruntime is linked (mac build must be CoreML-only)"
++            echo "fail: onnxruntime is linked (x86_64 build is physics-only antidetect + CoreML MI-GAN)"
+             exit 1
+           fi
+           test -d "$ROOT/migan_512_places2_fp16.mlpackage"
+@@ -373,14 +398,15 @@ jobs:
+           runVcpkgInstall: true
+           vcpkgJsonGlob: '**/vcpkg.json'
+ 
+-      - name: Configure (tests + AI + regen)
++      - name: Configure (tests + AI + regen + antidetect)
+         run: |
+           cmake -B build -S . -GNinja \
+             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+             -DWMR_BUILD_AI_DENOISE=ON \
+             -DWMR_BUILD_REGEN=ON -DWMR_REGEN_CPU_ONLY=ON \
++            -DWMR_BUILD_ANTIDETECT=ON \
+             -DWMR_BUILD_TESTS=ON \
+-            -DVCPKG_MANIFEST_FEATURES="ai-denoise;regen" \
++            -DVCPKG_MANIFEST_FEATURES="ai-denoise;regen;antidetect" \
+             -DVCPKG_TARGET_TRIPLET=x64-linux \
+             -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+ 
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index b78a493..efe17f7 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,5 +1,5 @@
+ cmake_minimum_required(VERSION 3.21)
+-project(wmr VERSION 1.16.11 LANGUAGES CXX)
++project(wmr VERSION 1.17.0 LANGUAGES CXX)
+ 
+ # Objective-C++ is needed for the macOS-only .mm sources (MI-GAN CoreML, CoreML SDXL).
+ # Enable it once, up front, only on Apple so Linux/Windows never try to locate an
+@@ -35,6 +35,7 @@ set(SOURCES
+     src/metadata/provenance.cpp
+     src/metadata/png_chunks.cpp
+     src/metadata/jpeg_markers.cpp
++    src/core/model_downloader.cpp  # ungated (paths.cpp precedent); regen + antidetect share it. Listing it in both feature blocks would be a duplicate-source error.
+ )
+ 
+ # Executable
+@@ -213,39 +214,57 @@ endif()
+ # (assets/migan_pipeline_v2.onnx) is resolved by MiganInpainter relative to the
+ # executable at runtime.
+ option(WMR_BUILD_AI_MIGAN "Build MI-GAN inpainter for NotebookLM intricate backgrounds (CoreML on macOS, ONNX Runtime on Linux/Windows)" OFF)
+-if(WMR_BUILD_AI_MIGAN)
+-  if(APPLE)
+-    # ---- macOS: native CoreML (replaces ORT). CoreML is a system framework (no
+-    # vendored lib) and the .mlpackage is arch-neutral, so this enables BOTH
+-    # arm64 and x86_64 — Intel Macs (previously MI-GAN-OFF) gain MI-GAN. ~28 ms
+-    # /frame on the ANE (vs ORT-CPU ~225 ms; A/B-verified Δ1.9/255). ----
+-    enable_language(OBJCXX)
+-    find_library(COREML_LIB CoreML REQUIRED)
+-    find_library(FOUNDATION_LIB Foundation REQUIRED)
+-    target_sources(${PROJECT_NAME} PRIVATE src/core/migan_coreml_inpainter.mm)
+-    target_link_libraries(${PROJECT_NAME} PRIVATE ${COREML_LIB} ${FOUNDATION_LIB})
+-    target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_AI_MIGAN=1 WMR_AI_MIGAN_COREML=1)
+ 
+-    # Ship the .mlpackage DIRECTORY next to the binary (copy_directory — the model
+-    # is a multi-file bundle, not a single file; copy_if_different won't work).
+-    set(MIGAN_MLPACKAGE "${CMAKE_SOURCE_DIR}/assets/migan_512_places2_fp16.mlpackage")
+-    if(EXISTS "${MIGAN_MLPACKAGE}")
+-        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+-            COMMAND ${CMAKE_COMMAND} -E copy_directory
+-                "${MIGAN_MLPACKAGE}"
+-                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/migan_512_places2_fp16.mlpackage")
++# Anti-detection pipeline option declarations — EARLY (before the shared ORT
++# fetch below) because WMR_NEED_ORT depends on WMR_BUILD_ANTIDETECT_ADVERSARIAL
++# being resolved, including the macOS cross-arch force-off. The feature block
++# (sources/links) lives after the regen block, as usual.
++option(WMR_BUILD_ANTIDETECT "Build the anti-detection pipeline (stage A physics + report)" OFF)
++option(WMR_BUILD_ANTIDETECT_ADVERSARIAL "Build the adversarial stage (ONNX Runtime surrogate ensemble + Square Attack)" ON)
++# ORT publishes no osx-x86_64 prebuilt (macOS = arm64 only in the 1.27.1 asset
++# list): the macOS Intel cross-build compiles the adversarial stage out ->
++# physics-only there, with a graceful runtime message. Building ORT for
++# x86_64-osx is a documented follow-up, not a v1 item.
++if(WMR_BUILD_ANTIDETECT_ADVERSARIAL AND APPLE AND CMAKE_OSX_ARCHITECTURES)
++    list(FIND CMAKE_OSX_ARCHITECTURES "${CMAKE_HOST_SYSTEM_PROCESSOR}" _wmr_ad_host_idx)
++    if(_wmr_ad_host_idx EQUAL -1)
++        set(WMR_BUILD_ANTIDETECT_ADVERSARIAL OFF CACHE BOOL "" FORCE)
++        message(STATUS "Antidetect: macOS cross-arch build -> adversarial OFF (no ORT osx-x86_64 prebuilt); physics-only")
+     endif()
+-  else()
+-    # ---- Linux/Windows: ONNX Runtime CPU (unchanged). ----
++endif()
++if(NOT WMR_BUILD_ANTIDETECT)
++    set(WMR_BUILD_ANTIDETECT_ADVERSARIAL OFF CACHE BOOL "" FORCE)
++endif()
++
++# ---- Shared ONNX Runtime fetch: MI-GAN on linux/windows AND the
++# anti-detection surrogate suite wherever a prebuilt exists (osx-arm64,
++# linux-x64, win-x64). Pinned, fetched at configure time, exposed as the
++# IMPORTED SHARED target wmr_ort. mac bundling is handled by
++# scripts/bundle_macos_vulkan.sh (copies + ad-hoc signs libonnxruntime.1.dylib
++# from this fetch directory) and scripts/sign_and_notarize_macos.sh. ----
++set(WMR_NEED_ORT OFF)
++if(WMR_BUILD_AI_MIGAN AND NOT APPLE)
++    set(WMR_NEED_ORT ON)
++endif()
++if(WMR_BUILD_ANTIDETECT_ADVERSARIAL)
++    set(WMR_NEED_ORT ON)
++endif()
++if(WMR_NEED_ORT)
+     set(ORT_VERSION "1.27.1")
+     set(ORT_HASH_linux-x64 "25b1ef1fea1acd210d63f8f24dc870ad6e077795ce1f54876252c6d3803c15af")
+     set(ORT_HASH_win-x64   "2e00414a63fdef0914cd5a5ede6c707844878e0c08e1b6693842f0451b2df2a1")
++    set(ORT_HASH_osx-arm64 "e42b77a7281cc6e55141bf44fcfbac2c782b823a491bbb6ac33c781dd991f8a6")
+ 
+     if(WIN32)
+         set(ORT_PLATFORM "win-x64")
+         set(ORT_ARCHIVE "onnxruntime-${ORT_PLATFORM}-${ORT_VERSION}.zip")
+         set(ORT_LIBFILE "lib/onnxruntime.dll")
+         set(ORT_IMPLIB "lib/onnxruntime.lib")
++    elseif(APPLE)
++        set(ORT_PLATFORM "osx-arm64")
++        set(ORT_ARCHIVE "onnxruntime-${ORT_PLATFORM}-${ORT_VERSION}.tgz")
++        set(ORT_LIBFILE "lib/libonnxruntime.dylib")   # symlink -> .1 -> .1.27.1
++        set(ORT_IMPLIB "")
+     else()
+         set(ORT_PLATFORM "linux-x64")
+         set(ORT_ARCHIVE "onnxruntime-${ORT_PLATFORM}-${ORT_VERSION}.tgz")
+@@ -280,19 +299,46 @@ if(WMR_BUILD_AI_MIGAN)
+     if(ORT_IMPLIB)
+         set_property(TARGET wmr_ort APPEND PROPERTY IMPORTED_IMPLIB "${ORT_ROOT}/${ORT_IMPLIB}")
+     endif()
+-
+-    target_sources(${PROJECT_NAME} PRIVATE src/core/migan_inpainter.cpp)
+-    target_link_libraries(${PROJECT_NAME} PRIVATE wmr_ort)
+     # Let a local dev build find the ORT shared lib from the build tree at runtime.
+     set_property(TARGET ${PROJECT_NAME} APPEND PROPERTY BUILD_RPATH "${ORT_ROOT}/lib")
+     if(WIN32)
+         # Windows resolves the DLL from the exe dir; co-locate it post-build so dev
+-        # runs + the CI smoke (build/wmr.exe) load onnxruntime.dll. (Linux finds it
+-        # via BUILD_RPATH.)
++        # runs + the CI smoke (build/wmr.exe) load onnxruntime.dll. (Linux/macOS
++        # find it via BUILD_RPATH.)
+         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+             COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                 "${ORT_ROOT}/lib/onnxruntime.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/onnxruntime.dll")
+     endif()
++endif()
++
++if(WMR_BUILD_AI_MIGAN)
++  if(APPLE)
++    # ---- macOS: native CoreML (replaces ORT for MI-GAN; the anti-detection
++    # surrogate suite still uses the shared wmr_ort target above). CoreML is a
++    # system framework (no vendored lib) and the .mlpackage is arch-neutral, so
++    # this enables BOTH arm64 and x86_64 — Intel Macs (previously MI-GAN-OFF)
++    # gain MI-GAN. ~28 ms/frame on the ANE (vs ORT-CPU ~225 ms; A/B-verified
++    # Δ1.9/255). ----
++    enable_language(OBJCXX)
++    find_library(COREML_LIB CoreML REQUIRED)
++    find_library(FOUNDATION_LIB Foundation REQUIRED)
++    target_sources(${PROJECT_NAME} PRIVATE src/core/migan_coreml_inpainter.mm)
++    target_link_libraries(${PROJECT_NAME} PRIVATE ${COREML_LIB} ${FOUNDATION_LIB})
++    target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_AI_MIGAN=1 WMR_AI_MIGAN_COREML=1)
++
++    # Ship the .mlpackage DIRECTORY next to the binary (copy_directory — the model
++    # is a multi-file bundle, not a single file; copy_if_different won't work).
++    set(MIGAN_MLPACKAGE "${CMAKE_SOURCE_DIR}/assets/migan_512_places2_fp16.mlpackage")
++    if(EXISTS "${MIGAN_MLPACKAGE}")
++        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
++            COMMAND ${CMAKE_COMMAND} -E copy_directory
++                "${MIGAN_MLPACKAGE}"
++                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/migan_512_places2_fp16.mlpackage")
++    endif()
++  else()
++    # ---- Linux/Windows: ONNX Runtime CPU via the shared wmr_ort target. ----
++    target_sources(${PROJECT_NAME} PRIVATE src/core/migan_inpainter.cpp)
++    target_link_libraries(${PROJECT_NAME} PRIVATE wmr_ort)
+     target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_AI_MIGAN=1)
+ 
+     # Ship the MI-GAN model next to the binary when it is present in assets/ so a
+@@ -428,7 +474,6 @@ if(WMR_BUILD_REGEN)
+     target_sources(${PROJECT_NAME} PRIVATE
+         src/core/regen_backend.cpp
+         src/core/regen_tiling.cpp
+-        src/core/model_downloader.cpp
+         src/core/regenerator.cpp
+         src/core/regen_restore.cpp
+     )
+@@ -436,6 +481,36 @@ if(WMR_BUILD_REGEN)
+     target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_BUILD_REGEN=1)
+ endif()
+ 
++# Anti-detection pipeline (docs/research/anti-detection-pipeline-research.md):
++# stage A restores camera-pipeline statistics (pure OpenCV), stage B (opt-in,
++# WMR_BUILD_ANTIDETECT_ADVERSARIAL) runs a Square Attack on a local surrogate
++# detector ensemble via ONNX Runtime. The OPTIONS are declared early (before the
++# shared ORT fetch); this block adds the feature sources. Runs BEFORE
++# add_subdirectory(tests) so the tests mirror block sees the cached options.
++if(WMR_BUILD_ANTIDETECT)
++    # model_downloader.cpp is ungated (top-level SOURCES); it activates under
++    # WMR_BUILD_REGEN OR WMR_BUILD_ANTIDETECT and needs curl + openssl either way.
++    find_package(CURL REQUIRED)      # idempotent when regen already found them
++    find_package(OpenSSL REQUIRED)
++    target_sources(${PROJECT_NAME} PRIVATE
++        src/core/antidetect_physics.cpp
++        src/core/lpips_alex.cpp
++        src/core/antidetect.cpp
++        src/core/square_attack.cpp       # mockable; no ORT needed
++        src/core/antidetect_models_fetch.cpp
++    )
++    target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl OpenSSL::Crypto)
++    target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_BUILD_ANTIDETECT=1)
++    if(WMR_BUILD_ANTIDETECT_ADVERSARIAL AND TARGET wmr_ort)
++        target_sources(${PROJECT_NAME} PRIVATE
++            src/core/detector_suite_ort.cpp
++            src/core/antidetect_adversarial.cpp
++        )
++        target_link_libraries(${PROJECT_NAME} PRIVATE wmr_ort)
++        target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_ANTIDETECT_ADVERSARIAL=1)
++    endif()
++endif()
++
+ # CoreML SDXL img2img (Euler scheduler + pipeline, macOS only) — opt-in. OFF by
+ # default keeps the lean build Accelerate-free (the flag requires APPLE).
+ # Runs BEFORE add_subdirectory(tests) so the tests mirror block sees the flag.
+diff --git a/scripts/build.sh b/scripts/build.sh
+index cfee892..d731116 100755
+--- a/scripts/build.sh
++++ b/scripts/build.sh
+@@ -41,6 +41,11 @@ else
+     REGEN="${WMR_BUILD_REGEN:-0}"
+     COREML_SD="${WMR_BUILD_AI_COREML_SD:-0}"
+ fi
++# Anti-detection pipeline (camera-statistics physics + surrogate adversarial
++# stage). Pure OpenCV + curl/openssl; ON everywhere on macOS (the adversarial
++# stage is compiled out automatically on the mac x86_64 cross leg, where ORT
++# publishes no prebuilt).
++ANTIDETECT="${WMR_BUILD_ANTIDETECT:-1}"
+ 
+ DEPS=(opencv ffmpeg catch2 fmt spdlog cli11)
+ 
+@@ -56,10 +61,14 @@ fi
+ # system-wide (/usr/lib/libcurl.dylib), so find_package(CURL) resolves it
+ # without a Homebrew prefix; the Homebrew `curl` formula is keg-only and NOT
+ # required. The submodule (+ its ggml submodule) must be present.
++# The anti-detection surrogate fetch shares the openssl dependency (its model
++# downloader is the same TU), so openssl is pulled in when EITHER feature is on.
+ if [ "${REGEN}" = "1" ]; then
+   DEPS+=(openssl@3)
+   echo ">> Regen mode: initialising stable-diffusion.cpp submodule"
+   git submodule update --init --recursive external/stable-diffusion.cpp
++elif [ "${ANTIDETECT}" = "1" ]; then
++  DEPS+=(openssl@3)
+ fi
+ 
+ # 1. Verify Homebrew and required formulas.
+@@ -113,8 +122,10 @@ cmake -S . -B "${BUILD_DIR}" -G Ninja \
+   -DWMR_BUILD_TESTS=ON \
+   $([ "${AI_DENOISE}" = "1" ] && echo "-DWMR_BUILD_AI_DENOISE=ON") \
+   $([ "${AI_MIGAN}" = "1" ] && echo "-DWMR_BUILD_AI_MIGAN=ON") \
+-  $([ "${REGEN}" = "1" ] && echo "-DWMR_BUILD_REGEN=ON -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)") \
+-  $([ "${COREML_SD}" = "1" ] && echo "-DWMR_BUILD_AI_COREML_SD=ON")
++  $([ "${REGEN}" = "1" ] && echo "-DWMR_BUILD_REGEN=ON") \
++  $([ "${COREML_SD}" = "1" ] && echo "-DWMR_BUILD_AI_COREML_SD=ON") \
++  $([ "${ANTIDETECT}" = "1" ] && echo "-DWMR_BUILD_ANTIDETECT=ON") \
++  $([ \( "${REGEN}" = "1" -o "${ANTIDETECT}" = "1" \) ] && echo "-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)")
+ 
+ # 4. Build.
+ cmake --build "${BUILD_DIR}" --parallel
+diff --git a/scripts/bundle_macos_vulkan.sh b/scripts/bundle_macos_vulkan.sh
+index b55ffad..dae770f 100755
+--- a/scripts/bundle_macos_vulkan.sh
++++ b/scripts/bundle_macos_vulkan.sh
+@@ -42,18 +42,20 @@ cp "$BIN" "$OUT/wmr.bin"
+ cp -L "$VULKAN_LOADER_LIB" "$OUT/lib/libvulkan.1.dylib"
+ cp -L "$MOLTENVK_LIB"      "$OUT/lib/libMoltenVK.dylib"
+ 
+-# ONNX Runtime shared lib (LaMa inpainter, WMR_BUILD_AI_LAMA). The configure-time
++# ONNX Runtime shared lib (anti-detection adversarial stage). The configure-time
+ # ORT fetch leaves it next to the binary under onnxruntime-osx-*/lib. Co-located
+ # in lib/ like the Vulkan libs — the binary's load cmd is @rpath/libonnxruntime.1.dylib
+ # and @loader_path/lib is added to the rpath below (for Vulkan), so dyld finds it.
+-# 1.10.0: macOS uses native CoreML for MI-GAN (no ORT), so this is a no-op on mac
+-# (the glob finds nothing). Kept for a hypothetical future ORT-on-mac build.
++# mac arm64 ships ORT for the antidetect surrogate suite (MI-GAN itself stays
++# native CoreML on mac). No-op on the mac x86_64 cross-build, where the
++# adversarial stage is compiled out (no osx-x86_64 ORT binary exists) and the
++# glob finds nothing.
+ # (Pathname expansion does not occur in a bare assignment, so resolve via ls -d.)
+ ORT_LIB_DIR=$(ls -d "$(dirname "$BIN")"/onnxruntime-osx-*/lib 2>/dev/null | head -n1 || true)
+ if [ -n "$ORT_LIB_DIR" ] && [ -d "$ORT_LIB_DIR" ]; then
+     cp -L "$ORT_LIB_DIR"/libonnxruntime.1.dylib "$OUT/lib/libonnxruntime.1.dylib"
+     codesign --force --sign - "$OUT/lib/libonnxruntime.1.dylib"
+-    echo "  + libonnxruntime.1.dylib (ORT MI-GAN)"
++    echo "  + libonnxruntime.1.dylib (ORT antidetect)"
+ fi
+ 
+ # ICD manifest: the Vulkan loader resolves `library_path` RELATIVE TO THE MANIFEST
+diff --git a/src/cli/batch_processor.cpp b/src/cli/batch_processor.cpp
+index 747708a..72eb0e2 100644
+--- a/src/cli/batch_processor.cpp
++++ b/src/cli/batch_processor.cpp
+@@ -162,6 +162,27 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
+         // Future SynthID methods: add the IsMember value + a branch here.
+     }
+ 
++    // Chained anti-detection pass (opt-in --antidetect), mirroring
++    // process_single_image. Indented report lines (batch convention).
++    if (opts.antidetect_requested) {
++#ifdef WMR_BUILD_ANTIDETECT
++        auto result = wmr::antidetect::run_antidetect(image, antidetect_config_from(opts));
++        std::istringstream report_stream(
++            wmr::antidetect::format_antidetect_report(result.report, /*indented=*/true));
++        std::string line;
++        while (std::getline(report_stream, line))
++            if (!line.empty()) spdlog::info("{}", line);
++        if (!result.ok) {
++            spdlog::warn("  Anti-detection pass refused: {}", result.report.note);
++            return 1;
++        }
++#else
++        spdlog::error("--antidetect: this wmr build is antidetect-free "
++                      "(WMR_BUILD_ANTIDETECT off). Rebuild with the feature enabled.");
++        return 1;
++#endif
++    }
++
+     // Determine output path
+     fs::path out_path;
+     if (!opts.output_path.empty()) {
+diff --git a/src/cli/cli_app.cpp b/src/cli/cli_app.cpp
+index 2d5ca4e..bc7a337 100644
+--- a/src/cli/cli_app.cpp
++++ b/src/cli/cli_app.cpp
+@@ -12,6 +12,10 @@
+ #if defined(WMR_BUILD_AI_COREML_SD) && defined(__APPLE__)
+ #include "core/coreml_cache.hpp"  // clear_coreml_execution_cache (the cache subcommand)
+ #endif
++#ifdef WMR_BUILD_ANTIDETECT
++#include "core/antidetect.hpp"  // run_antidetect (the antidetect subcommand + chained flag)
++#include "core/antidetect_models_fetch.hpp"  // clear_antidetect_models (cache --clear-antidetect-models)
++#endif
+ #include "video/video_processor.hpp"
+ 
+ #include <opencv2/imgcodecs.hpp>
+@@ -165,6 +169,38 @@ static int process_detect(const CliOptions& opts) {
+     return 0;
+ }
+ 
++#ifdef WMR_BUILD_ANTIDETECT
++// Shared by process_antidetect (standalone) and the chained --antidetect hooks
++// in process_single_image / the batch path: one place mapping CLI opts to the
++// facade config (declared in cli_app.hpp so batch_processor.cpp uses the same one).
++wmr::antidetect::AntidetectConfig antidetect_config_from(const CliOptions& opts) {
++    namespace ad = wmr::antidetect;
++    ad::AntidetectConfig cfg;
++    if (opts.antidetect_method == "physics") cfg.method = ad::AntidetectMethod::Physics;
++    else if (opts.antidetect_method == "adversarial") cfg.method = ad::AntidetectMethod::Adversarial;
++    else if (opts.antidetect_method == "auto") cfg.method = ad::AntidetectMethod::Auto;
++    else cfg.method = ad::AntidetectMethod::Full;
++    cfg.strength = opts.antidetect_strength;
++    cfg.lpips_budget = opts.antidetect_lpips_budget;
++    cfg.jpeg_cycle = !opts.antidetect_no_jpeg_cycle;
++    cfg.seed = opts.antidetect_seed;
++    cfg.surrogates = opts.antidetect_surrogates;
++    cfg.allow_download = !opts.antidetect_no_download;
++    return cfg;
++}
++
++// Report block, one spdlog line each (stdout stays clean for piping). The
++// indented variant matches the batch path's two-space prefix convention.
++static void print_antidetect_report(const wmr::antidetect::AntidetectReport& r,
++                                    bool indented) {
++    std::istringstream report_stream(
++        wmr::antidetect::format_antidetect_report(r, indented));
++    std::string line;
++    while (std::getline(report_stream, line))
++        if (!line.empty()) spdlog::info("{}", line);
++}
++#endif
++
+ static int process_single_image(const CliOptions& opts) {
+     cv::Mat image = cv::imread(opts.input_path, cv::IMREAD_COLOR);
+     if (image.empty()) {
+@@ -366,6 +402,26 @@ static int process_single_image(const CliOptions& opts) {
+         // Future SynthID methods: add the IsMember value + a branch here.
+     }
+ 
++    // Chained anti-detection pass (opt-in --antidetect). Runs after the visible
++    // and/or synthid passes, before the save. An explicit request runs even when
++    // no watermark was found (standalone-ish use on remove).
++    if (opts.antidetect_requested) {
++#ifdef WMR_BUILD_ANTIDETECT
++        auto result = wmr::antidetect::run_antidetect(
++            image, antidetect_config_from(opts));
++        print_antidetect_report(result.report, /*indented=*/false);
++        if (!result.ok) {
++            spdlog::error("Antidetect: {}", result.report.note);
++            return 1;
++        }
++        did_work = true;
++#else
++        spdlog::error("--antidetect: this wmr build is antidetect-free "
++                      "(WMR_BUILD_ANTIDETECT off). Rebuild with the feature enabled.");
++        return 1;
++#endif
++    }
++
+     if (!did_work) {
+         spdlog::info("No watermarks found or removed");
+         return 0;
+@@ -410,6 +466,67 @@ static int process_single_image(const CliOptions& opts) {
+     return 0;
+ }
+ 
++// `antidetect` subcommand: standalone anti-detection pass (stage A physics
++// always; stage B adversarial when built with the surrogate suite and the
++// models are present). The chained variant (remove/synthid --antidetect) is
++// handled inside process_single_image / the batch path, not here.
++static int process_antidetect(const CliOptions& opts) {
++#ifndef WMR_BUILD_ANTIDETECT
++    (void)opts;
++    spdlog::error("This wmr build is antidetect-free (built with "
++                  "WMR_BUILD_ANTIDETECT off)");
++    return 1;
++#else
++    cv::Mat image = cv::imread(opts.input_path, cv::IMREAD_COLOR);
++    if (image.empty()) {
++        spdlog::error("Failed to load image: {}", opts.input_path);
++        return 1;
++    }
++    spdlog::info("Loading: {}", opts.input_path);
++    spdlog::info("Image: {}x{}", image.cols, image.rows);
++
++    const auto result = wmr::antidetect::run_antidetect(
++        image, antidetect_config_from(opts));
++    print_antidetect_report(result.report, /*indented=*/false);
++
++    if (!result.ok) {
++        spdlog::error("Antidetect: {}", result.report.note);
++        return 1;  // explicit adversarial request refused; image untouched
++    }
++
++    // Save output (mirrors the remove/synthid save block).
++    if (opts.output_path.empty()) {
++        spdlog::error("No output path specified. Use -o <path> to set the output file.");
++        return 1;
++    }
++    std::string output = opts.output_path;
++    std::filesystem::path out_path(output);
++    if (!out_path.parent_path().empty() && !std::filesystem::exists(out_path.parent_path())) {
++        std::filesystem::create_directories(out_path.parent_path());
++    }
++    std::vector<int> params;
++    std::string ext = out_path.extension().string();
++    if (ext == ".jpg" || ext == ".jpeg") {
++        params = {cv::IMWRITE_JPEG_QUALITY, 100};
++    } else if (ext == ".png") {
++        params = {cv::IMWRITE_PNG_COMPRESSION, 6};
++    } else if (ext == ".webp") {
++        params = {cv::IMWRITE_WEBP_QUALITY, 101};
++    }
++    if (!cv::imwrite(output, image, params)) {
++        spdlog::error("Failed to save: {}", output);
++        return 1;
++    }
++    if (!opts.keep_provenance) {
++        auto pr = wmr::provenance::post_write_provenance_strip(output, /*keep_standard=*/true);
++        if (pr.rewritten && pr.items_removed > 0)
++            spdlog::info("Stripped {} provenance item(s) from output", pr.items_removed);
++    }
++    spdlog::info("Saved: {}", output);
++    return 0;
++#endif
++}
++
+ static int process_video(const CliOptions& opts) {
+     VideoWatermarkConfig config;
+ 
+@@ -496,13 +613,38 @@ static int process_video(const CliOptions& opts) {
+ //     became the mac default). Only the cached copies are touched, never
+ //     WMR_REGEN_MODEL / exe-dir files; they re-download on demand if
+ //     --regen-backend cpu is ever used.
++//   --clear-antidetect-models: delete the anti-detection surrogate detector
++//     models from the user cache (about 90 MB today, about 370 MB with the full
++//     suite). They re-download
++//     on the next adversarial-stage use.
+ static int process_cache(const CliOptions& opts) {
+-    if (!opts.cache_clear_coreml && !opts.cache_clear_cpu_models) {
++    if (!opts.cache_clear_coreml && !opts.cache_clear_cpu_models &&
++        !opts.cache_clear_antidetect_models) {
+         // No flag: surface the available cache ops.
+         spdlog::info("wmr cache manages wmr's local caches. "
+-                     "Available: --clear-coreml (macOS), --clear-cpu-models.");
++                     "Available: --clear-coreml (macOS), --clear-cpu-models, "
++                     "--clear-antidetect-models.");
+         return 0;
+     }
++    if (opts.cache_clear_antidetect_models) {
++#ifdef WMR_BUILD_ANTIDETECT
++        const uint64_t bytes = wmr::antidetect::antidetect_cache_bytes();
++        if (bytes == 0) {
++            spdlog::info("No anti-detection surrogate models in the cache (nothing to clear).");
++        } else {
++            const int n = wmr::antidetect::clear_antidetect_models();
++            const double mb = static_cast<double>(bytes) / (1024.0 * 1024.0);
++            if (n > 0) {
++                spdlog::info("Removed {} anti-detection model file(s), reclaimed ~{:.0f} MB. "
++                             "They re-download on the next adversarial-stage use.", n, mb);
++            } else {
++                spdlog::warn("Found the anti-detection models (~{:.0f} MB) but could not remove them.", mb);
++            }
++        }
++#else
++        spdlog::info("No anti-detection models on this build (antidetect disabled).");
++#endif
++    }
+     if (opts.cache_clear_cpu_models) {
+ #ifdef WMR_BUILD_REGEN
+         LeftoverCpuModels leftovers = find_leftover_cpu_models();
+@@ -837,6 +979,50 @@ int run_cli(int argc, char* argv[]) {
+         return atk;
+     };
+ 
++    // Anti-detection pass options. The standalone subcommand uses the bare
++    // names; the chained variant (remove/synthid) prefixes every knob with
++    // --antidetect-* (--strength/--radius are already the denoise knobs there).
++    // The description is the exported honesty-lock string (antidetect_help_text).
++    // Returns the chained --antidetect flag option (nullptr standalone).
++    auto add_antidetect = [&](CLI::App* cmd, bool chained) -> CLI::Option* {
++        CLI::Option* trigger = nullptr;
++        const std::string p = chained ? "--antidetect-" : "--";
++        if (chained) {
++            trigger = cmd->add_flag("--antidetect", opts.antidetect_requested,
++                                    antidetect_help_text());
++        }
++        cmd->add_option(p + "method", opts.antidetect_method,
++                        "anti-detection method: physics (stage A only, no downloads), "
++                        "adversarial (stage B only; refuses when unavailable), full "
++                        "(A then B, default), auto (full, silently degrading to physics)")
++            ->capture_default_str()
++            ->check(CLI::IsMember({"physics", "adversarial", "full", "auto"}));
++        cmd->add_option(p + "strength", opts.antidetect_strength,
++                        "anti-detection strength 0.0-1.0 (scales the physics doses and "
++                        "the adversarial eps/query budget)")
++            ->capture_default_str()
++            ->check(CLI::Range(0.0f, 1.0f));
++        cmd->add_option(p + "lpips-budget", opts.antidetect_lpips_budget,
++                        "adversarial perceptual budget (LPIPS); smaller = gentler")
++            ->capture_default_str()
++            ->check(CLI::Range(0.01f, 0.2f));
++        cmd->add_option(p + "seed", opts.antidetect_seed,
++                        "deterministic RNG seed (same seed + same binary -> identical "
++                        "output bytes)")
++            ->capture_default_str();
++        cmd->add_flag(p + "no-jpeg-cycle", opts.antidetect_no_jpeg_cycle,
++                      "skip the final camera-like JPEG re-encode (output stays in the "
++                      "pre-compression domain; CFA/noise still applied)");
++        cmd->add_option(p + "surrogates", opts.antidetect_surrogates,
++                        "comma-separated local surrogate detectors for the adversarial "
++                        "stage (commfor, corvi, npr)")
++            ->capture_default_str();
++        cmd->add_flag(p + "no-download", opts.antidetect_no_download,
++                      "never touch the network for surrogate models; full degrades to "
++                      "physics, adversarial refuses");
++        return trigger;
++    };
++
+     // --- remove (default) ---
+     auto* remove_cmd = app.add_subcommand("remove", "Auto-detect and remove watermarks");
+     remove_cmd->add_option("input", opts.input_path, "Input image or directory")
+@@ -855,6 +1041,8 @@ int run_cli(int argc, char* argv[]) {
+     add_denoise(remove_cmd);
+     // regen is opt-in on remove: only runs when --synthid-attack is explicitly passed.
+     CLI::Option* remove_attack_opt = add_synthid_attack(remove_cmd);
++    // The anti-detection pass is opt-in on remove (same convention as regen).
++    add_antidetect(remove_cmd, /*chained=*/true);
+     remove_cmd->add_flag("-r,--recursive", opts.recursive, "Process directories recursively");
+     remove_cmd->add_option("-o,--output", opts.output_path, "Output path (required for files; batch defaults to cleaned/)");
+     remove_cmd->add_flag("--keep-provenance", opts.keep_provenance,
+@@ -895,8 +1083,25 @@ int run_cli(int argc, char* argv[]) {
+         "post-write pass is a no-op on today's OpenCV output (which already "
+         "drops all metadata). See `wmr metadata`.");
+     add_synthid_attack(synthid_cmd);
++    add_antidetect(synthid_cmd, /*chained=*/true);
+     add_common(synthid_cmd);
+ 
++    // --- antidetect ---
++    // Standalone anti-detection pass. Physics works on every build with the
++    // feature; the adversarial stage degrades per the facade's policy.
++    auto* antidetect_cmd = app.add_subcommand("antidetect",
++        "Anti-detection pass: re-inject camera statistics (physics) and/or run a "
++        "surrogate-ensemble adversarial pass (lossy; no evasion guarantee)");
++    antidetect_cmd->add_option("input", opts.input_path, "Input image")
++        ->required()
++        ->check(CLI::ExistingFile);
++    antidetect_cmd->add_option("-o,--output", opts.output_path, "Output path (required)");
++    antidetect_cmd->add_flag("--keep-provenance", opts.keep_provenance,
++        "Keep C2PA/AI-provenance metadata in the output (default: strip it). "
++        "See `wmr metadata`.");
++    add_antidetect(antidetect_cmd, /*chained=*/false);
++    add_common(antidetect_cmd);
++
+     // --- video ---
+     auto* video_cmd = app.add_subcommand("video", "Remove watermark from video");
+     video_cmd->add_option("input", opts.input_path, "Input video path")
+@@ -944,7 +1149,8 @@ int run_cli(int argc, char* argv[]) {
+     // --- cache ---
+     // Manages wmr's local caches: --clear-coreml (macOS) clears the app-scoped
+     // e5bundlecache so CoreML recompiles fresh on the next regen;
+-    // --clear-cpu-models deletes the cached sdcpp CPU regen models.
++    // --clear-cpu-models deletes the cached sdcpp CPU regen models;
++    // --clear-antidetect-models deletes the cached anti-detection surrogates.
+     auto* cache_cmd = app.add_subcommand("cache", "Manage wmr's local caches");
+     cache_cmd->add_flag("--clear-coreml", opts.cache_clear_coreml,
+                         "Clear wmr's app-scoped CoreML execution cache "
+@@ -958,6 +1164,10 @@ int run_cli(int argc, char* argv[]) {
+                         "~7.2 GB in the user cache). Not needed while the CoreML (GPU) "
+                         "backend is in use; they re-download on demand if you pass "
+                         "--regen-backend cpu.");
++    cache_cmd->add_flag("--clear-antidetect-models", opts.cache_clear_antidetect_models,
++                        "Delete the cached anti-detection surrogate detector models "
++                        "(about 90 MB today; about 370 MB with the full suite). They re-download on the next "
++                        "adversarial-stage use. The physics stage needs no models.");
+     add_common(cache_cmd);
+ 
+     // --- metadata ---
+@@ -1036,6 +1246,8 @@ int run_cli(int argc, char* argv[]) {
+         opts.mode = CliMode::Cache;
+     } else if (metadata_cmd->parsed()) {
+         opts.mode = CliMode::Metadata;
++    } else if (antidetect_cmd->parsed()) {
++        opts.mode = CliMode::Antidetect;
+     } else {
+         opts.mode = CliMode::AutoRemove;
+     }
+@@ -1059,6 +1271,10 @@ int run_cli(int argc, char* argv[]) {
+                 rc = process_metadata(opts);
+                 break;
+ 
++            case CliMode::Antidetect:
++                rc = process_antidetect(opts);
++                break;
++
+             case CliMode::AutoRemove:
+             case CliMode::SynthidOnly: {
+                 // Check if input is a directory → batch mode
+diff --git a/src/cli/cli_app.hpp b/src/cli/cli_app.hpp
+index 3a783f1..b1284c8 100644
+--- a/src/cli/cli_app.hpp
++++ b/src/cli/cli_app.hpp
+@@ -9,6 +9,9 @@
+ #include "core/types.hpp"
+ #include "core/inpaint.hpp"
+ #include "detection/still_geometry.hpp"  // StillGeometryOverride
++#ifdef WMR_BUILD_ANTIDETECT
++#include "core/antidetect.hpp"  // AntidetectConfig (the chained-flag mapping below)
++#endif
+ 
+ namespace wmr {
+ 
+@@ -24,6 +27,7 @@ enum class CliMode {
+     Video,
+     Cache,
+     Metadata,
++    Antidetect,
+ };
+ 
+ struct CliOptions {
+@@ -65,9 +69,10 @@ struct CliOptions {
+     float denoise_strength_pct = 120.0f; // --strength 0-300 (percent; /100 internally)
+     int denoise_radius = 10;            // --radius 1-25
+ 
+-    // `cache` subcommand: clear wmr's local caches. Today only CoreML on macOS.
++    // `cache` subcommand: clear wmr's local caches.
+     bool cache_clear_coreml = false;
+     bool cache_clear_cpu_models = false;
++    bool cache_clear_antidetect_models = false;
+ 
+     // Provenance / C2PA metadata (v1 = PNG + JPEG; lossless on pixels).
+     // remove/synthid/video: opt OUT of the default post-write strip.
+@@ -104,6 +109,20 @@ struct CliOptions {
+     // mutex unlike the binary --legacy/--no-legacy pair).
+     bool regen_restore_detail = false;
+     bool no_regen_restore_detail = false;
++
++    // Anti-detection pass (`antidetect` subcommand, also chained on
++    // remove/synthid via --antidetect; see antidetect_help_text()).
++    std::string antidetect_method = "full";  // physics|adversarial|full|auto
++    float antidetect_strength = 0.5f;
++    float antidetect_lpips_budget = 0.05f;
++    long long antidetect_seed = -1;           // -1 = nondeterministic
++    bool antidetect_no_jpeg_cycle = false;
++    std::string antidetect_surrogates = "commfor,corvi";
++    bool antidetect_no_download = false;
++    // Not a CLI flag. Set post-parse from the chained --antidetect option count()
++    // (the synthid_attack_requested pattern): the pass runs on remove/synthid
++    // only when explicitly requested.
++    bool antidetect_requested = false;
+ };
+ 
+ // Resolve the still-image profile variant from CLI flags.
+@@ -170,10 +189,50 @@ inline std::string provenance_strip_help_text() {
+         "Fail-safe: a malformed input is copied UNCHANGED, never truncated.";
+ }
+ 
++// The user-facing description of the anti-detection pass (the honesty-lock
++// string). Exported and INLINE here for the same reason as
++// synthid_attack_help_text(): the wording test asserts on it without linking
++// cli_app.cpp. Keep it in sync with tests/unit/antidetect_cli_test.cpp. Plain
++// factual scope, no over-claims.
++inline std::string antidetect_help_text() {
++    return
++        "--antidetect applies a two-stage pass that makes AI-generated images "
++        "harder for AI-image detectors to classify as synthetic. "
++        "Stage A (physics) re-injects camera-pipeline statistics; its "
++        "calibrated default is a bilateral pre-clean, a Bayer "
++        "mosaic/demosaic round-trip with a randomized cheap kernel, and one "
++        "camera-like JPEG cycle (about 1-3/255 perturbation, effectively "
++        "invisible). Heavier ops (sensor noise from --antidetect-strength "
++        "0.75, chromatic aberration, vignette) are off in the default "
++        "ladder: measured as pure quality cost against local detectors. "
++        "It is pure image ops, needs no downloads, and runs everywhere. "
++        "Stage B (adversarial) runs a Square Attack minimizing the mean "
++        "AI-score of a LOCAL surrogate detector ensemble, bounded by an LPIPS "
++        "perceptual budget; it downloads the pinned surrogate models "
++        "(about 180 MB for the two pinned detectors) on first use and is not "
++        "available on every platform build. "
++        "Honest scope: evasion is validated against the LOCAL surrogate suite "
++        "and the open detector families only; committee and commercial "
++        "detectors are untested, and MLLM reasoning detectors are out of "
++        "scope. No guarantee of passing any specific detector. "
++        "The pass is LOSSY: the default strength perturbs at PSNR ~35-40 dB "
++        "on photos (~29 dB on fine-textured art) with LPIPS <= 0.01; higher "
++        "strengths trade quality for detector margin. Keep the output "
++        "lossless (PNG): re-encoding the result at JPEG quality <= 90 was "
++        "measured to resurrect some detector positives. "
++        "Deterministic under a fixed --antidetect-seed.";
++}
++
+ // Parse a "x,y,w,h" rect string. Returns nullopt for an empty OR malformed string;
+ // the caller distinguishes the two (empty = no flag, malformed = error).
+ std::optional<cv::Rect> parse_rect(const std::string& s);
+ 
++#ifdef WMR_BUILD_ANTIDETECT
++// Shared CLI-opts -> facade-config mapping (used by process_antidetect and the
++// chained --antidetect hooks in process_single_image / the batch path).
++wmr::antidetect::AntidetectConfig antidetect_config_from(const CliOptions& opts);
++#endif
++
+ // Build the still-image geometry override from CLI opts. Returns false (with a
+ // logged error) when --rect was given but malformed.
+ bool resolve_still_geometry_override(const CliOptions& opts, StillGeometryOverride& out);
+diff --git a/src/core/model_downloader.cpp b/src/core/model_downloader.cpp
+index 8d93a12..95f2563 100644
+--- a/src/core/model_downloader.cpp
++++ b/src/core/model_downloader.cpp
+@@ -1,4 +1,4 @@
+-#ifdef WMR_BUILD_REGEN
++#if defined(WMR_BUILD_REGEN) || defined(WMR_BUILD_ANTIDETECT)
+ #include "core/model_downloader.hpp"
+ 
+ #include <openssl/sha.h>  // SHA256_* (acceptable per correction #3; deprecated in OSSL 3, no -Werror)
+diff --git a/src/core/model_downloader.hpp b/src/core/model_downloader.hpp
+index 1213620..fdcf5b4 100644
+--- a/src/core/model_downloader.hpp
++++ b/src/core/model_downloader.hpp
+@@ -1,5 +1,9 @@
+ #pragma once
+-#ifdef WMR_BUILD_REGEN
++// Shared by the SynthID regen model fetch (WMR_BUILD_REGEN) and the
++// anti-detection surrogate fetch (WMR_BUILD_ANTIDETECT). The TU itself is
++// ungated in the build (paths.cpp precedent); the guard pair keeps a
++// feature-free build free of curl/openssl symbols.
++#if defined(WMR_BUILD_REGEN) || defined(WMR_BUILD_ANTIDETECT)
+ #include <cstdint>
+ #include <filesystem>
+ #include <functional>
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 58a01bd..9a12c12 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -28,6 +28,7 @@ set(LIB_SOURCES
+     ${CMAKE_SOURCE_DIR}/src/detection/still_geometry.cpp  # VideoReader-free (pure OpenCV); safe for the test link
+     ${CMAKE_SOURCE_DIR}/src/core/paths.cpp  # ungated; regenerator.cpp (regen mirror block) calls user_cache_dir()
+     ${CMAKE_SOURCE_DIR}/src/cli/progress.cpp  # ungated; shared by video/remove/batch (always built)
++    ${CMAKE_SOURCE_DIR}/src/core/model_downloader.cpp  # ungated (paths.cpp precedent); regen + antidetect mirrors share it
+     ${CMAKE_SOURCE_DIR}/src/metadata/provenance.cpp  # ungated; provenance strip (no OpenCV/FFmpeg)
+     ${CMAKE_SOURCE_DIR}/src/metadata/png_chunks.cpp   # ungated; pure TU, paths.cpp precedent
+     ${CMAKE_SOURCE_DIR}/src/metadata/jpeg_markers.cpp # ungated; pure TU, paths.cpp precedent
+@@ -102,7 +103,6 @@ if(WMR_BUILD_REGEN)
+     target_sources(wmr_tests PRIVATE
+         ${CMAKE_SOURCE_DIR}/src/core/regen_backend.cpp
+         ${CMAKE_SOURCE_DIR}/src/core/regen_tiling.cpp
+-        ${CMAKE_SOURCE_DIR}/src/core/model_downloader.cpp
+         ${CMAKE_SOURCE_DIR}/src/core/regenerator.cpp
+         ${CMAKE_SOURCE_DIR}/src/core/regen_restore.cpp
+         unit/regen_backend_test.cpp
+@@ -116,6 +116,36 @@ if(WMR_BUILD_REGEN)
+     target_compile_definitions(wmr_tests PRIVATE WMR_BUILD_REGEN=1)
+ endif()
+ 
++# Anti-detection pipeline — mirrors the main CMakeLists block. The physics TU is
++# pure OpenCV (no FFmpeg), safe for the test link like notebooklm_gates.
++# model_downloader.cpp is intentionally NOT listed here (top-level LIB_SOURCES,
++# paths.cpp precedent; the regen mirror would be a duplicate-source error).
++if(WMR_BUILD_ANTIDETECT)
++    target_sources(wmr_tests PRIVATE
++        ${CMAKE_SOURCE_DIR}/src/core/antidetect_physics.cpp
++        ${CMAKE_SOURCE_DIR}/src/core/lpips_alex.cpp
++        ${CMAKE_SOURCE_DIR}/src/core/antidetect.cpp
++        ${CMAKE_SOURCE_DIR}/src/core/square_attack.cpp
++        ${CMAKE_SOURCE_DIR}/src/core/antidetect_models_fetch.cpp
++        unit/antidetect_physics_test.cpp
++        unit/lpips_alex_test.cpp
++        unit/antidetect_report_test.cpp
++        unit/antidetect_cli_test.cpp
++        unit/square_attack_test.cpp
++    )
++    target_link_libraries(wmr_tests PRIVATE CURL::libcurl OpenSSL::Crypto)
++    target_compile_definitions(wmr_tests PRIVATE WMR_BUILD_ANTIDETECT=1)
++    if(WMR_BUILD_ANTIDETECT_ADVERSARIAL AND TARGET wmr_ort)
++        target_sources(wmr_tests PRIVATE
++            ${CMAKE_SOURCE_DIR}/src/core/detector_suite_ort.cpp
++            ${CMAKE_SOURCE_DIR}/src/core/antidetect_adversarial.cpp
++            unit/detector_suite_smoke_test.cpp
++        )
++        target_link_libraries(wmr_tests PRIVATE wmr_ort)
++        target_compile_definitions(wmr_tests PRIVATE WMR_ANTIDETECT_ADVERSARIAL=1)
++    endif()
++endif()
++
+ # CoreML SDXL img2img (Euler scheduler + pipeline) — mirrors the main CMakeLists block.
+ if(WMR_BUILD_AI_COREML_SD)
+     if(NOT APPLE)
+diff --git a/vcpkg.json b/vcpkg.json
+index 126396b..ae8d957 100644
+--- a/vcpkg.json
++++ b/vcpkg.json
+@@ -24,6 +24,13 @@
+         "curl",
+         "openssl"
+       ]
++    },
++    "antidetect": {
++      "description": "Anti-detection pipeline (camera-statistics physics + surrogate-ensemble adversarial stage). Adds curl + openssl for the SHA256-pinned surrogate-model downloader.",
++      "dependencies": [
++        "curl",
++        "openssl"
++      ]
+     }
+   }
+ }

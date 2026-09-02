@@ -87,13 +87,18 @@ expectations.
 
 ## How to explore / revive
 
-- **The compilable, tested state is the `research/antidetect` git branch**
-  (12 commits, suite green at its HEAD). It built `wmr antidetect`
-  (subcommand + chained `--antidetect`), with ORT surrogate inference,
-  CoreML EP on Apple, and the full CI wiring. This directory is a
-  browsable extract: `src/` (the pipeline), `tests/`, `docs/` (the four
-  research records), `eval/` (the standalone Python harness that produced
-  the calibration tables; see `eval/README.md`).
+- This directory is self-contained: `src/` (the pipeline sources + the
+  LPIPS weights header), `tests/`, `docs/` (the four research records),
+  `eval/` (the standalone Python harness that produced the calibration
+  tables; see `eval/README.md`).
+- **To revive the feature as a building `wmr antidetect`**: start from the
+  v1.16.11-era tree, copy `src/*.cpp|hpp` into `src/core/` (and
+  `src/lpips_alex_l2.h` into `assets/`), the `tests/` files into
+  `tests/unit/`, then apply `wiring-against-1.16.11.patch` (the exact
+  cumulative diff of the feature's changes to the shared files: CMake
+  gates + the shared ORT fetch, CLI subcommand + chained flags, vcpkg
+  feature, build.sh, release CI). That reconstructs the complete,
+  suite-green feature state that was measured for this record.
 - Surrogate models (never uploaded anywhere; pins + SHAs in
   `eval/UPLOAD-MANIFEST.md`): commfor (MIT) from the repo above; corvi
   (Apache-2.0) exported from `buloutian/corvi-2022-mirror` via
