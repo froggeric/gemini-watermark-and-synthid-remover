@@ -432,13 +432,22 @@ CLI11 subcommands in src/cli/: `remove` (default), `synthid`, `detect`, `video`,
   measurement; core bias -0.9 -> +0.07), and floor-fixed the 36px (tapered
   subtraction, no fixture). The 48px averaged mask was VERIFIED optimal (its
   plateau is bracketed by independent measurements within noise) and left alone.
-  UNVALIDATED LEAD, do not re-litigate casually: measured alpha falls with bg
-  (0.305@black, ~0.29@90, 0.264@230) — consistent with overlay color ~250/255
-  rather than 255, but the fit is weak (R2 0.42, per-image scatter +-0.01); a
-  two-parameter (alpha, overlay-color) exact inversion would kill the residual
-  +-1.5/255 bg-dependent bias IF confirmed. bg-DEPENDENCE also means no single
-  C=255 mask can be exact at every background level; the shipped masks are
-  optimal for the mid-dark backgrounds where marks actually land.
+  OVERLAY-COLOR HYPOTHESIS TESTED AND REFUTED (2026-09-11, the pure-color
+  experiment): earlier per-image measurements showed measured alpha falling with
+  bg (0.305@black, ~0.29@90, 0.264@230), suggesting the overlay is not pure
+  white. The `test-images/gemini-3.1-pro/2400x1792/` pure-COLOR series (the SAME
+  V1 mark on black/blue/red/magenta/grey/green/cyan/yellow, gray 0-226) settles
+  it: measured alpha is FLAT (0.4935-0.5023) across all backgrounds and the 30
+  pure-black generations agree to +-0.0003 — the overlay IS pure white 255.
+  The V2 "trend" was MEASUREMENT AMPLIFICATION: alpha=(syn-bg)/(255-bg) has a
+  1/(255-bg) denominator, so a ~1/255 background-estimation error becomes
+  +-0.04 alpha at bg 230. CONSEQUENCES: (1) high-bg alpha measurements are
+  intrinsically untrustworthy — weight calibration data by (255-bg)^2 (the
+  V2-96 plateau consensus is 0.2982 from the low-bg measurements, independently
+  matching the 48px mask's 0.2983); (2) the C=255 reverse blend is the exact
+  inversion at every bg; no two-parameter blend is needed; (3) the
+  pure-black/pure-color fixture sets are pristine calibration assets (30
+  generations @ 96px V1 (2240,1632) on black + 8 controlled backgrounds).
 - Capturing a watermark alpha from a real image: crop at the mark's TRUE top-left so the
   full mark fills the crop (a 2px clip reads as a reversal border); do NOT median-denoise
   (it erodes the faint outer edge); a pure-black background makes
