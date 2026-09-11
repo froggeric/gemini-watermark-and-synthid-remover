@@ -303,6 +303,8 @@ TEST_CASE("Gemini 3.6 faint (896x1200) geometry preset forces the 48px position"
     CHECK(res.pos->margin_right == 96);
     CHECK(res.pos->margin_bottom == 96);
     CHECK(res.pos->logo_size == 48);
+    CHECK(res.trusted);                              // a user-forced override vouches
+    CHECK(res.source == std::string("preset"));
     REQUIRE(res.alpha != nullptr);
     CHECK(res.alpha->cols == 48);   // the override uses the correct 48px alpha, not the default 36
 
@@ -313,6 +315,42 @@ TEST_CASE("Gemini 3.6 faint (896x1200) geometry preset forces the 48px position"
                                               WatermarkSize::Small, ov2);
     REQUIRE(res2.pos.has_value());
     CHECK(res2.pos->margin_right == 896 - (752 + 48));
+    CHECK(res2.trusted);
+    CHECK(res2.source == std::string("rect"));
     REQUIRE(res2.alpha != nullptr);
     CHECK(res2.alpha->cols == 48);
+}
+
+TEST_CASE("Gemini 3.6 faint (896x1200) AUTO-geometry now resolves the hard fixture",
+          "[integration][v2]") {
+    // test3 is the documented hard case: a faint mark on a busy poster where the
+    // raw search historically found nothing trusted (the fixture needed
+    // --geo-preset). Since the saturated-content suppression the auto search
+    // snaps to the calibrated preset on its own, and the resolved geometry is
+    // TRUSTED (the CLI may remove past the fusion gate unless the fusion
+    // contradicts it). Same-generation real-world case: a Gemini 3.8 image whose
+    // mark sits across white poster text (864x1231, same tier).
+    cv::Mat image = load_fixture("896x1200-test3-gemini36.png");
+    if (image.empty()) SKIP("test3 fixture not available");
+
+    WatermarkEngine engine;
+    StillGeometryOverride ov;   // no override -> hybrid auto search
+    auto res = engine.resolve_still_geometry(image, WatermarkVariant::V2,
+                                             WatermarkSize::Small, ov);
+    REQUIRE(res.pos.has_value());
+    CHECK(res.pos->margin_right == 96);
+    CHECK(res.pos->margin_bottom == 96);
+    CHECK(res.pos->logo_size == 48);
+    CHECK(res.trusted);
+    CHECK(res.source == std::string("auto/snapped"));
+    REQUIRE(res.alpha != nullptr);
+    CHECK(res.alpha->cols == 48);
+
+    // The fusion at that position is content-suppressed (busy poster) but must not
+    // CONTRADICT the geometry: a non-negative spatial score keeps the CLI bypass
+    // available, a negative one (inverted content) must fall back.
+    auto det = engine.detect_watermark(image, WatermarkSize::Small, res.pos, res.alpha,
+                                       WatermarkVariant::V2, /*enable_snap=*/true);
+    CAPTURE(det.spatial_score, det.confidence);
+    CHECK(det.spatial_score >= 0.0f);
 }

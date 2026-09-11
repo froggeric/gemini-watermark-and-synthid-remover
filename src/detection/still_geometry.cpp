@@ -47,6 +47,31 @@ std::optional<StillPreset> snap_still_to_known(const cv::Rect& detected, int W, 
 }
 
 namespace {
+// Replace saturated bright content (white text / poster highlights) with the local
+// median background before the template search. The Gemini diamond is a white
+// overlay, so where the underlying content is already near-white the blend is a
+// no-op (0.3*255 + 0.7*255 == 255): those pixels carry zero mark signal but huge
+// NCC noise. Measured on a Gemini 3.8 image whose mark sits across white poster
+// text: the true position scores 0.39 raw (beaten by a text artifact at 0.45) but
+// 0.78 after suppression, with the artifact down at 0.20.
+//
+// The two-condition gate can never erase the mark itself: a mark pixel only
+// exceeds 200 when the background is above ~177 (alpha 0.30 white overlay), and
+// there its deviation from background is 0.3*(255-bg) < 23, far below the 60
+// outlier bar. Dark-polarity marks (the |min| arm) are untouched: only bright
+// outliers are replaced. No-op on frames with no near-white content.
+cv::Mat suppress_saturated_content(const cv::Mat& gray) {
+    if (gray.empty() || gray.type() != CV_8UC1) return gray;
+    cv::Mat med;
+    cv::medianBlur(gray, med, 21);
+    cv::Mat diff;
+    cv::subtract(gray, med, diff, cv::noArray(), CV_16S);
+    cv::Mat mask = (gray > 200) & (diff > 60);
+    cv::Mat clean = gray.clone();
+    med.copyTo(clean, mask);
+    return clean;
+}
+
 // Run detect_geometry_in_frames (pure, polarity-invariant, multi-template) over one
 // window. Returns the winning rect + score + which template matched.
 std::optional<StillGeometryHit> search_window(const cv::Mat& gray,
@@ -83,11 +108,15 @@ std::optional<StillGeometryHit> locate_still_watermark_hybrid(
     if (maxw == 0 || maxh == 0) return std::nullopt;
     const int pad = kStillAnchorPad;
 
+    // Search on the saturated-content-suppressed frame (see suppress_saturated_content).
+    // The returned rect is in unchanged coordinates: suppression is per-pixel.
+    const cv::Mat search_frame = suppress_saturated_content(gray_frame);
+
     // (1) Anchored window around the model prediction (sized for the largest template).
     const cv::Rect anchored(std::max(0, model_anchor.x - pad),
                             std::max(0, model_anchor.y - pad),
                             maxw + 2 * pad, maxh + 2 * pad);
-    if (auto ah = search_window(gray_frame, alpha_templates_8u, anchored, min_confidence)) {
+    if (auto ah = search_window(search_frame, alpha_templates_8u, anchored, min_confidence)) {
         if (hit_is_trusted(ah->rect, ah->score, W, H, high_confidence)) return ah;
     }
 
@@ -95,7 +124,7 @@ std::optional<StillGeometryHit> locate_still_watermark_hybrid(
     const int x0 = std::max(0, W - 320);
     const int y0 = std::max(0, H - 320);
     const cv::Rect corner(x0, y0, W - x0, H - y0);
-    if (auto wh = search_window(gray_frame, alpha_templates_8u, corner, min_confidence)) {
+    if (auto wh = search_window(search_frame, alpha_templates_8u, corner, min_confidence)) {
         if (hit_is_trusted(wh->rect, wh->score, W, H, high_confidence)) return wh;
     }
 
@@ -126,15 +155,27 @@ StillResolvedGeometry resolve_still_geometry(
         const cv::Point anchor = model_pos.get_position(W, H);
         if (auto hit = locate_still_watermark_hybrid(gray_frame, alpha_templates_8u,
                                                      anchor, W, H)) {
-            const bool snapped = snap_still_to_known(hit->rect, W, H).has_value();
-            const std::string src = snapped ? "auto/snapped" : "auto/raw";
-            // logo_size = the matched template's width (36 or 48).
+            // A snap does two things: trusts the hit at the min confidence AND pins
+            // the returned position to the calibrated preset geometry. The raw NCC
+            // peak can sit tens of px off on busy content (measured: a poster drew
+            // the peak 35 px left of the calibrated mark on the same y-row), and the
+            // preset margins are the measured true edges — so once the hit is
+            // RECOGNIZED as a known geometry, the known geometry is the better
+            // position (same semantics as the video path's snap_geometry_to_known).
+            // The NccDetector ±3 px refinement still fine-tunes from there when its
+            // own spatial NCC clears 0.60.
+            if (auto p = snap_still_to_known(hit->rect, W, H)) {
+                return {WatermarkPosition{p->margin_right, p->margin_bottom, p->logo_size},
+                        "auto/snapped", hit->score, hit->template_index};
+            }
+            // Off-table raw hit (>= high confidence): the detected rect IS the
+            // position. logo_size = the matched template's width (36 or 48).
             const int logo = (hit->template_index >= 0 &&
                               hit->template_index < static_cast<int>(alpha_templates_8u.size()))
                                  ? alpha_templates_8u[hit->template_index].cols
                                  : model_pos.logo_size;
-            return {rect_to_still_position(hit->rect, W, H, logo), src, hit->score,
-                    hit->template_index};
+            return {rect_to_still_position(hit->rect, W, H, logo), "auto/raw",
+                    hit->score, hit->template_index};
         }
     }
     // (4) Model fallback.

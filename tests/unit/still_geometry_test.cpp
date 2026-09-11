@@ -153,6 +153,71 @@ TEST_CASE("still_geometry: regression gate boundaries (reused from video)",
     CHECK(decide_auto_geometry(false, 0.60f, kStillHighConfidence) == AutoGeometryVerdict::UseRaw);
 }
 
+// ---------------------------------------------------------------------------
+// Saturated-content collision (Gemini 3.8 regression). The mark is a WHITE
+// overlay, so white content through the footprint carries zero mark signal
+// (0.3*255 + 0.7*255 == 255) but huge NCC noise. On a real Gemini 3.8 image
+// (mark across white poster text) the raw search scored the true spot 0.39 and
+// let a text artifact win; the saturated-content suppression in
+// locate_still_watermark_hybrid recovers it (0.78 there).
+// ---------------------------------------------------------------------------
+TEST_CASE("still_geometry: white text through the mark does not defeat the search",
+          "[still_geometry]") {
+    WatermarkEngine engine;
+    const cv::Mat a36 = engine.get_v2_diamond_alpha_36();
+    const cv::Mat a48 = engine.get_v2_diamond_alpha_48_still();
+    const std::vector<cv::Mat> templates{alpha_to_template(a36), alpha_to_template(a48)};
+
+    // Two heavy white text lines straight through the calibrated mark footprint.
+    // Parameters verified in python: without suppression the 36px template wins on
+    // a text artifact (0.49 at the WRONG position); with it the 48px mark wins at
+    // the true spot (0.60). The mark itself is never suppressed: its pixels are
+    // below the 200 saturation bar on this dark base.
+    const cv::Point pos(kW - 96 - 48, kH - 96 - 48);   // (752,1056)
+    cv::Mat frame = textured(kW, kH, cv::Scalar(45, 55, 80));
+    cv::putText(frame, "SUBMIT YOUR ENTRY NOW!", cv::Point(kW - 360, 1064),
+                cv::FONT_HERSHEY_SIMPLEX, 1.2, cv::Scalar(255, 255, 255), 3);
+    cv::putText(frame, "vichealth.club/entry", cv::Point(kW - 360, 1096),
+                cv::FONT_HERSHEY_SIMPLEX, 1.2, cv::Scalar(255, 255, 255), 3);
+    add_watermark_alpha_blend(frame, a48, pos, 255.0f);
+
+    const cv::Point anchor = v2_small_config_from_dims(kW, kH).get_position(kW, kH);
+    auto hit = locate_still_watermark_hybrid(to_gray(frame), templates, anchor, kW, kH);
+    CAPTURE(hit.has_value());
+    REQUIRE(hit.has_value());
+    CHECK(hit->template_index == 1);                    // the 48px mark, not a text artifact
+    CHECK(std::abs(hit->rect.x - pos.x) <= 3);
+    CHECK(std::abs(hit->rect.y - pos.y) <= 3);
+}
+
+TEST_CASE("still_geometry: a snapped hit resolves to the PINNED preset, not the raw peak",
+          "[still_geometry]") {
+    // On busy content the raw NCC peak can sit tens of px from the calibrated mark
+    // (a real 896x1200 poster drew it 35 px left on the correct row). Once a hit is
+    // RECOGNIZED as a preset geometry (center L1 within tol), the resolved position
+    // must be the preset's measured margins, not the raw peak. Here the mark is
+    // stamped 30 px left of the preset slot: the peak lands at the stamp, the snap
+    // fires, and the resolved margins are the preset's (96,96), not the stamp's
+    // (126,96).
+    WatermarkEngine engine;
+    const cv::Mat a36 = engine.get_v2_diamond_alpha_36();
+    const cv::Mat a48 = engine.get_v2_diamond_alpha_48_still();
+    const std::vector<cv::Mat> templates{alpha_to_template(a36), alpha_to_template(a48)};
+    const WatermarkPosition model = v2_small_config_from_dims(kW, kH);
+
+    const cv::Point true_pos(kW - 96 - 48, kH - 96 - 48);      // (752,1056)
+    cv::Mat frame = textured(kW, kH, cv::Scalar(50, 60, 90));
+    add_watermark_alpha_blend(frame, a48, cv::Point(true_pos.x - 30, true_pos.y), 255.0f);
+
+    StillGeometryOverride o;
+    auto r = resolve_still_geometry(to_gray(frame), templates, model, kW, kH, o);
+    CHECK(r.source == "auto/snapped");
+    CHECK(r.pos.margin_right == 96);       // pinned to the preset, not the raw 126
+    CHECK(r.pos.margin_bottom == 96);
+    CHECK(r.pos.logo_size == 48);
+    CHECK(r.template_index == 1);
+}
+
 // Gemini 3.6 stamps a 48px diamond at margin (96,96) even on large (>1024px) outputs.
 // The size heuristic calls these "Large" (96px model); the content search must still
 // recover the real 48px mark. kLgW/kLgH match the paintings-wm fixtures (2400x1792).

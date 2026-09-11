@@ -97,6 +97,15 @@ public:
     struct StillResolveResult {
         std::optional<WatermarkPosition> pos;
         const cv::Mat* alpha = nullptr;
+        // Whether the geometry layer vouches that a mark is really at `pos`:
+        // "rect"/"preset" (user-forced) or "auto/snapped"/"auto/raw" (content search
+        // that cleared its trust bars). "model" (the fallback guess) is NOT trusted.
+        // The CLI lets a trusted geometry proceed to removal even when the NCC fusion
+        // gate rejects: content colliding with the mark (e.g. white text under the
+        // white diamond) suppresses the fusion scores but not the geometry search.
+        bool trusted = false;
+        std::string source = "model";  // owned: resolve_still_geometry returns a dangling c_str() otherwise
+        float score = 0.0f;
     };
 
     // Resolve the still-image watermark position via the hybrid auto-geometry search

@@ -149,6 +149,19 @@ static int process_detect(const CliOptions& opts) {
                              result.confidence * 100.0f);
                 spdlog::info("  Region: ({}, {}) {}x{}", result.region.x, result.region.y,
                              result.region.width, result.region.height);
+            } else if (is_v2 && resolved.trusted && fp.has_value() &&
+                       result.spatial_score >= 0.0f) {
+                // The geometry search localized the mark (polarity-invariant NCC over
+                // the saturated-content-suppressed frame, cleared its trust bars) but
+                // the fusion gate rejected: content colliding with the mark (white
+                // text under the white diamond) suppresses the fusion scores.
+                spdlog::info("{} DETECTED via geometry search ({}, NCC {:.2f}; "
+                             "fusion {:.1f}% below the gate)", tag, resolved.source,
+                             resolved.score, result.confidence * 100.0f);
+                const cv::Point tl = fp->get_position(image.cols, image.rows);
+                spdlog::info("  Region: ({}, {}) {}x{}", tl.x, tl.y,
+                             resolved.alpha ? resolved.alpha->cols : fp->logo_size,
+                             resolved.alpha ? resolved.alpha->rows : fp->logo_size);
             } else {
                 spdlog::info("{} not detected ({:.1f}%)", tag, result.confidence * 100.0f);
             }
@@ -202,8 +215,12 @@ static int process_single_image(const CliOptions& opts) {
 
         // An explicit --rect/--geo-preset means "remove at this position" even when
         // the detector's confidence is too low to confirm (a faint mark the search
-        // localized but could not pass the gate). Without an override, require a real
-        // detection.
+        // localized but could not pass the gate). A TRUSTED auto-geometry hit
+        // (snapped preset or high-confidence raw, from the saturated-content-
+        // suppressed search) gets the same treatment: content colliding with the
+        // mark (e.g. white poster text under the white diamond) suppresses the
+        // fusion scores below the gate while the geometry search still localizes
+        // the mark decisively. Without either, require a real detection.
         const bool explicit_override =
             !opts.still_rect_str.empty() || !opts.still_geo_preset.empty();
 
@@ -222,10 +239,28 @@ static int process_single_image(const CliOptions& opts) {
             auto detection = engine.detect_watermark(image, force_size, force_pos,
                                                      alpha_override, v, snap);
             if (!detection.detected) {
-                if (!(explicit_override && force_pos.has_value())) return false;
-                spdlog::info("Removing at overridden position "
-                             "(confidence {:.1f}% below the detection gate)",
-                             detection.confidence * 100.0f);
+                // Proceed only when the geometry layer vouches for the position
+                // AND the fusion does not contradict it. A NEGATIVE spatial NCC
+                // at the resolved position means the bright-diamond alpha
+                // anti-correlates there — the polarity-invariant search latched
+                // onto a dark content shape (the documented inverted-mark case);
+                // fall back, do not remove. Explicit --rect/--geo-preset stays
+                // unconditional (the user forced the position).
+                const bool vouched = force_pos.has_value() &&
+                    (explicit_override ||
+                     (resolved.trusted && detection.spatial_score >= 0.0f));
+                if (!vouched) return false;
+                if (explicit_override) {
+                    spdlog::info("Removing at overridden position "
+                                 "(confidence {:.1f}% below the detection gate)",
+                                 detection.confidence * 100.0f);
+                } else {
+                    spdlog::info("Removing at auto-detected position "
+                                 "(fusion confidence {:.1f}% below the gate; "
+                                 "geometry search: {}, NCC {:.2f})",
+                                 detection.confidence * 100.0f,
+                                 resolved.source, resolved.score);
+                }
             } else {
                 // S2: surface auto-geometry's decision (position + matched size)
                 // so the user can see what was resolved.

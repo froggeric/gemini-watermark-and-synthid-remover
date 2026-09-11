@@ -220,7 +220,7 @@ WatermarkEngine::StillResolveResult WatermarkEngine::resolve_still_geometry(
     // so the removal uses the matching-size alpha (a 48px box -> 48px alpha).
     if (override.rect) {
         WatermarkPosition p = rect_to_still_position(*override.rect, W, H, override.rect->width);
-        return {p, alpha_for_logo(p.logo_size)};
+        return {p, alpha_for_logo(p.logo_size), /*trusted=*/true, "rect", 0.0f};
     }
     // The content search runs for every V2 profile. Gemini 3.6 places a 48px diamond at
     // margin (96,96) even on large (>1024px) outputs, where the size heuristic wrongly
@@ -256,8 +256,9 @@ WatermarkEngine::StillResolveResult WatermarkEngine::resolve_still_geometry(
         gray, templates, model_pos, W, H, override);
     spdlog::debug("Still geometry: source={}, score={:.2f}, margin=({},{}) logo_size={}",
                   r.source, r.score, r.pos.margin_right, r.pos.margin_bottom, r.pos.logo_size);
-    if (r.source == "model") return {std::nullopt, nullptr};
-    return {r.pos, alpha_for_logo(r.pos.logo_size)};
+    if (r.source == "model") return {std::nullopt, nullptr, /*trusted=*/false, "model", 0.0f};
+    return {r.pos, alpha_for_logo(r.pos.logo_size), /*trusted=*/true,
+            r.source.c_str(), r.score};
 }
 
 void WatermarkEngine::remove_watermark(cv::Mat& image,

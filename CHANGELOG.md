@@ -6,9 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Watermarks that sit on white content are now detected and removed automatically** (validated on Gemini 3.8 Flash images). The Gemini mark is a white overlay, so where it lands on already-white content (poster text, highlights) it leaves no visible change and no signal for the detector: on a real Gemini 3.8 image whose diamond sat across white poster text, the true position scored 0.39 NCC (below the 0.45 bar) and a text artifact won the search instead. The still-image geometry search now suppresses saturated bright content (pixels near white that are strong outliers against their local background) before matching, which lifted that image's true mark to 0.78 NCC and dropped the artifact to 0.20. The suppression cannot erase a real mark: a diamond pixel only exceeds the near-white bar when the background is very bright, and there its deviation from the background is far below the outlier threshold. The Gemini 3.8 mark itself is unchanged from 3.6 (same 48px diamond at the same margin, alpha within measurement noise of the existing mask), so removal uses the existing calibrated alpha and the output is byte-identical to forcing `--geo-preset gemini36-portrait`.
+- **A trusted auto-detected position is no longer vetoed by the confirmation gate when content collides with the mark.** When the geometry search recognizes the mark (snapped to a calibrated preset, or a high-confidence off-table hit) but the downstream fusion score is dragged below its gate by the very content collision described above, removal now proceeds at the searched position instead of doing nothing. The fusion can still veto: a negative spatial correlation at the resolved position means the bright-diamond template anti-correlates there (a dark content shape the polarity-invariant search latched onto), and that case still falls back exactly as before. Explicit `--rect` / `--geo-preset` overrides are unchanged.
+- **A hit that snaps to a calibrated preset now removes at the preset's exact position, not the raw search peak.** On busy content the raw peak can sit tens of pixels from the real mark (a poster image drew it 35px off along the correct row); the preset margins are the measured true edges, so a recognized geometry resolves to them (same semantics as the video path). This also makes the documented hard fixture (a faint mark on a busy 896x1200 poster that needed `--geo-preset gemini36-portrait`) resolve automatically.
+
 ### Added
 
-- _Nothing yet._
+- `wmr detect` now reports a mark found by the geometry search when the fusion gate cannot confirm it (with the search's NCC score and source), instead of a bare "not detected".
 
 ## [1.16.11] - 2026-08-27
 

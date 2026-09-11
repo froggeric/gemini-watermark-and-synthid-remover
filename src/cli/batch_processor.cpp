@@ -75,7 +75,9 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
         }
 
         // An explicit --rect/--geo-preset forces removal at that position even when
-        // the detector's confidence is too low to confirm (faint mark). Mirrors the
+        // the detector's confidence is too low to confirm (faint mark). A trusted
+        // auto-geometry hit gets the same treatment (content colliding with the mark
+        // suppresses the fusion gate but not the geometry search). Mirrors the
         // single-image path.
         const bool explicit_override =
             !opts.still_rect_str.empty() || !opts.still_geo_preset.empty();
@@ -93,7 +95,15 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
                      == WatermarkSize::Small));
             auto detection = engine.detect_watermark(image, force_size, force_pos,
                                                      alpha_override, v, snap);
-            if (!detection.detected && !(explicit_override && force_pos.has_value())) {
+            // Same gate as the single-image path: a trusted auto geometry may
+            // proceed past the fusion gate unless the fusion contradicts it
+            // (negative spatial NCC = the bright-diamond alpha anti-correlates
+            // at the resolved position: a dark content shape the
+            // polarity-invariant search latched onto — fall back, don't remove).
+            if (!detection.detected &&
+                !(force_pos.has_value() &&
+                  (explicit_override ||
+                   (resolved.trusted && detection.spatial_score >= 0.0f)))) {
                 return false;
             }
             const cv::Mat& alpha = alpha_override ? *alpha_override

@@ -132,7 +132,36 @@ for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
   36px (Gemini 3.5) and 48px (Gemini 3.6) diamond alphas; the winner
   (`StillGeometryHit::template_index`) selects the matched-size alpha for removal.
   A single-size assumption fails one of the two Gemini generations (1.13.0 shipped
-  36px-only and under-covered 3.6's 48px mark).
+  36px-only and under-covered 3.6's 48px mark). **Gemini 3.8 Flash is unchanged
+  from 3.6** (verified 2026-09-11 on an 864x1231 export: same 48px diamond at the
+  same (96,96) margin, alpha profile within measurement noise; removal with the
+  3.6 mask leaves sub-1/255 residual), so it needs no new template or preset.
+- **Saturated-content suppression in the search frame (Gemini 3.8's failure mode):**
+  the mark is a WHITE overlay, so where it lands on near-white content (poster text,
+  highlights) the blend is a no-op (0.3·255 + 0.7·255 = 255): those pixels carry zero
+  mark signal but huge NCC noise. On the 3.8 fixture (mark across white poster text)
+  the true spot scored 0.39 raw (beaten by a text artifact at 0.45) and 0.78 after
+  suppression. `locate_still_watermark_hybrid` therefore searches a frame where
+  pixels that are BOTH >200 AND >median21+60 are replaced by the local median. The
+  two-condition gate can never erase the mark itself: a mark pixel exceeds 200 only
+  when the background is above ~177, and there its deviation is 0.3·(255−bg) < 23,
+  far below the 60 outlier bar (dark-polarity hits are untouched: only bright
+  outliers are replaced).
+- **A snap returns the PINNED preset geometry, not the raw peak:** once a hit is
+  recognized as a known geometry (center L1 ≤ 40 + tier + size match),
+  `resolve_still_geometry` returns the preset's measured margins — the raw NCC peak
+  can sit tens of px off on busy content (a real poster drew it 35px left on the
+  correct row; that fixture now auto-resolves). The NccDetector ±3px snap refinement
+  still fine-tunes from there when its own spatial NCC clears 0.60.
+- **Trusted geometry may remove past the fusion gate (unless contradicted):** the
+  CLI treats a trusted geometry (`StillResolveResult::trusted`: preset/rect or
+  auto/snapped|raw) like an override when the NccDetector fusion is dragged below
+  its 0.35 gate by the same content collision — but NOT when the fusion contradicts
+  it: `detection.spatial_score < 0` means the bright-diamond alpha anti-correlates
+  at the resolved position (a dark shape the polarity-invariant search latched
+  onto; seen at −0.50 on a 2400x1792 fixture with a dark content diamond at 0.607)
+  and the old fall-back behavior applies. `wmr detect` reports the geometry-layer
+  hit (with its NCC) when the fusion cannot confirm.
 - **Why anchored, not a blind corner scan:** video's blind scan works because it
   aggregates ~12 frames (the static mark wins over transient content). A single
   busy still has no such advantage: a faint mark (~0.48 NCC) is beaten by corner
@@ -163,8 +192,8 @@ for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
   for uncalibrated resolutions.
 - **Still-path fixtures:** `test-images/896x1200-test4-gemini36.png` = clear mark on
   near-uniform black (the `v2_diamond_48_still` capture source); `...-test3-...` = faint
-  mark on a busy poster (the hard case; auto-detect can fail, so force with
-  `--geo-preset gemini36-portrait`).
+  mark on a busy poster (the historic hard case; auto-detects since the
+  saturated-content suppression + snap-pinning, regression-tested).
 - **Precedence:** `--rect` > `--geo-preset` > auto-detect > model. New flags on
   `remove`/`visible`/`detect`: `--rect x,y,w,h` (shared `parse_rect` helper, also
   used by video), `--geo-preset <name>`, `--no-auto-geometry`. An explicit
