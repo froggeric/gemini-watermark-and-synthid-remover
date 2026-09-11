@@ -242,13 +242,17 @@ WatermarkEngine::StillResolveResult WatermarkEngine::resolve_still_geometry(
     const WatermarkPosition model_pos = get_watermark_config(W, H, variant);
 
     // Candidate templates: the three diamond sizes (36 = Gemini 3.5, 48 = Gemini
-    // 3.6/3.8 small, 96 = Gemini 3.8 2K). The search reports which matched so removal
-    // uses the right-size alpha.
+    // 3.6/3.8 small + 3.6 large, 96 = Gemini 3.8 2K). The search reports which
+    // matched so removal uses the right-size alpha. The 36px mark only exists on
+    // SMALL Gemini 3.5 outputs (short side <= ~1k): offering it on large images
+    // matches sparkle-shaped poster CONTENT (measured 0.60-0.73 NCC on clean
+    // paintings and regen outputs) and once preempted a real mark's removal.
     cv::Mat gray;
     if (image.channels() >= 3) cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
     else                        gray = image.clone();
     std::vector<cv::Mat> templates;
-    if (!alpha_map_v2_diamond_36_.empty()) {
+    if (get_watermark_size(W, H) == WatermarkSize::Small &&
+        !alpha_map_v2_diamond_36_.empty()) {
         cv::Mat t; alpha_map_v2_diamond_36_.convertTo(t, CV_8U, 255.0); templates.push_back(t);
     }
     const cv::Mat& a48 = alpha_map_v2_diamond_48_still_;

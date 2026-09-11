@@ -200,15 +200,23 @@ for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
   not trusted.
 - **Trust gate** (reuses `decide_auto_geometry`): a hit that **snaps** to a
   calibrated preset (`snap_still_to_known`, center L1 <= 40 within the size +
-  short-side-tier gate) is trusted at `kStillMinConfidence` (0.45); a raw off-table
-  hit must clear `kStillHighConfidence` (0.60) or it falls back to the model.
+  short-side-tier gate) is trusted at `kStillMinConfidence` (0.45) — but ONLY after
+  `snap_position_verified` re-scores at the PINNED preset position (max of the
+  suppressed NCC and the weighted NCC must clear 0.45): a content look-alike can
+  wander inside the snap tolerance from real content (measured: sparkle art on a
+  clean painting, raw peak 0.54, pinned spot 0.055; real marks score 0.478-0.88 at
+  their true spot). A failed verification falls through to the raw bar at the hit's
+  own position. A raw off-table hit must clear `kStillHighConfidence` (0.75 — above
+  the measured content look-alike range 0.60-0.73 for the small templates, below
+  every real raw mark 0.77-1.00; faint real marks at known geometries use the
+  snapped bar instead) or it falls back to the model.
 - **Scope:** the search runs for **every V2 profile** (small AND large), not just
   V2-small. Gemini 3.6 stamps a 48px diamond at margin (96,96) even on large (>1024px)
   outputs (e.g. 2400x1792), where `get_watermark_size` wrongly picks Large (96px model)
   and plain `remove` used to find nothing; the search recovers that 48px mark via the
   bottom-right corner window. **V2-large stays byte-identical:** on a real Gemini 3.5
   large image (genuine 96px mark) the 48px template scores ~0.43, below the 0.45
-  min-confidence and the 0.60 raw-trust bars, so the search finds nothing trusted and
+  min-confidence and the 0.75 raw-trust bars, so the search finds nothing trusted and
   returns the model position (verified: identical md5 pre/post the un-gate). V1 keeps
   the model. `WatermarkEngine::resolve_still_geometry` is called **once** at the CLI
   layer (not inside `detect_watermark`, which runs per variant attempt) and returns

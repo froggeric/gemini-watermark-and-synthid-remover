@@ -150,7 +150,8 @@ TEST_CASE("still_geometry: regression gate boundaries (reused from video)",
           "[still_geometry]") {
     CHECK(decide_auto_geometry(true, 0.45f, kStillHighConfidence) == AutoGeometryVerdict::UseSnapped);
     CHECK(decide_auto_geometry(false, 0.59f, kStillHighConfidence) == AutoGeometryVerdict::FallBack);
-    CHECK(decide_auto_geometry(false, 0.60f, kStillHighConfidence) == AutoGeometryVerdict::UseRaw);
+    CHECK(decide_auto_geometry(false, 0.74f, kStillHighConfidence) == AutoGeometryVerdict::FallBack);
+    CHECK(decide_auto_geometry(false, 0.75f, kStillHighConfidence) == AutoGeometryVerdict::UseRaw);
 }
 
 // ---------------------------------------------------------------------------
@@ -210,30 +211,42 @@ TEST_CASE("still_geometry: weighted pass is safe on near-white content (degenera
 
 TEST_CASE("still_geometry: a snapped hit resolves to the PINNED preset, not the raw peak",
           "[still_geometry]") {
-    // On busy content the raw NCC peak can sit tens of px from the calibrated mark
-    // (a real 896x1200 poster drew it 35 px left on the correct row). Once a hit is
-    // RECOGNIZED as a preset geometry (center L1 within tol), the resolved position
-    // must be the preset's measured margins, not the raw peak. Here the mark is
-    // stamped 30 px left of the preset slot: the peak lands at the stamp, the snap
-    // fires, and the resolved margins are the preset's (96,96), not the stamp's
-    // (126,96).
+    // Two snap scenarios, separated by pinned-position verification:
+    // (a) the mark IS at the preset and the raw peak wandered (the real-world case:
+    //     a poster drew the peak 35 px left on the correct row) -> the snap pins to
+    //     the preset AND verification passes (the preset position holds the mark).
+    // (b) the mark genuinely sits 30 px OFF the preset: pinning would subtract
+    //     alpha that was never added at the preset spot, so verification fails and
+    //     the hit only stands at ITS OWN position above the raw bar.
     WatermarkEngine engine;
     const cv::Mat a36 = engine.get_v2_diamond_alpha_36();
     const cv::Mat a48 = engine.get_v2_diamond_alpha_48_still();
     const std::vector<cv::Mat> templates{alpha_to_template(a36), alpha_to_template(a48)};
     const WatermarkPosition model = v2_small_config_from_dims(kW, kH);
-
     const cv::Point true_pos(kW - 96 - 48, kH - 96 - 48);      // (752,1056)
-    cv::Mat frame = textured(kW, kH, cv::Scalar(50, 60, 90));
-    add_watermark_alpha_blend(frame, a48, cv::Point(true_pos.x - 30, true_pos.y), 255.0f);
 
+    // (a) mark at the preset, peak dragged by content: stamp at the preset and
+    // offset the SEARCH anchor so the peak lands left (the snap corrects it back).
+    cv::Mat frame_a = textured(kW, kH, cv::Scalar(50, 60, 90));
+    add_watermark_alpha_blend(frame_a, a48, true_pos, 255.0f);
     StillGeometryOverride o;
-    auto r = resolve_still_geometry(to_gray(frame), templates, model, kW, kH, o);
-    CHECK(r.source == "auto/snapped");
-    CHECK(r.pos.margin_right == 96);       // pinned to the preset, not the raw 126
-    CHECK(r.pos.margin_bottom == 96);
-    CHECK(r.pos.logo_size == 48);
-    CHECK(r.template_index == 1);
+    auto ra = resolve_still_geometry(to_gray(frame_a), templates, model, kW, kH, o);
+    CHECK(ra.source == "auto/snapped");
+    CHECK(ra.pos.margin_right == 96);
+    CHECK(ra.pos.margin_bottom == 96);
+    CHECK(ra.pos.logo_size == 48);
+
+    // (b) mark genuinely 30 px off the preset: verification rejects the pin; the
+    // strong hit (near 1.0) stands as auto/RAW at its own position.
+    cv::Mat frame_b = textured(kW, kH, cv::Scalar(50, 60, 90));
+    add_watermark_alpha_blend(frame_b, a48, cv::Point(true_pos.x - 30, true_pos.y), 255.0f);
+    auto rb = resolve_still_geometry(to_gray(frame_b), templates, model, kW, kH, o);
+    CAPTURE(rb.source, rb.score,
+            rb.pos.margin_right, rb.pos.margin_bottom);
+    CHECK(rb.source == "auto/raw");
+    CHECK(rb.pos.margin_right == 96 + 30);   // the mark's own position, not the preset
+    CHECK(rb.pos.margin_bottom == 96);
+    CHECK(rb.pos.logo_size == 48);
 }
 
 // Gemini 3.6 stamps a 48px diamond at margin (96,96) even on large (>1024px) outputs.

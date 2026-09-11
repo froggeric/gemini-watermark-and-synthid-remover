@@ -176,6 +176,49 @@ cv::Mat weighted_ncc_map(const cv::Mat& gray8u, const cv::Mat& tmpl32f) {
     return out;
 }
 
+// Verify a snapped hit AT THE PINNED POSITION before trusting it. The raw search
+// peak can wander tens of px from the true mark on busy content; a content look-
+// alike that lands inside the snap tolerance would then be pinned to the preset and
+// trusted at the low snapped bar. Re-score at the exact preset top-left with both
+// scorers (pass-1 suppressed NCC and the pass-2 weighted NCC) and require at least
+// one to clear the min confidence. Measured discriminator: real marks score
+// 0.478-0.88 (the buried ones only on the weighted score); a sparkle-content
+// wanderer on a clean painting scored 0.055 at the pinned spot it was pinned to.
+bool snap_position_verified(const cv::Mat& gray, const std::vector<cv::Mat>& templates8u,
+                            int template_index, const cv::Point& tl, float min_confidence)
+{
+    if (template_index < 0 || template_index >= static_cast<int>(templates8u.size())) return false;
+    const cv::Mat& t8u = templates8u[template_index];
+    if (t8u.empty()) return false;
+    cv::Mat tpl;
+    t8u.convertTo(tpl, CV_32F, 1.0 / 255.0);
+    const int S = t8u.cols;
+    constexpr int kCtx = 30;  // context for the median/weight kernels
+    const cv::Rect win = cv::Rect(tl.x - kCtx, tl.y - kCtx, S + 2 * kCtx, S + 2 * kCtx) &
+                         cv::Rect(0, 0, gray.cols, gray.rows);
+    if (win.width < S || win.height < S) return false;
+    const cv::Mat region(gray, win);
+    const cv::Point off(tl.x - win.x, tl.y - win.y);
+
+    // Pass-1 score: suppressed NCC at the exact pinned offset.
+    {
+        cv::Mat med, clean = region.clone();
+        cv::medianBlur(region, med, 21);
+        cv::Mat diff;
+        cv::subtract(region, med, diff, cv::noArray(), CV_16S);
+        cv::Mat mask = (region > 200) & (diff > 60);
+        med.copyTo(clean, mask);
+        cv::Mat cleanf;
+        clean.convertTo(cleanf, CV_32F);
+        cv::Mat r;
+        cv::matchTemplate(cleanf, tpl, r, cv::TM_CCOEFF_NORMED);
+        if (r.at<float>(off) >= min_confidence) return true;
+    }
+    // Pass-2 score: carry-weighted NCC at the same offset.
+    const cv::Mat w = weighted_ncc_map(region, tpl);
+    return w.at<float>(off) >= min_confidence;
+}
+
 // Pass-2 search over one window: best (polarity-invariant) hit per template, then
 // the first candidate (in score order) that clears the bar AND snaps to a preset.
 // Snap is REQUIRED (the weighting amplifies content; only a calibrated position
@@ -187,8 +230,7 @@ std::optional<StillGeometryHit> search_window_weighted(
     // Clamp to the frame (a Mat view of an out-of-bounds rect throws).
     const cv::Rect win = window & cv::Rect(0, 0, gray.cols, gray.rows);
     if (win.width <= 0 || win.height <= 0) return std::nullopt;
-    const cv::Mat region(gray, win);
-    struct Candidate { float score; cv::Rect rect; int ti; };
+    const cv::Mat region(gray, win);    struct Candidate { float score; cv::Rect rect; int ti; };
     std::vector<Candidate> cands;
     for (std::size_t ti = 0; ti < templates8u.size(); ++ti) {
         const cv::Mat& t8u = templates8u[ti];
@@ -297,11 +339,23 @@ StillResolvedGeometry resolve_still_geometry(
             // preset margins are the measured true edges — so once the hit is
             // RECOGNIZED as a known geometry, the known geometry is the better
             // position (same semantics as the video path's snap_geometry_to_known).
-            // The NccDetector ±3 px refinement still fine-tunes from there when its
-            // own spatial NCC clears 0.60.
+            // The snap is only TRUSTED after re-scoring at the pinned position:
+            // a content look-alike can wander inside the snap tolerance from real
+            // content (measured: sparkle art on a clean painting, raw 0.54, pinned
+            // spot scores 0.055). Verification failure falls back to the model.
             if (auto p = snap_still_to_known(hit->rect, W, H)) {
-                return {WatermarkPosition{p->margin_right, p->margin_bottom, p->logo_size},
-                        "auto/snapped", hit->score, hit->template_index};
+                const cv::Point tl(W - p->margin_right - p->logo_size,
+                                   H - p->margin_bottom - p->logo_size);
+                if (snap_position_verified(gray_frame, alpha_templates_8u,
+                                           hit->template_index, tl,
+                                           kStillMinConfidence)) {
+                    return {WatermarkPosition{p->margin_right, p->margin_bottom, p->logo_size},
+                            "auto/snapped", hit->score, hit->template_index};
+                }
+                // Snap rejected: the preset position holds no mark. The hit may
+                // still stand at ITS OWN position if it is strong enough for the
+                // raw bar (a genuine mark sitting off-preset, or a strong wander);
+                // a weak wanderer (0.45-0.75) dies here.
             }
             // Off-table raw hit (>= high confidence): the detected rect IS the
             // position. logo_size = the matched template's width (36 or 48).

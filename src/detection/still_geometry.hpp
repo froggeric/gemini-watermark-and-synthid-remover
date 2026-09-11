@@ -28,9 +28,13 @@ namespace wmr {
 // Min |NCC| for a candidate geometry to count as a detection (same as video/NotebookLM).
 inline constexpr float kStillMinConfidence = 0.45f;
 // A raw (off-table) detection must clear this to override the model, so a busy-corner
-// false positive cannot regress an image that already works. Same value as video's
-// kAutoOverrideRawScore and NccDetector's snap gate (0.60).
-inline constexpr float kStillHighConfidence = 0.60f;
+// false positive cannot regress an image that already works. 0.75: above the measured
+// CONTENT look-alike range for the small templates (0.60-0.73, sparkle-shaped poster
+// art on paintings/regen outputs) and below every real raw mark measured (0.77-1.00);
+// faint real marks at known geometries are covered by the (much lower) snapped bar
+// instead. Higher than video's kAutoOverrideRawScore (0.60): stills get one frame,
+// video aggregates ~12.
+inline constexpr float kStillHighConfidence = 0.75f;
 // Half-width of the anchored search window around the model-predicted top-left.
 // Covers the observed model error (~16-20 px for Gemini 3.6 at 896x1200) with margin.
 inline constexpr int kStillAnchorPad = 40;
@@ -78,12 +82,14 @@ struct StillPreset {
 // via the snap trust. Grow as more fixtures arrive; the model stays the fallback.
 inline constexpr StillPreset kStillPresets[] = {
     { "gemini36-portrait", 800, 1000, 96, 96, 48 },
+    { "gemini36-large", 1600, 1900, 96, 96, 48 },
     { "gemini38-2k-portrait", 1600, 1800, 192, 192, 96 },
 };
 
 // The valid preset names, for CLI help / validation (kept in sync with kStillPresets).
 inline constexpr const char* kStillPresetNames[] = {
     "gemini36-portrait",
+    "gemini36-large",
     "gemini38-2k-portrait",
 };
 
