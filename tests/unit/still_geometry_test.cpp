@@ -190,6 +190,24 @@ TEST_CASE("still_geometry: white text through the mark does not defeat the searc
     CHECK(std::abs(hit->rect.y - pos.y) <= 3);
 }
 
+TEST_CASE("still_geometry: weighted pass is safe on near-white content (degeneracy guard)",
+          "[still_geometry]") {
+    // A poster-like near-white frame: the carry weights are ~0 everywhere, so the
+    // weighted cosine has no valid measurement window. Must produce NO trusted hit
+    // (no crash, no degenerate huge score) and fall back to the model.
+    cv::Mat frame(1696, 2528, CV_8UC3, cv::Scalar(250, 250, 250));
+    cv::rectangle(frame, {1500, 2300}, {1620, 2420}, cv::Scalar(200, 200, 200), -1);
+    cv::rectangle(frame, {1400, 2350}, {1450, 2500}, cv::Scalar(60, 60, 60), -1);
+
+    WatermarkEngine engine;
+    StillGeometryOverride o;
+    auto r = engine.resolve_still_geometry(frame, WatermarkVariant::V2,
+                                           WatermarkSize::Large, o);
+    CAPTURE(r.source, r.score);
+    CHECK_FALSE(r.pos.has_value());
+    CHECK_FALSE(r.trusted);
+}
+
 TEST_CASE("still_geometry: a snapped hit resolves to the PINNED preset, not the raw peak",
           "[still_geometry]") {
     // On busy content the raw NCC peak can sit tens of px from the calibrated mark

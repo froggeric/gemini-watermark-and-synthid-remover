@@ -321,6 +321,36 @@ TEST_CASE("Gemini 3.6 faint (896x1200) geometry preset forces the 48px position"
     CHECK(res2.alpha->cols == 48);
 }
 
+TEST_CASE("Gemini 3.8 2K (1696x2528) buried mark resolves via the weighted pass",
+          "[integration][v2]") {
+    // The headline case for the visibility-weighted search: a real 3.8 2K export
+    // whose 96px mark sits mostly under a white emblem (plain NCC 0.22 at the true
+    // position — pass 1 is blind; the carry-weighted pass recovers it at 0.86).
+    // The hit must snap to gemini38-2k-portrait (the weighted pass accepts only
+    // snapped hits above 0.60).
+    cv::Mat image = load_fixture("1696x2528-gemini38-test1.png");
+    if (image.empty()) SKIP("3.8 2K fixture not available");
+
+    WatermarkEngine engine;
+    StillGeometryOverride ov;   // no override -> hybrid auto search
+    auto res = engine.resolve_still_geometry(image, WatermarkVariant::V2,
+                                             WatermarkSize::Large, ov);
+    REQUIRE(res.pos.has_value());
+    CHECK(res.pos->margin_right == 192);
+    CHECK(res.pos->margin_bottom == 192);
+    CHECK(res.pos->logo_size == 96);
+    CHECK(res.trusted);
+    CHECK(res.source == std::string("auto/snapped"));
+    REQUIRE(res.alpha != nullptr);
+    CHECK(res.alpha->cols == 96);   // routed to the V2 96px alpha
+
+    // The fusion at that position is content-suppressed but must not contradict.
+    auto det = engine.detect_watermark(image, WatermarkSize::Large, res.pos, res.alpha,
+                                       WatermarkVariant::V2, /*enable_snap=*/true);
+    CAPTURE(det.spatial_score, det.confidence);
+    CHECK(det.spatial_score >= 0.0f);
+}
+
 TEST_CASE("Gemini 3.6 faint (896x1200) AUTO-geometry now resolves the hard fixture",
           "[integration][v2]") {
     // test3 is the documented hard case: a faint mark on a busy poster where the

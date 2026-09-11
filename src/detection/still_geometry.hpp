@@ -35,6 +35,22 @@ inline constexpr float kStillHighConfidence = 0.60f;
 // Covers the observed model error (~16-20 px for Gemini 3.6 at 896x1200) with margin.
 inline constexpr int kStillAnchorPad = 40;
 
+// Pass 2: the visibility-weighted search (see still_geometry.cpp). Runs only when
+// the plain suppressed-NCC search finds nothing trusted, and its hit must snap to
+// a calibrated preset AND clear this bar (no raw/off-table path: the weighting
+// amplifies content, so its false-positive level is higher than the plain NCC —
+// measured 0.73 on an unwatermarked poster vs winners 0.76-0.88 — and only the
+// preset-snap position gate makes it safe).
+inline constexpr float kStillWeightedMinConfidence = 0.60f;
+// Median kernel for the pass-2 background/carry estimate. Bigger than pass 1's 21
+// so a 96px mark's core survives the estimate; validated on the Gemini 3.8 2K set.
+inline constexpr int kStillWeightedKernel = 41;
+// Minimum weight mass (as a fraction of the template footprint) for a valid
+// weighted score: a window that sits almost entirely on near-white content has no
+// mark-visible background, and the weighted cosine degenerates there (denominator
+// ~0). Measured mass at true positions: 0.36-0.70; all-white windows ~0.
+inline constexpr float kStillWeightedMinMass = 0.05f;
+
 struct StillGeometryHit {
     cv::Rect rect;        // detected bbox in full-frame coords (size == winning template size)
     float score = 0.0f;   // polarity-invariant |TM_CCOEFF_NORMED| in [0,1]

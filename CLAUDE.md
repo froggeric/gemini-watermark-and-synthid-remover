@@ -142,9 +142,11 @@ for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
   engine discards auto/raw 96 hits): the 96px template also matches the legacy V1
   mark (96px @ margin 64,64, 0.99 NCC on the 3.1 Pro fixtures), which must keep
   flowing to the V1 path with the V1 alpha — test1/test2 stay byte-identical.
-  On 2K poster content that fully buries the mark (4 of 6 reference images:
-  box std 60-82), both the fusion and the suppressed search stay blind; the
-  escape hatch is `--geo-preset gemini38-2k-portrait`.
+  On 2K poster content that buries the mark under white emblems/text, the
+  visibility-weighted pass 2 (below) recovers it (7 of 8 reference images
+  auto-remove; regression fixture `1696x2528-gemini38-test1.png`, buried under a
+  white emblem). The one cream-poster extreme (nearly the whole footprint on
+  near-white) still needs `--geo-preset gemini38-2k-portrait`.
 - **Saturated-content suppression in the search frame (Gemini 3.8's failure mode):**
   the mark is a WHITE overlay, so where it lands on near-white content (poster text,
   highlights) the blend is a no-op (0.3·255 + 0.7·255 = 255): those pixels carry zero
@@ -156,6 +158,24 @@ for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
   when the background is above ~177, and there its deviation is 0.3·(255−bg) < 23,
   far below the 60 outlier bar (dark-polarity hits are untouched: only bright
   outliers are replaced).
+- **Pass 2 = the visibility-weighted (carry-weighted) NCC** (`weighted_ncc_map` +
+  `search_window_weighted` in still_geometry.cpp, 2026-09-11): when most of the
+  footprint sits on white content, even the suppressed plain NCC is blind (the mark
+  cannot exist there; measured 0.11-0.41 at true on 4 3.8 2K refs). Weight each
+  pixel by its carry w=(255−median41)/255 — a weighted, mean-centered cosine between
+  the template and the cleaned gray — and the buried marks score 0.76-0.88 at the
+  exact position. All terms are cross-correlations (7 CCORR calls per template, 3
+  shared). Runs ONLY when pass 1 found nothing trusted; trust requires a preset SNAP
+  plus ≥`kStillWeightedMinConfidence` (0.60) — the weighting amplifies content too
+  (0.73 on an unwatermarked poster), so position validation is what makes it safe.
+  A weight-mass floor (`kStillWeightedMinMass` 5% of the footprint) guards the
+  degenerate all-white window (denominator ~0 → huge scores). V1 images stay safe:
+  their 96px mark sits at margin (64,64), 256px L1 from the 2K preset center, so it
+  never snaps. REJECTED variants (do not re-try): σ-whitening (the noise is
+  structured content, not per-pixel additive — whitening down-weights the wrong
+  pixels), binary carry masks (degenerate 1.00 peaks on tiny dark patches),
+  median-subtracted deviation maps (a kernel ≈ mark size eats the mark: 0.89→0.44),
+  bright-excursion capping (no effect).
 - **A snap returns the PINNED preset geometry, not the raw peak:** once a hit is
   recognized as a known geometry (center L1 ≤ 40 + tier + size match),
   `resolve_still_geometry` returns the preset's measured margins — the raw NCC peak
