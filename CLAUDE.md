@@ -256,6 +256,14 @@ for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
   Integer localization only (Gemini places marks at integer margins); a sub-pixel alpha
   shift was tried and reverted (it biased ~0.4px on busy content and reintroduced the
   emboss). `remove_watermark` (`--force`) is unchanged (no force_position, no snap).
+- **V1-mark failure mode on QR-like content:** a V1 96px mark over binary
+  black/white content (a QR poster) can be OBVIOUS to the eye yet score spatial
+  NCC 0.13 (the content destroys correlation) — the V1 path has no bypass
+  machinery; `--force --legacy` removes it at the V1 model position (exactly
+  right whenever the mark is at the standard (64,64) margin; verified clean,
+  the removal reproduces a 0.50 white-overlay inversion to 98%). Note
+  `--legacy --rect` is currently a SILENT NO-OP (the rect override only
+  threads into the V2 attempt) — use `--force --legacy` instead.
 - **Classifying an image by template NCC:** the 36px template scores 0.60-0.70 on a
   REAL 48px mark at the same position (normal cross-size correlation), and posters
   hit 0.6-0.7 on sparkle-shaped CONTENT at non-watermark positions. A full sweep
@@ -460,11 +468,15 @@ CLI11 subcommands in src/cli/: `remove` (default), `synthid`, `detect`, `video`,
   rescaled by the plateau ratio. VALIDATE HELD-OUT (LOO): prediction error + the
   removal-vs-bg-field residual; never ship a mask scored on its own calibration
   images. This rebuilt the 96px V2 mask (floor 0.0083->0.0000, plateau
-  0.305->0.294, feather corrected; LOO-better on every image+bin), level-corrected
-  the V1 96 (a near-black-bg real image is a PRISTINE calibration source — the
-  2400x1792 Gemini 3.1 Pro fixture: legacy structure x per-ring scale from its
-  measurement; core bias -0.9 -> +0.07), and floor-fixed the 36px (tapered
-  subtraction, no fixture). The 48px averaged mask was VERIFIED optimal (its
+  0.305->0.294, feather corrected; LOO-better on every image+bin), REBUILT the
+  V1 96 from EXACT-BACKGROUND measurements (see below — the pure-color series
+  beats every estimation-based method; the first attempt, ring-scaling from one
+  fixture, left a visible outline: the V1 mark is an ASTROID with thin
+  full-brightness arms — alpha 0.4998 along the axes out to r36 where ring-means
+  read 0.08-0.22 — which ring-based masks cannot represent; the exact rebuild is
+  the per-pixel median of 7 pure-color generations, residual +-0.6/255), and
+  floor-fixed the 36px (tapered subtraction, no fixture). The 48px averaged mask
+  was VERIFIED optimal (its
   plateau is bracketed by independent measurements within noise) and left alone.
   OVERLAY-COLOR HYPOTHESIS TESTED AND REFUTED (2026-09-11, the pure-color
   experiment): earlier per-image measurements showed measured alpha falling with
