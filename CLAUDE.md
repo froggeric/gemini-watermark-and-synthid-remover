@@ -248,6 +248,12 @@ for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
   Integer localization only (Gemini places marks at integer margins); a sub-pixel alpha
   shift was tried and reverted (it biased ~0.4px on busy content and reintroduced the
   emboss). `remove_watermark` (`--force`) is unchanged (no force_position, no snap).
+- **Classifying an image by template NCC:** the 36px template scores 0.60-0.70 on a
+  REAL 48px mark at the same position (normal cross-size correlation), and posters
+  hit 0.6-0.7 on sparkle-shaped CONTENT at non-watermark positions. A full sweep
+  (2026-09-11, all of test-images/ + reference-images/ + the HF repos) found NO real
+  Gemini 3.5 (36px) images — the 36px mask's plateau is unverifiable until real 3.5
+  generations exist; its floor fix stands.
 - **Follow-up:** recalibrate `v2_small_config_from_dims` (or grow the preset table)
   once more 3.6 resolutions are measured, so the model fallback is accurate too.
 
@@ -407,6 +413,26 @@ CLI11 subcommands in src/cli/: `remove` (default), `synthid`, `detect`, `video`,
 ## Key Conventions
 
 - Alpha maps are constexpr PNG byte arrays decoded at runtime via `cv::imdecode`
+- **Replacing an embedded alpha mask:** render the new mask as a GRAYSCALE PNG with
+  value alpha*255 (the engine decodes max(R,G,B)/255; keep the border below ~2.5/255
+  so `correct_alpha_for_background`'s 0.01 no-op threshold leaves it untouched),
+  regenerate the array block in `assets/embedded_assets.hpp` (16 bytes/line; update
+  BOTH the `<name>_size` constant and the `// <name> (N bytes)` comment), update the
+  matching export in `assets/watermark-masks/`, rebuild. V1 masks (bg_48/bg_96) have
+  no community export.
+- `wmr remove|detect <img> -v` enables debug logging — notably the
+  `Still geometry: source=…, score=…, margin=…, logo_size=…` line (there is no
+  --log-level flag; `-v` is the only verbosity switch).
+- **Manual mask/detection regression battery** (run before shipping geometry or mask
+  changes): test1/test2 (V1 96px anchors), test4 (clean 48px), test3 (busy 48px),
+  the 864x1231 3.8 image (output must stay byte-identical to its
+  `--geo-preset gemini36-portrait` output), poster-artnight + paintings/ (noWM: zero
+  removal), reference-images/gemini38-images/ (7 of 8 auto-remove). For a
+  byte-identity baseline of the OLD binary: `git stash` the change, rebuild, generate
+  reference outputs, `git stash pop`, rebuild, md5-compare.
+- **Vision-QC regenerated masks before shipping:** dispatch a haiku subagent with an
+  old-vs-new 10x side-by-side and ask for speckle/spur/pit isolation — it caught a
+  1-px spur+pit patch that radial/HF statistics passed.
 - **Validate AI image ops on COLORFUL natural content with a tight diff gate**, not gray/synthetic fixtures. A uniform color shift or channel swap is invisible on near-gray (R~=G~=B) images: it hid the Phase-2 Metal collapse AND the Phase-3 planar-layout + fp16-VAE bugs until a colorful poster was tested. The env-gated `WMR_COREML_SD_DIAG_IMAGE` natural-image diagnostic on the CoreML smoke test exists for this.
 - **Debugging a removal residual:** the reverse-blend reproduces bit-exact in Python
   (`out = (syn - a*255)/(1-a)` with the mask PNG from `assets/watermark-masks/` placed at the
