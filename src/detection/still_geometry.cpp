@@ -353,9 +353,14 @@ StillResolvedGeometry resolve_still_geometry(
                             "auto/snapped", hit->score, hit->template_index};
                 }
                 // Snap rejected: the preset position holds no mark. The hit may
-                // still stand at ITS OWN position if it is strong enough for the
-                // raw bar (a genuine mark sitting off-preset, or a strong wander);
-                // a weak wanderer (0.45-0.75) dies here.
+                // still stand at ITS OWN position if it independently clears the
+                // raw bar (a genuine mark sitting off-preset, or a strong
+                // wander); a weak wanderer (0.45-0.75, trusted only via the
+                // failed snap) dies here. WITHOUT this guard a snap-trusted
+                // content hit whose pin failed leaks through as auto/raw.
+            }
+            if (hit->score < kStillHighConfidence) {
+                return {model_pos, "model", 0.0f, -1};
             }
             // Off-table raw hit (>= high confidence): the detected rect IS the
             // position. logo_size = the matched template's width (36 or 48).
