@@ -204,11 +204,17 @@ WatermarkEngine::StillResolveResult WatermarkEngine::resolve_still_geometry(
 {
     const int W = image.cols, H = image.rows;
 
-    // Pick the removal alpha for a resolved logo_size: 48px (Gemini 3.6) uses the still
-    // capture; 36px (Gemini 3.5) uses the 36 capture. No legacy fallback: these are
-    // constexpr-embedded PNGs that always decode in a correct build, so an empty Mat would
-    // signal a build bug, not a runtime condition.
+    // Pick the removal alpha for a resolved logo_size: 96px (Gemini 3.5 legacy-large
+    // and Gemini 3.8 2K) uses the V2 large capture; 48px (Gemini 3.6/3.8 small) the
+    // still capture; 36px (Gemini 3.5) the 36 capture. Same >48 gate as the video
+    // path's effective_alpha_size. No legacy fallback: these are constexpr-embedded
+    // PNGs that always decode in a correct build, so an empty Mat would signal a
+    // build bug, not a runtime condition.
     auto alpha_for_logo = [&](int logo_size) -> const cv::Mat* {
+        if (logo_size > 48) {
+            return alpha_map_v2_diamond_large_.empty() ? nullptr
+                                                       : &alpha_map_v2_diamond_large_;
+        }
         if (logo_size > 40) {
             return alpha_map_v2_diamond_48_still_.empty() ? nullptr
                                                           : &alpha_map_v2_diamond_48_still_;
@@ -225,18 +231,19 @@ WatermarkEngine::StillResolveResult WatermarkEngine::resolve_still_geometry(
     // The content search runs for every V2 profile. Gemini 3.6 places a 48px diamond at
     // margin (96,96) even on large (>1024px) outputs, where the size heuristic wrongly
     // picks the 96px Large model and detection fails; the search recovers that 48px mark.
-    // On a genuine Gemini 3.5 large image (real 96px mark) the 48px template scores
-    // ~0.43, below both the 0.45 min-confidence and the 0.60 raw-trust bars, so the
-    // search finds nothing trusted and returns the model position -> V2-large stays
-    // byte-identical. V1 keeps the model.
+    // Gemini 3.8 places the LARGE 96px diamond at margin (192,192) on its 2K exports
+    // (1696x2528, 1728x2462 measured) — the V2-large model position, so the model is
+    // right; the search + the gemini38-2k-portrait preset make a content-collided mark
+    // trusted so removal can bypass the fusion gate.
     if (variant != WatermarkVariant::V2 || !has_v2_) {
         return {std::nullopt, nullptr};
     }
 
     const WatermarkPosition model_pos = get_watermark_config(W, H, variant);
 
-    // Candidate templates: BOTH small-diamond sizes (36 = Gemini 3.5, 48 = Gemini 3.6
-    // still). The search reports which matched so removal uses the right-size alpha.
+    // Candidate templates: the three diamond sizes (36 = Gemini 3.5, 48 = Gemini
+    // 3.6/3.8 small, 96 = Gemini 3.8 2K). The search reports which matched so removal
+    // uses the right-size alpha.
     cv::Mat gray;
     if (image.channels() >= 3) cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
     else                        gray = image.clone();
@@ -248,6 +255,9 @@ WatermarkEngine::StillResolveResult WatermarkEngine::resolve_still_geometry(
     if (!a48.empty()) {
         cv::Mat t; a48.convertTo(t, CV_8U, 255.0); templates.push_back(t);
     }
+    if (!alpha_map_v2_diamond_large_.empty()) {
+        cv::Mat t; alpha_map_v2_diamond_large_.convertTo(t, CV_8U, 255.0); templates.push_back(t);
+    }
     if (templates.empty()) return {std::nullopt, nullptr};
 
     // wmr::-qualified: resolves to the free function in still_geometry.cpp (this member
@@ -257,6 +267,19 @@ WatermarkEngine::StillResolveResult WatermarkEngine::resolve_still_geometry(
     spdlog::debug("Still geometry: source={}, score={:.2f}, margin=({},{}) logo_size={}",
                   r.source, r.score, r.pos.margin_right, r.pos.margin_bottom, r.pos.logo_size);
     if (r.source == "model") return {std::nullopt, nullptr, /*trusted=*/false, "model", 0.0f};
+    // A 96px hit is trusted ONLY when it snapped to a preset. The 96px template also
+    // matches the legacy V1 mark (96px @ margin 64,64, seen at 0.99 NCC on the Gemini
+    // 3.1 Pro fixtures), whose removal belongs to the V1 path with the V1 alpha — an
+    // auto/raw 96px override here would highjack it with the V2 alpha. Discard raw
+    // 96px hits: the V1 image falls back to model -> V1 exactly as before, and a
+    // genuine 96px mark at an off-preset resolution still has the model position.
+    if (r.template_index >= 0 &&
+        r.template_index < static_cast<int>(templates.size()) &&
+        templates[r.template_index].cols > 48 && r.source == "auto/raw") {
+        spdlog::debug("Still geometry: discarding raw 96px hit (V1-mark lookalike; "
+                      "only a snapped 96px preset is trusted)");
+        return {std::nullopt, nullptr, /*trusted=*/false, "model", 0.0f};
+    }
     return {r.pos, alpha_for_logo(r.pos.logo_size), /*trusted=*/true,
             r.source.c_str(), r.score};
 }

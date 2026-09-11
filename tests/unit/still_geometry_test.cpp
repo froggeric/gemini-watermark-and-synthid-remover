@@ -246,23 +246,58 @@ TEST_CASE("still_geometry: Large Gemini 3.6 (48px @ 96,96) resolves via the sear
     CHECK(r.alpha->cols == 48);
 }
 
-TEST_CASE("still_geometry: Large Gemini 3.5 (96px) falls back to model, no 48px false hit",
+TEST_CASE("still_geometry: Large 96px mark at (192,192) resolves via the 2K preset",
           "[still_geometry]") {
+    // Was "falls back to model, no 48px false hit" before the 96px template joined
+    // the search: a genuine 96px diamond at margin (192,192) (Gemini 3.5 legacy-large
+    // and Gemini 3.8 2K, 1696x2528/1728x2462 measured) now snaps to the
+    // gemini38-2k-portrait preset (short side 1792 is in [1600,1800]). The resolved
+    // position equals the V2-large model position, so removal is unchanged on clean
+    // content; the snap's value is TRUST (a content-collided fusion gate can be
+    // bypassed). The 48px template still must not win on a 96px mark.
     WatermarkEngine engine;
     const cv::Mat a96 = engine.get_v2_diamond_alpha_large();
     REQUIRE(a96.cols == 96);
 
-    // Stamp the real 96px mark at the Gemini 3.5 large geometry: margin (192,192).
+    // Stamp the real 96px mark at margin (192,192).
     const cv::Point pos(kLgW - 192 - 96, kLgH - 192 - 96);  // (2112, 1504)
     cv::Mat frame = textured(kLgW, kLgH, cv::Scalar(70, 90, 110));
     add_watermark_alpha_blend(frame, a96, pos, 255.0f);
 
-    // The 48px template must not score high enough to be trusted, so this resolves to
-    // the model (pos = nullopt) and V2-large removal stays byte-identical.
     StillGeometryOverride o;
     auto r = engine.resolve_still_geometry(frame, WatermarkVariant::V2,
                                            WatermarkSize::Large, o);
-    CHECK_FALSE(r.pos.has_value());
+    REQUIRE(r.pos.has_value());
+    CHECK(r.pos->margin_right == 192);
+    CHECK(r.pos->margin_bottom == 192);
+    CHECK(r.pos->logo_size == 96);
+    CHECK(r.trusted);
+    CHECK(r.source == std::string("auto/snapped"));
+    REQUIRE(r.alpha != nullptr);
+    CHECK(r.alpha->cols == 96);   // routed to the V2 large alpha, not the 48px still
+}
+
+TEST_CASE("still_geometry: a raw (unsnapped) 96px hit is discarded — the V1 mark's slot",
+          "[still_geometry]") {
+    // The 96px template also matches the legacy V1 mark (96px @ margin 64,64; 0.99
+    // NCC on the Gemini 3.1 Pro fixtures). An auto/raw 96px hit must NOT become a V2
+    // override (wrong alpha for a V1 mark): the engine discards it, the image falls
+    // back to the model and the V1 path handles it exactly as before.
+    WatermarkEngine engine;
+    const cv::Mat a96 = engine.get_v2_diamond_alpha_large();
+
+    // Stamp a 96px mark at the V1-large geometry: margin (64,64), short side 1792
+    // inside the 2K tier so ONLY the missing snap distinguishes it from the 3.8 case.
+    const cv::Point pos(kLgW - 64 - 96, kLgH - 64 - 96);  // (2240, 1632)
+    cv::Mat frame = textured(kLgW, kLgH, cv::Scalar(70, 90, 110));
+    add_watermark_alpha_blend(frame, a96, pos, 255.0f);
+
+    StillGeometryOverride o;
+    auto r = engine.resolve_still_geometry(frame, WatermarkVariant::V2,
+                                           WatermarkSize::Large, o);
+    CAPTURE(r.source, r.score);
+    CHECK_FALSE(r.pos.has_value());   // discarded -> model fallback
+    CHECK_FALSE(r.trusted);
     CHECK(r.alpha == nullptr);
 }
 

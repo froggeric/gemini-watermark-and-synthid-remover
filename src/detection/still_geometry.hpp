@@ -56,14 +56,19 @@ struct StillPreset {
 
 // The calibrated table. Gemini 3.6 Flash portrait ~1k (896x1200): the small diamond
 // is 48px (NOT 36px like Gemini 3.5 stills), at margin (96,96) -> top-left (752,1056),
-// the mark's true edge. Grow as more fixtures arrive; the model stays the fallback.
+// the mark's true edge. Gemini 3.8 Flash 2K portrait (~1.7k short side, 1696x2528 and
+// 1728x2462 measured): the LARGE 96px diamond at margin (192,192) — the same geometry
+// as the V2-large model, pinned here so a content-collided fusion gate can be bypassed
+// via the snap trust. Grow as more fixtures arrive; the model stays the fallback.
 inline constexpr StillPreset kStillPresets[] = {
     { "gemini36-portrait", 800, 1000, 96, 96, 48 },
+    { "gemini38-2k-portrait", 1600, 1800, 192, 192, 96 },
 };
 
 // The valid preset names, for CLI help / validation (kept in sync with kStillPresets).
 inline constexpr const char* kStillPresetNames[] = {
     "gemini36-portrait",
+    "gemini38-2k-portrait",
 };
 
 struct StillGeometryOverride {

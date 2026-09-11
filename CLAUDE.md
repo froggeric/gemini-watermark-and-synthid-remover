@@ -128,14 +128,23 @@ content-detect the position AND size like the video path (shipped 1.12.0), adapt
 for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
 (OpenCV-only, no FFmpeg, links in the test exe like `geometry_detector`).
 
-- **Multi-template (36 AND 48):** `locate_still_watermark_hybrid` is fed both the
-  36px (Gemini 3.5) and 48px (Gemini 3.6) diamond alphas; the winner
-  (`StillGeometryHit::template_index`) selects the matched-size alpha for removal.
-  A single-size assumption fails one of the two Gemini generations (1.13.0 shipped
-  36px-only and under-covered 3.6's 48px mark). **Gemini 3.8 Flash is unchanged
+- **Multi-template (36, 48, 96):** `locate_still_watermark_hybrid` is fed the
+  36px (Gemini 3.5), 48px (Gemini 3.6/3.8 small) AND 96px (Gemini 3.8 2K) diamond
+  alphas; the winner (`StillGeometryHit::template_index`) selects the matched-size
+  alpha for removal (`alpha_for_logo`: >48 → the V2 96px capture). A single-size
+  assumption fails one of the Gemini generations (1.13.0 shipped 36px-only and
+  under-covered 3.6's 48px mark). **Gemini 3.8 Flash small outputs are unchanged
   from 3.6** (verified 2026-09-11 on an 864x1231 export: same 48px diamond at the
-  same (96,96) margin, alpha profile within measurement noise; removal with the
-  3.6 mask leaves sub-1/255 residual), so it needs no new template or preset.
+  same (96,96) margin, alpha within measurement noise). **Gemini 3.8 2K outputs
+  (~1.7k short side: 1696x2528, 1728x2462 measured) use the LARGE 96px diamond at
+  margin (192,192)** = the V2-large model position; preset `gemini38-2k-portrait`
+  (short side 1600-1800) pins it. **A 96px hit is trusted ONLY when snapped** (the
+  engine discards auto/raw 96 hits): the 96px template also matches the legacy V1
+  mark (96px @ margin 64,64, 0.99 NCC on the 3.1 Pro fixtures), which must keep
+  flowing to the V1 path with the V1 alpha — test1/test2 stay byte-identical.
+  On 2K poster content that fully buries the mark (4 of 6 reference images:
+  box std 60-82), both the fusion and the suppressed search stay blind; the
+  escape hatch is `--geo-preset gemini38-2k-portrait`.
 - **Saturated-content suppression in the search frame (Gemini 3.8's failure mode):**
   the mark is a WHITE overlay, so where it lands on near-white content (poster text,
   highlights) the blend is a no-op (0.3·255 + 0.7·255 = 255): those pixels carry zero
