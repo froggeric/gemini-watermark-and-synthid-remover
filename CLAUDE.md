@@ -256,14 +256,16 @@ for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
   Integer localization only (Gemini places marks at integer margins); a sub-pixel alpha
   shift was tried and reverted (it biased ~0.4px on busy content and reintroduced the
   emboss). `remove_watermark` (`--force`) is unchanged (no force_position, no snap).
-- **V1-mark failure mode on QR-like content:** a V1 96px mark over binary
+- **V1-mark failure modes that defeat NCC:** a V1 96px mark over binary
   black/white content (a QR poster) can be OBVIOUS to the eye yet score spatial
-  NCC 0.13 (the content destroys correlation) — the V1 path has no bypass
-  machinery; `--force --legacy` removes it at the V1 model position (exactly
-  right whenever the mark is at the standard (64,64) margin; verified clean,
-  the removal reproduces a 0.50 white-overlay inversion to 98%). Note
-  `--legacy --rect` is currently a SILENT NO-OP (the rect override only
-  threads into the V2 attempt) — use `--force --legacy` instead.
+  NCC 0.13, and a V1 mark mostly over WHITE background (a fish-pattern poster)
+  leaves too little carry mass for any template score — the V1 path has no
+  bypass machinery; `--force --legacy` removes both at the V1 model position
+  (exactly right whenever the mark is at the standard (64,64) margin; both
+  verified clean). When an image "clearly has a watermark" but every probe
+  scores ~0, check the V1 position (64,64)+96 and content that hides white
+  overlays. Note `--legacy --rect` is currently a SILENT NO-OP (the rect
+  override only threads into the V2 attempt) — use `--force --legacy` instead.
 - **Classifying an image by template NCC:** the 36px template scores 0.60-0.70 on a
   REAL 48px mark at the same position (normal cross-size correlation), and posters
   hit 0.6-0.7 on sparkle-shaped CONTENT at non-watermark positions. A full sweep
