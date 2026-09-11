@@ -415,6 +415,30 @@ CLI11 subcommands in src/cli/: `remove` (default), `synthid`, `detect`, `video`,
   localize the true mark with a median-background-subtracted NCC. A residual shaped like the
   mark means wrong position or strength, not a wrong mask (the masks are faithful: they match
   their source captures; a stronger community mask over-removes).
+- **Mask recalibration from real watermarked images (2026-09-11, the estimator recipe):**
+  with N images at CONFIRMED integer mark positions, measure per image
+  `alpha=(syn-bg)/(255-bg)` with bg = median-151 field, a validity mask
+  (bg<180, syn<200, local bg std<12), and a per-image scalar bias from the
+  alpha-free ring just outside the mark box; aggregate per pixel with a MEDIAN
+  (never a mean — content-leak outliers read alpha 0.4-0.7 at poster edges), then
+  reject values >0.06 from the per-pixel median and average the inliers, 3x3-median,
+  deadband <0.006 -> 0, and fill sub-3-inlier pixels from the old mask's structure
+  rescaled by the plateau ratio. VALIDATE HELD-OUT (LOO): prediction error + the
+  removal-vs-bg-field residual; never ship a mask scored on its own calibration
+  images. This rebuilt the 96px V2 mask (floor 0.0083->0.0000, plateau
+  0.305->0.294, feather corrected; LOO-better on every image+bin), level-corrected
+  the V1 96 (a near-black-bg real image is a PRISTINE calibration source — the
+  2400x1792 Gemini 3.1 Pro fixture: legacy structure x per-ring scale from its
+  measurement; core bias -0.9 -> +0.07), and floor-fixed the 36px (tapered
+  subtraction, no fixture). The 48px averaged mask was VERIFIED optimal (its
+  plateau is bracketed by independent measurements within noise) and left alone.
+  UNVALIDATED LEAD, do not re-litigate casually: measured alpha falls with bg
+  (0.305@black, ~0.29@90, 0.264@230) — consistent with overlay color ~250/255
+  rather than 255, but the fit is weak (R2 0.42, per-image scatter +-0.01); a
+  two-parameter (alpha, overlay-color) exact inversion would kill the residual
+  +-1.5/255 bg-dependent bias IF confirmed. bg-DEPENDENCE also means no single
+  C=255 mask can be exact at every background level; the shipped masks are
+  optimal for the mid-dark backgrounds where marks actually land.
 - Capturing a watermark alpha from a real image: crop at the mark's TRUE top-left so the
   full mark fills the crop (a 2px clip reads as a reversal border); do NOT median-denoise
   (it erodes the faint outer edge); a pure-black background makes
