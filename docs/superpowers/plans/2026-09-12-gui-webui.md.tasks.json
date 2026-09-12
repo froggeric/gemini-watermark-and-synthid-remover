@@ -6,72 +6,92 @@
       "id": 0,
       "nativeId": 16,
       "subject": "Task 1: still_remove extraction",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** One engine-level copy of the still-image detect-to-remove policy + the write tail (`src/core/still_remove.{hpp,cpp}`), callable by CLI, batch, and GUI, with structured outcomes and zero CliOptions dependency.\n\n**Files:**\n- Create: src/core/still_remove.hpp, src/core/still_remove.cpp\n- Modify: src/cli/cli_app.cpp (:194-309 policy, :420-442 write tail, :52-109 helpers deleted, process_detect :111-179 rewires), src/cli/cli_app.hpp (delete 4 helper decls, add the build_still_remove_options decl), src/cli/batch_processor.cpp, CMakeLists.txt (SOURCES), tests/CMakeLists.txt (LIB_SOURCES)\n- Test: tests/unit/still_remove_test.cpp\n\n**Acceptance Criteria:**\n- remove_still(WatermarkEngine&, cv::Mat&, const StillRemoveOptions&) -> StillRemoveOutcome {Removed,NoWatermark,Failed; forced/bbox/score/geometry_source/variant/error}; never throws\n- write_still_output: JPEG 100 / PNG 6 / WebP 101 + provenance strip; CLI + batch call it; no direct cv::imwrite left in their write paths\n- parse_rect + resolve_inpaint_config take StillRemoveOptions; still_remove.* includes no cli/*.hpp, no CLI11\n- Glue build_still_remove_options is NON-static, declared in cli_app.hpp, defined above process_detect (which rewires to it, preserving rc-1 on malformed --rect); batch calls the same glue\n- wmr_tests links; [still-remove] tests pass (geometry_source asserted as a membership set; fixture run once live and pinned)\n- Battery byte-identical (md5 -r + diff, with a fixture-existence guard) vs pre-extraction binary on 2400x1792-test1/2-gemini.png, 896x1200-test4/test3, 1696x2528-gemini38-test1.png, one more 3.8 ref, paintings/fawn.png (noWM: no output, rc 0)\n- CLI exit codes unchanged except two DISCLOSED deltas: uppercase-extension outputs get codec params (batch parity); --force now rejects a malformed --rect (rc 1)\n\n**Verify:** ./build/tests/wmr_tests \"[still-remove]\"; battery per plan Task 1 Step 8.\n\n```json:metadata\n{\"files\": [\"src/core/still_remove.hpp\", \"src/core/still_remove.cpp\", \"src/cli/cli_app.cpp\", \"src/cli/cli_app.hpp\", \"src/cli/batch_processor.cpp\", \"tests/unit/still_remove_test.cpp\"], \"verifyCommand\": \"./build/tests/wmr_tests \\\"[still-remove]\\\"\", \"acceptanceCriteria\": [\"one policy copy, no CliOptions dep\", \"process_detect rewired, glue shared\", \"byte-identical battery via md5 -r + diff\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 1,
       "nativeId": 17,
       "subject": "Task 2: vendor deps + WMR_BUILD_GUI gate",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** GUI compiles on every leg with zero vcpkg changes; OFF build stays CLI-identical.\n\n**Files:**\n- Create: external/httplib/httplib.h (cpp-httplib v0.56.0), external/json/json.hpp (nlohmann v3.12.0), src/gui/vendored.hpp (warning wrapper), src/gui/gui_build.cpp (smoke TU)\n- Modify: CMakeLists.txt (gate after WMR_UPDATE_CHECK; WIN32 links shell32 + bcrypt on wmr, shell32 + bcrypt on wmr_tests mirror), tests/CMakeLists.txt (mirror skeleton), LICENSE-THIRD-PARTY.md\n\n**Acceptance Criteria:**\n- scripts/build.sh (ON) succeeds; nm shows gui_build symbol\n- OFF build succeeds; nm | grep -c gui_build == 0; once gui tests exist (Task 3+), the OFF check is repeated WITHOUT --target so the tests exe link is proven\n- WIN32 links shell32 (ShellExecuteW) + bcrypt (BCryptGenRandom; no auto-link pragma) on both targets; ws2_32 is NOT needed (auto-linked by the #pragma comment inside httplib.h under MSVC)\n- vcpkg.json untouched; LICENSE-THIRD-PARTY.md lists cpp-httplib + nlohmann/json (MIT)\n\n**Verify:** scripts/build.sh && nm build/wmr | grep -c gui_build; OFF full build.\n\n```json:metadata\n{\"files\": [\"external/httplib/httplib.h\", \"external/json/json.hpp\", \"src/gui/vendored.hpp\", \"src/gui/gui_build.cpp\", \"CMakeLists.txt\", \"LICENSE-THIRD-PARTY.md\"], \"verifyCommand\": \"scripts/build.sh && nm build/wmr | grep -c gui_build\", \"acceptanceCriteria\": [\"ON default builds\", \"OFF build CLI-identical incl. tests exe\", \"WIN32 shell32+bcrypt linked\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
       "id": 2,
       "nativeId": 18,
       "subject": "Task 3: GUI server + security + browser",
-      "status": "pending",
-      "blockedBy": [1],
+      "status": "completed",
+      "blockedBy": [
+        1
+      ],
       "description": "**Goal:** Token-secured 127.0.0.1 server skeleton (pre-routing auth, 1 GiB payload cap, nosniff), image sniff + dimension gate, per-platform browser launch.\n\n**Files:**\n- Create: src/gui/security.{hpp,cpp}, src/gui/http_server.{hpp,cpp}, src/gui/browser.{hpp,cpp}, src/gui/image_sniff.{hpp,cpp}\n- Test: tests/unit/gui_security_test.cpp, tests/unit/gui_sniff_test.cpp (INSIDE the if(WMR_BUILD_GUI) mirror block, never TEST_SOURCES)\n\n**Acceptance Criteria:**\n- generate_token(): 32 lowercase hex (platform CSPRNG); host_allowed accepts exactly 127.0.0.1:P / localhost:P / [::1]:P (case-insensitive, one trailing dot) and rejects absent/empty/foreign\n- Pre-routing: empty 404 off-token paths; 403 Sec-Fetch-Site: cross-site; nosniff on everything; no CORS header ever\n- GuiServer binds via bind_to_port when --gui-port is given (failure -> the port-in-use stderr message + rc 1) and via bind_to_any_port for the ephemeral default (its 2nd arg is socket_flags, NOT a port); banner AFTER bind; browser after listen; browser failure non-fatal\n- sniff_image: PNG/JPEG/WebP magic + dimensions with LENGTH GUARDS on every read (PNG n>=24; JPEG SOF exactly p+10<=n, not the full segment; WebP chunk tree validated); truncated 10-byte PNG-magic -> Unsupported, no crash; too_large at W*H>120MP or side>16384; HEIC/PDF/0-byte unsupported/empty; JPEG SOF stores height then width (fixture H=200, W=100)\n- open_browser: BROWSER env, open/xdg-open (DISPLAY/WAYLAND gated)/ShellExecuteW/WSL wslview; failure non-fatal\n\n**Verify:** ./build/tests/wmr_tests \"[gui]\"\n\n```json:metadata\n{\"files\": [\"src/gui/security.hpp\", \"src/gui/security.cpp\", \"src/gui/http_server.hpp\", \"src/gui/http_server.cpp\", \"src/gui/browser.hpp\", \"src/gui/browser.cpp\", \"src/gui/image_sniff.hpp\", \"src/gui/image_sniff.cpp\", \"tests/unit/gui_security_test.cpp\", \"tests/unit/gui_sniff_test.cpp\"], \"verifyCommand\": \"./build/tests/wmr_tests \\\"[gui]\\\"\", \"acceptanceCriteria\": [\"bind_to_port/bind_to_any_port split correct\", \"sniff length guards + truncated test\", \"gui tests in mirror block\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 3,
       "nativeId": 19,
       "subject": "Task 4: job manager + run dirs",
-      "status": "pending",
-      "blockedBy": [1],
+      "status": "completed",
+      "blockedBy": [
+        1
+      ],
       "description": "**Goal:** Per-run cache dirs (0700, pid sidecar, dead-pid cleanup), job/file state machines per the spec tables, one serialized worker running remove_still with exception isolation.\n\n**Files:**\n- Create: src/gui/run_dir.{hpp,cpp}, src/gui/jobs.{hpp,cpp}\n- Test: tests/unit/gui_jobs_test.cpp (mirror block)\n\n**Acceptance Criteria:**\n- create_run_dir/cleanup_dead_runs take an optional root param (default user_cache_dir()/\"gui\") so the dead-pid cleanup is unit-testable; a dead-pid sibling is removed, a live one kept; stored_bytes_under(root) recursive size sum; fmt/chrono include + portable getpid block in run_dir.cpp\n- Job/file states per spec; done regardless of per-file failures; failed only job-level\n- Cancel table exact: queued immediate; running between-files with retention; terminal rejected; unknown 404; first-terminal-wins under mutex\n- create_job(files, failed(name,error) entries, opts, max_files, max_bytes, job_id_out): manager persists orig files itself (single owner), renders sniff-rejected entries as terminal failed rows (has_orig=false), fills job_id_out, enforces <=8 pending + job caps + the 4 GiB aggregate gate (payload_too_large)\n- file_artifact(id, index, cleaned) is the files endpoint's only path source (nullopt on unknown/missing)\n- GuiFile carries forced + has_orig; processor is the worker's member lambda (reused engine_, read_file of the persisted orig); namespace fs alias; per-file try/catch isolation; BOUNDED stop: CV wait_for(5s) on worker-done, std::_Exit(0) on expiry; ~JobManager uses the same bounded path\n- IMREAD_COLOR decode; per-file rect bounds check; write_still_output to out/<i>_clean.<ext>\n\n**Verify:** ./build/tests/wmr_tests \"[gui-jobs]\"\n\n```json:metadata\n{\"files\": [\"src/gui/run_dir.hpp\", \"src/gui/run_dir.cpp\", \"src/gui/jobs.hpp\", \"src/gui/jobs.cpp\", \"tests/unit/gui_jobs_test.cpp\"], \"verifyCommand\": \"./build/tests/wmr_tests \\\"[gui-jobs]\\\"\", \"acceptanceCriteria\": [\"cancel table + aggregate gate + caps enforced in create_job\", \"file_artifact + job_id_out + failed-entries contract\", \"bounded shutdown, per-file isolation\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 4,
       "nativeId": 20,
       "subject": "Task 5: REST API + options validation",
-      "status": "pending",
-      "blockedBy": [0, 2, 3],
+      "status": "completed",
+      "blockedBy": [
+        0,
+        2,
+        3
+      ],
       "description": "**Goal:** The complete JSON API per the spec contract: routes, response shapes, error envelope, status codes, pure options validation, sanitized streaming downloads. All cpp-httplib calls use v0.56 names.\n\n**Files:**\n- Create: src/gui/options.{hpp,cpp}, src/gui/api.{hpp,cpp}, src/gui/embedded_ui.hpp (EmbeddedUi struct + MIME; empty, UI routes 404 until Task 7)\n- Test: tests/unit/gui_options_test.cpp (mirror block)\n\n**Acceptance Criteria:**\n- validate_job_options: full matrix incl. invalid combos (legacy+rect/preset, force+rect/preset, rect+preset; legacy+force valid), ai-gated denoise, preset vs kStillPresetNames, rect ints x,y>=0 w,h>=8, options part > 64 KB rejected\n- Routes: GET / + /app.js + /style.css (CSP on HTML, the corrected 5-directive string WITH connect-src 'self'), /api/version (features + presets from kStillPresetNames), GET /api/jobs (newest first), POST /api/jobs, GET /api/jobs/{id}, POST .../cancel, GET .../files/{i}/image?kind=\n- POST: multipart 415 gate; reads req.form (v0.56): get_files(\"files\") in send order + get_field(\"options\") (a part is a field iff filename empty); sniff-rejected files -> (name,error) pairs into create_job (visible rows), POST OK if >=1 valid, zero valid 400; 200 MiB/file + job caps 413; manager codes surface as 429/413; 200 body {\"job_id\": ...}\n- Exact response shapes; one error envelope with the 6 stable codes; {i} via from_chars (404 non-digit/out-of-range); kind=cleaned 404 without has_clean; kind=original 404 without has_orig; downloads via set_file_content(path, mime) + RFC 5987 Content-Disposition (sanitize + _2 collision suffix); mime_for/pct_encode helpers defined in api.cpp\n\n**Verify:** ./build/tests/wmr_tests \"[gui-options]\"; end-to-end in Task 8.\n\n```json:metadata\n{\"files\": [\"src/gui/options.hpp\", \"src/gui/options.cpp\", \"src/gui/api.hpp\", \"src/gui/api.cpp\", \"src/gui/embedded_ui.hpp\", \"tests/unit/gui_options_test.cpp\"], \"verifyCommand\": \"./build/tests/wmr_tests \\\"[gui-options]\\\"\", \"acceptanceCriteria\": [\"v0.56 multipart + set_file_content API used\", \"validation matrix + error envelope complete\", \"failed entries rendered; job_id returned\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 5,
       "nativeId": 21,
       "subject": "Task 6: entry points + shutdown",
-      "status": "pending",
-      "blockedBy": [1, 2],
+      "status": "completed",
+      "blockedBy": [
+        1,
+        2
+      ],
       "description": "**Goal:** wmr gui subcommand + no-args-always-GUI (WMR_NO_GUI/CI gates) + graceful bounded shutdown + console banner; both GUI paths return before the update-check chokepoint.\n\n**Files:**\n- Create: src/gui/launch.{hpp,cpp} (file-scope g_server pointer declared and set before handler install)\n- Modify: src/cli/cli_app.cpp (no-args :765-769, subcommand table, dispatch)\n\n**Acceptance Criteria:**\n- wmr gui [--gui-port N] [--no-browser]; early returns skip the WMR_UPDATE_CHECK tail\n- No-args always GUI unless WMR_NO_GUI=1 or CI (header+help, exit 0; the help gains exactly one gui subcommand line vs the pre-GUI build - diff accepting that line); --help/--version/parse errors otherwise unchanged; OFF build: no-args help, wmr gui GUI-free message + exit 2\n- Shutdown: stop accepting (Server::stop() is noexcept, atomic socket exchange - handler-safe), cancel all, CV wait_for(5s) worker join, remove run dir, exit 0; expiry or second Ctrl-C -> std::_Exit(0) (leftovers die at next start)\n- Banner (no em dash): \"wmr <APP_VERSION> GUI\" + tokenized URL + Ctrl-C hint + wmr --help note\n\n**Verify (manual matrix):** build/wmr; build/wmr | cat (still launches); WMR_NO_GUI=1 / CI=1 build/wmr | head -3; build/wmr --help; build/wmr gui --no-browser + kill -INT $PID (exit 0 within 5 s); OFF build wmr gui -> exit 2.\n\n```json:metadata\n{\"files\": [\"src/gui/launch.hpp\", \"src/gui/launch.cpp\", \"src/cli/cli_app.cpp\"], \"verifyCommand\": \"build/wmr gui --no-browser\", \"acceptanceCriteria\": [\"no-args always GUI with env opt-outs\", \"bounded shutdown with _Exit fallback\", \"g_server declared; banner without em dash\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 6,
       "nativeId": 22,
       "subject": "Task 7: embedded web frontend",
-      "status": "pending",
-      "blockedBy": [4],
+      "status": "completed",
+      "blockedBy": [
+        4
+      ],
       "description": "**Goal:** The single-page UI (drop/batch, Advanced disclosure, results rows without thumbnails, before/after + bbox overlay, download, offline banner), embedded as three byte arrays with a drift guard.\n\n**Files:**\n- Create: assets/gui/{index.html,app.js,style.css}, scripts/embed_gui_assets.py (dev-only), assets/embedded_gui_assets.hpp (generated, committed), src/gui/embedded_ui.cpp\n- Modify: src/gui/embedded_ui.hpp (Task 5's stub, filled from the generated header)\n- Test: tests/unit/gui_assets_test.cpp (mirror block)\n\n**Acceptance Criteria:**\n- Three sources served at /<token>/, /app.js, /style.css; the corrected 5-directive CSP (WITH connect-src 'self') on HTML; no inline script/style; zero external requests; textContent only\n- Drop + Browse, multi-file, NO client-side extension filter (the server sniff renders unsupported files as visible rows); client-side split above caps with a never-empty-chunk guard; rows = filename + badge + actions; Compare dialog with bbox overlay + slider; Download; Cancel\n- options(): rect sent only when all four fields are filled (x,y>=0, w,h>=8 client-side grammar; the old $(r[2]) pattern null-derefs); rect/preset disabled under legacy/force\n- init() calls refreshJobs() THEN startPolling() (reload recovery re-attaches AND resumes polling; both idempotent)\n- Offline rule per spec (persistent banner, controls disabled, no auto-reload)\n- Drift-guard test fails when assets/gui/* changes without regeneration\n\n**Verify:** ./build/tests/wmr_tests \"[gui-assets]\" + manual browser pass (all controls, dark + light, reload mid-job).\n\n```json:metadata\n{\"files\": [\"assets/gui/index.html\", \"assets/gui/app.js\", \"assets/gui/style.css\", \"scripts/embed_gui_assets.py\", \"assets/embedded_gui_assets.hpp\", \"src/gui/embedded_ui.hpp\", \"src/gui/embedded_ui.cpp\", \"tests/unit/gui_assets_test.cpp\"], \"verifyCommand\": \"./build/tests/wmr_tests \\\"[gui-assets]\\\"\", \"acceptanceCriteria\": [\"CSP-correct, zero external requests\", \"rect grammar + chunk guard + no client filter\", \"offline banner + reload recovery poll\"], \"modelTier\": \"frontier\"}\n```"
     },
     {
       "id": 7,
       "nativeId": 23,
       "subject": "Task 8: live-server integration tests",
-      "status": "pending",
-      "blockedBy": [2, 3, 4],
+      "status": "completed",
+      "blockedBy": [
+        2,
+        3,
+        4
+      ],
       "description": "**Goal:** End-to-end AC coverage against a real server on an ephemeral port from the test binary (cpp-httplib client, no new dependency).\n\n**Files:**\n- Create: tests/integration/gui_server_test.cpp (mirror block)\n\n**Acceptance Criteria:**\n- Suite boots GuiServer + JobManager (temp run dir) in-thread and tears down cleanly\n- Client uses httplib::UploadFormDataItems (v0.56) with the options part's filename EMPTY (a part is a field iff filename is empty, so get_field sees it)\n- Covers: un-prefixed //, /favicon.ico, bad token -> 404 empty; version presets == kStillPresetNames; upload (add_watermark image) -> done + removed + downloadable decode; AC7 byte parity (in-process remove_still + write_still_output == downloaded bytes); no-watermark -> kind=cleaned 404; cancel queued + running (retained files); legacy+rect -> 400 invalid_combination; unknown job -> 404 unknown_job; list newest-first; AC4: Content-Length > 1 GiB -> 413, 9th pending -> 429; AC3: bad/absent Host -> 404, Sec-Fetch-Site: cross-site -> 403, no Access-Control-Allow-* header ever\n- Green on macOS; loopback-safe for CI\n\n**Verify:** ./build/tests/wmr_tests \"[gui-server]\"\n\n```json:metadata\n{\"files\": [\"tests/integration/gui_server_test.cpp\"], \"verifyCommand\": \"./build/tests/wmr_tests \\\"[gui-server]\\\"\", \"acceptanceCriteria\": [\"AC3/4/5/6/7/10 covered incl. 413/429/Host/cross-site/CORS\", \"v0.56 UploadFormDataItems with empty options filename\", \"clean in-thread lifecycle\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 8,
       "nativeId": 24,
       "subject": "Task 9: docs + rollout prep",
-      "status": "pending",
-      "blockedBy": [5, 6],
+      "status": "completed",
+      "blockedBy": [
+        5,
+        6
+      ],
       "description": "**Goal:** README + CHANGELOG ready so the 1.17.0 cut is mechanical.\n\n**Files:**\n- Modify: README.md, CHANGELOG.md\n\n**Acceptance Criteria:**\n- README \"Graphical mode\" section: launch, --gui-port / --no-browser, WMR_NO_GUI=1 + CI opt-outs, privacy note (zero external requests; ~/.cache/wmr/gui, 0700, removed at next start), v1 still-images-only note\n- CHANGELOG [Unreleased]: Added (graphical mode) + prominent Changed line for the no-args behavior change\n- No version bump in this task (bump at release cut per protocol); no em dashes / AI-tell words\n\n**Verify:** grep -n \"Graphical mode\" README.md; read CHANGELOG top.\n\n```json:metadata\n{\"files\": [\"README.md\", \"CHANGELOG.md\"], \"verifyCommand\": \"grep -n 'Graphical mode' README.md\", \"acceptanceCriteria\": [\"README section complete\", \"CHANGELOG states no-args change prominently\"], \"modelTier\": \"mechanical\"}\n```"
     }
   ],
-  "lastUpdated": "2026-09-12"
+  "lastUpdated": "2026-09-13"
 }

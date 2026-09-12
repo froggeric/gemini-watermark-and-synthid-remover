@@ -154,9 +154,15 @@ malformed request is refused before a byte of its body is read.
 memory (req.body plus parsed copies, ~2x transient RSS), so the request cap is
 a RAM budget:
 
-- `set_payload_max_length(1 GiB)`: a Content-Length above it is answered 413
-  before any body byte is read; chunked bodies abort mid-stream at the same
-  bound.
+- `set_payload_max_length(1 GiB)`: enforced at two layers. The pre-routing
+  guard rejects a DECLARED Content-Length above the cap with 413 before any
+  body byte is read (honest clients); cpp-httplib's per-received-byte
+  enforcement is the hard bound that catches lying or chunked clients
+  mid-stream at the same value (transient server-side buffering is therefore
+  bounded by the cap, ~1 GiB worst case). (Erratum 2026-09-13: the original
+  text claimed stock cpp-httplib checks the declared length before reading;
+  verified against v0.56 that it does not — enforcement is per received byte —
+  so the declared-length check is implemented in our pre-routing guard.)
 - Per-file cap exactly 200 MiB (209,715,200 bytes), enforced at multipart
   parse; violation returns 413 naming the offending files.
 - Per job: at most 100 files AND at most 1 GiB total. The UI splits a larger
