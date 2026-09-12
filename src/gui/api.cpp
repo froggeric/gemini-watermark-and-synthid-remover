@@ -264,8 +264,11 @@ void register_routes(httplib::Server& svr, const std::string& token,
         }
 
         // Per-file cap, enforced over the parsed multipart parts (naming the
-        // offenders) before any sniffing or persistence.
-        const auto parts = req.form.get_files("files");  // send order
+        // offenders) before any sniffing or persistence. get_files returns
+        // the parts BY VALUE (its own copy), so parts is non-const and the
+        // bytes are MOVED into the PendingUpload below (peak ~= request +
+        // this vector, per the spec's 2x budget).
+        auto parts = req.form.get_files("files");  // send order
         std::string oversize;
         for (const auto& part : parts) {
             if (part.content.size() <= kMaxFileBytes) continue;
@@ -295,7 +298,7 @@ void register_routes(httplib::Server& svr, const std::string& token,
         std::vector<PendingUpload> files;
         std::vector<std::pair<std::string, std::string>> failed;
         int part_i = 0;
-        for (const auto& part : parts) {
+        for (auto& part : parts) {  // non-const: part.content is moved from below
             const std::string name =
                 part.filename.empty() ? "image" + std::to_string(part_i) : part.filename;
             ++part_i;
@@ -313,7 +316,7 @@ void register_routes(httplib::Server& svr, const std::string& token,
                                     "unsupported format: " + name + " (use PNG, JPEG, or WebP)");
                 continue;
             }
-            files.push_back(PendingUpload{name, s.ext, part.content});
+            files.push_back(PendingUpload{name, s.ext, std::move(part.content)});
         }
         if (files.empty()) {
             send_error(res, 400, "no_supported_images", "no supported images");

@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `wmr --help` is unchanged.
 - Batch mode now exits 1 (was 0) when `--rect` is malformed. The batch still
   stops before processing anything; the exit code now reflects the failure.
+- Single-image mode now exits 1 when `--rect` is malformed (was silently
+  ignored), including with `--force`; it matches the batch change above.
 
 ## [1.16.12] - 2026-09-12
 

@@ -542,6 +542,33 @@ TEST_CASE("a request body past the 1 GiB cap is refused 413", "[gui][gui-server]
     REQUIRE(!resp.empty());
     REQUIRE(resp.rfind("HTTP/1.1 413", 0) == 0);
 }
+
+TEST_CASE("a declared Content-Length past the cap is refused 413 before the body",
+          "[gui][gui-server]") {
+    ServerCtx ctx;
+    // Honest-client fast path (the flood case above is the hard bound): the
+    // DECLARED length alone triggers the 413 from the pre-routing handler, so
+    // the exchange sends ~200 bytes total and the response must come back
+    // essentially immediately (no body streaming, no drain wait).
+    RawConn conn(ctx.port());
+    const std::string req =
+        "POST /" + ctx.token() + "/api/jobs HTTP/1.1\r\n"
+        "Host: 127.0.0.1:" + std::to_string(ctx.port()) + "\r\n"
+        "Content-Type: multipart/form-data; boundary=x\r\n"
+        "Content-Length: 2147483648\r\n"  // 2 GiB, past the 1 GiB cap
+        "Connection: close\r\n"
+        "\r\n"
+        "abcd";
+    const auto t0 = std::chrono::steady_clock::now();
+    REQUIRE(conn.send_all(req.data(), req.size()));
+    const std::string resp = conn.read_all(5000);
+    const auto elapsed = std::chrono::steady_clock::now() - t0;
+    REQUIRE(!resp.empty());
+    REQUIRE(resp.rfind("HTTP/1.1 413", 0) == 0);
+    REQUIRE(resp.find("\"payload_too_large\"") != std::string::npos);
+    REQUIRE(resp.find("request body exceeds the 1 GiB cap") != std::string::npos);
+    REQUIRE(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() < 2000);
+}
 #endif  // !_WIN32
 
 TEST_CASE("a ninth pending job is refused 429 too_many_pending", "[gui][gui-server]") {
@@ -594,11 +621,55 @@ TEST_CASE("happy path: upload a marked image, poll to done, download the cleaned
                        "/" + ctx.token() + "/api/jobs/" + id + "/files/0/image?kind=cleaned");
     REQUIRE(dl != nullptr);
     REQUIRE(dl->status == 200);
+    // Download contract (spec "Storage naming"): the RFC 5987 filename* form
+    // with the pct-encoded <stem>_clean.<ext> download name. "marked.png"
+    // is all unreserved chars, so pct_encode passes it through unchanged.
+    const std::string disp = dl->get_header_value("Content-Disposition");
+    const std::string prefix = "attachment; filename*=UTF-8''";
+    REQUIRE(disp.rfind(prefix, 0) == 0);
+    REQUIRE(disp.substr(prefix.size()) == "marked_clean.png");
     const cv::Mat img = cv::imdecode(
         cv::Mat(1, (int)dl->body.size(), CV_8UC1, (void*)dl->body.data()), cv::IMREAD_COLOR);
     REQUIRE(!img.empty());
     REQUIRE(img.cols == 500);
     REQUIRE(img.rows == 500);
+}
+
+TEST_CASE("two uploads with the same client filename both download, second suffixed _2",
+          "[gui][gui-server]") {
+    ServerCtx ctx;  // the real engine processor (no injection)
+    const std::string png = encode_png(marked_mat());
+    auto res = http_post_job(ctx.port(), ctx.token(),
+                             {{"marked.png", png}, {"marked.png", png}});
+    REQUIRE(res != nullptr);
+    REQUIRE(res->status == 200);
+    const std::string id = json::parse(res->body)["job_id"].get<std::string>();
+
+    const auto job = wait_job_terminal(ctx.port(), ctx.token(), id);
+    REQUIRE(job["status"].get<std::string>() == "done");
+    REQUIRE(job["files"].size() == 2);
+    REQUIRE(job["files"][0]["outcome"].get<std::string>() == "removed");
+    REQUIRE(job["files"][1]["outcome"].get<std::string>() == "removed");
+
+    // Collision naming (spec "Storage naming"): the FIRST file keeps the plain
+    // download name; every later same-stem file gets _2/_3/... BEFORE the
+    // _clean suffix (stem_2_clean.png, not stem_clean_2.png).
+    const std::string prefix = "attachment; filename*=UTF-8''";
+    auto dl0 = http_get(ctx.port(),
+                        "/" + ctx.token() + "/api/jobs/" + id + "/files/0/image?kind=cleaned");
+    REQUIRE(dl0 != nullptr);
+    REQUIRE(dl0->status == 200);
+    const std::string disp0 = dl0->get_header_value("Content-Disposition");
+    REQUIRE(disp0.rfind(prefix, 0) == 0);
+    REQUIRE(disp0.substr(prefix.size()) == "marked_clean.png");
+
+    auto dl1 = http_get(ctx.port(),
+                        "/" + ctx.token() + "/api/jobs/" + id + "/files/1/image?kind=cleaned");
+    REQUIRE(dl1 != nullptr);
+    REQUIRE(dl1->status == 200);
+    const std::string disp1 = dl1->get_header_value("Content-Disposition");
+    REQUIRE(disp1.rfind(prefix, 0) == 0);
+    REQUIRE(disp1.substr(prefix.size()) == "marked_2_clean.png");
 }
 
 TEST_CASE("downloaded cleaned bytes equal the in-process still-remove output",
@@ -666,8 +737,11 @@ TEST_CASE("cancel a queued job: immediate cancel, files never run", "[gui][gui-s
     std::promise<void> first_entered;
     std::promise<void> release;
     const auto go = release.get_future().share();
-    ServerCtx ctx;
+    // BEFORE ctx: the processor below captures it by reference, and on a
+    // REQUIRE-failure unwind it must die after the manager joins its worker
+    // (ctx's destructor), not before.
     std::atomic<int> calls{0};
+    ServerCtx ctx;
     ctx.manager().set_processor_for_tests(
         [&first_entered, &calls, go](GuiFile& f, const JobOptions&, const fs::path&) {
             if (calls.fetch_add(1) == 0) {  // block only inside job 1's single file
