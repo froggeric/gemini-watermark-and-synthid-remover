@@ -89,7 +89,7 @@ Batch a folder: `wmr remove folder/ -o cleaned/ --recursive`.
 
 > **Which command?** Image with a visible mark -> `remove`. Gemini/Veo video -> `video`. NotebookLM video -> `video --notebooklm`. Invisible (SynthID) -> `synthid`. Just locate -> `detect`.
 
-> **Gemini 3.6 Flash images:** the visible diamond is auto-detected, so `wmr remove` just works. If a mark is too faint to confirm (it blends with a light background), force its position: `wmr remove img.png --geo-preset gemini36-portrait -o clean.png` (named presets per resolution) or `wmr remove img.png --rect x,y,w,h -o clean.png` (exact box). Use `wmr detect img.png -v` to read the detected geometry.
+> **Gemini 3.6 and 3.8 Flash images:** the visible diamond is auto-detected, so `wmr remove` just works, including 3.8 2K outputs (around 1700px short side). If a mark is too faint to confirm (it blends with white text or a light background), force its position: `wmr remove img.png --geo-preset gemini36-portrait -o clean.png` (named presets per resolution class, e.g. `gemini36-portrait`, `gemini36-large`, `gemini38-2k-portrait`) or `wmr remove img.png --rect x,y,w,h -o clean.png` (exact box). Use `wmr detect img.png -v` to read the detected geometry.
 
 Supported inputs: PNG, JPEG, WebP images; MP4 and other FFmpeg-supported video.
 
@@ -123,13 +123,13 @@ wmr auto-detects the visible mark's corner and size, so most images need no flag
 | Flag | Applies to | Description |
 |------|------------|-------------|
 | `--rect x,y,w,h` | remove, detect | Force the watermark box; removal runs there even on a faint mark |
-| `--geo-preset <name>` | remove, detect | Named geometry, e.g. `gemini36-portrait` (896x1200) |
+| `--geo-preset <name>` | remove, detect | Named geometry: `gemini36-portrait` (896x1200 class), `gemini36-large` (2400x1792 class), `gemini38-2k-portrait` (1696x2528 class) |
 | `--no-auto-geometry` | remove, detect | Skip the content-based position search; use the model position |
 | `--force-small` / `--force-large` | remove | Force 48x48 / 96x96 Gemini logo size |
 | `--legacy` | remove, detect | Pin the legacy Gemini (pre-3.5) V1 profile |
 | `--no-legacy` | remove, detect | Pin the current (Gemini 3.5+) V2 profile; disable auto fallback |
 
-The visible mark is a diamond in the bottom-right corner. wmr reads its position and size from the image content rather than guessing from the resolution: Gemini 3.6 uses a 48x48 diamond at every output size tested (small exports and large ones such as 2400x1792), while the older Gemini 3.5 used 36x36 on small outputs and 96x96 on large ones. Multi-template detection covers all three, and a genuine older 96x96 mark still removes byte-for-byte.
+The visible mark is a diamond in the bottom-right corner. wmr reads its position and size from the image content rather than guessing from the resolution: Gemini 3.6 and 3.8 use a 48x48 diamond on small and mid-size outputs, Gemini 3.8 2K outputs (around 1700px short side) carry a 96x96 diamond, and large 3.6 exports such as 2400x1792 carry the 48px mark at a wider margin. The older Gemini 3.5 used 36x36 on small outputs and 96x96 on large ones. Multi-template detection covers all of these; a genuine older 96x96 mark still removes byte-for-byte. The 36x36 and 96x96 masks were recalibrated from real watermarked images in 1.16.12, which removed a faint outline the older 96x96 masks could leave behind on dark backgrounds.
 
 ### SynthID (invisible watermark)
 
@@ -261,10 +261,10 @@ Visible Gemini and Veo watermarks are alpha-blended overlays: `watermarked = a *
 The pipeline has three stages, orchestrated by `WatermarkEngine`:
 
 1. **Detect.** A three-stage NCC detector (spatial template match, gradient match on Sobel magnitudes, variance analysis) fused as `spatial*0.50 + gradient*0.30 + variance*0.20`, threshold 0.35.
-2. **Geometry auto-detection.** A polarity-invariant NCC template match against native per-size alpha captures, anchored on the predicted position then widened to the corner. Still images run the search once at the CLI layer (anchored first, widened only if the hit is not trusted); video aggregates about 12 sampled frames so the static mark wins over transient content. Templates are captured per size and never resized, because resizing smears the anti-aliased edges the exact reversal depends on. The still path then snaps the result with a content-suppressed re-match (it subtracts a median background estimate first) so it lands on the exact pixel: a raw match can straddle two pixels on busy content, and the hard diamond edge turns a 1px error into a visible ridge.
+2. **Geometry auto-detection.** A polarity-invariant NCC template match against native per-size alpha captures, anchored on the predicted position then widened to the corner. Still images run the search once at the CLI layer (anchored first, widened only if the hit is not trusted); video aggregates about 12 sampled frames so the static mark wins over transient content. Templates are captured per size and never resized, because resizing smears the anti-aliased edges the exact reversal depends on. Two refinements (1.16.12): saturated bright content is suppressed before matching (the diamond is a white overlay, so white content under it carries no signal but plenty of noise), and a second scoring pass weights each pixel by how much mark its local background can show, which recovers marks that sit mostly over white emblems or text. A recognized position is re-scored at the calibrated preset spot before it is trusted, so content that merely looks like the mark cannot be pinned to a known geometry.
 3. **Remove.** The reverse-blend per pixel (still) or per frame (video). Video adds shot-level detection, an occlusion gate, and a residual-gated edge cleanup that repairs the faint halo at the diamond's edge on compressed footage (a safe no-op when the mark sits on a uniform background). Audio is passed through untouched.
 
-The 48px Gemini mark (Gemini 3.6) and the 36px mark (Gemini 3.5) are both supported through multi-template detection. The search runs on every image regardless of the resolution-derived size class, so the 48px mark is found on large exports too; a true 96px Gemini 3.5 mark does not match the 48px template and is left on its byte-identical model path. The 48px alpha is the average of 10 distinct clean captures, which suppresses per-pixel capture noise. Video removes with the same clean per-size alpha used for stills.
+The 48px Gemini mark (Gemini 3.6 and 3.8), the 36px mark (Gemini 3.5), and the 96px marks (Gemini 3.5 large, Gemini 3.8 2K) are all supported through multi-template detection. The search runs on every image regardless of the resolution-derived size class, so the 48px mark is found on large exports too. The alpha masks are calibrated from real watermarked images: the 48px mask is the average of 10 distinct clean captures, and since 1.16.12 the 96px masks are measured from real images against exactly known backgrounds (one calibration set is the same watermark stamped by the generator onto eight solid colors, which pinned the overlay to pure white and settled the mask to within about 0.6/255). Video removes with the same clean per-size alpha used for stills.
 
 **NotebookLM** marks are semi-transparent and color-adaptive (not a reversible alpha overlay; the alpha is approximately zero, so there is no clean inverse). They are removed by AI inpainting. [MI-GAN](https://github.com/Picsart-AI-Research/MI-GAN) (MIT, ICCV 2023) synthesizes the missing region; on Apple Silicon it runs on the Neural Engine (about 28 ms/frame), elsewhere on ONNX Runtime CPU (about 225 ms/frame), falling back to Navier-Stokes. Every scene is inpainted, with the method chosen per scene: MI-GAN everywhere on Apple Silicon; elsewhere a complexity gate picks MI-GAN for textured backgrounds and NS for uniform ones.
 
@@ -344,7 +344,11 @@ All packages ship the visible-removal alpha maps and the MI-GAN model. The Synth
 
 `--synthid-attack regen` runs everywhere, but off Apple Silicon it is CPU-only and slow (minutes per image). The Linux and Windows release binaries ship CPU-only because the sdcpp ([leejet/stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) + ggml) GPU backends have build gaps we could not CI-validate (Vulkan needs `glslc` and the loader on the Linux runner; sdcpp on MSVC was never green in CI). If you work with Vulkan or CUDA on ggml / stable-diffusion.cpp and can help wire and validate a GPU regen backend for Linux and Windows, that is the biggest speedup left. Build locally with `WMR_BUILD_REGEN=ON` (no `WMR_REGEN_CPU_ONLY`), point `--regen-backend vulkan` or `cuda` at a GPU, and report the timings and whether the output still clears Google's SynthID verifier. Open an issue to coordinate.
 
-Other welcome contributions: new watermark profiles (still or video geometry and alpha captures), higher-fidelity or faster inpaint backends, and video SynthID.
+Other welcome contributions and open items:
+
+- **Gemini 3.5 calibration images.** The 36x36 mask's strength was never verified against real 3.5 outputs (none could be located for testing; generations from that era are becoming rare). If you can still generate with a 3.5 image model, a handful of unedited PNGs with the mark near the bottom-right corner would let the mask be recalibrated the same way the others were. Open an issue.
+- Marks that sit entirely over QR-code-like patterns or pure white areas can defeat template matching entirely (there is no usable signal). `--force --legacy` handles the known legacy cases at the standard position; a detection path that does not rely on correlation is an open idea.
+- New watermark profiles (still or video geometry and alpha captures), higher-fidelity or faster inpaint backends, and video SynthID.
 
 ## Privacy
 
