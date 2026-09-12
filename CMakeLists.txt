@@ -490,6 +490,8 @@ if(WMR_BUILD_GUI)
         src/gui/image_sniff.cpp
         src/gui/run_dir.cpp
         src/gui/jobs.cpp
+        src/gui/options.cpp
+        src/gui/api.cpp
     )
     target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_BUILD_GUI=1)
     if(WIN32)
