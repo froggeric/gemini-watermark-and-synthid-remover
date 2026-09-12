@@ -14,11 +14,15 @@
 #include "core/coreml_cache.hpp"  // clear_coreml_execution_cache (the cache subcommand)
 #endif
 #include "video/video_processor.hpp"
+#ifdef WMR_BUILD_GUI
+#include "gui/launch.hpp"  // run_gui: both GUI entry points (Task 6)
+#endif
 
 #include <opencv2/imgcodecs.hpp>
 #include <CLI/CLI.hpp>
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -608,6 +612,14 @@ int run_cli(int argc, char* argv[]) {
 
     // Show help when called with no arguments
     if (argc <= 1) {
+#ifdef WMR_BUILD_GUI
+        // No-args ALWAYS launches the GUI (interactive or piped). Opt-outs:
+        // WMR_NO_GUI=1 or CI in the environment. They gate ONLY this launch;
+        // `wmr gui` always launches. Returns before the update-check tail.
+        if (!std::getenv("WMR_NO_GUI") && !std::getenv("CI")) {
+            return wmr::gui::run_gui(0, false);
+        }
+#endif
         print_header(std::cout);
         std::cout << app.help() << std::endl;
         return 0;
@@ -859,6 +871,20 @@ int run_cli(int argc, char* argv[]) {
         "Process directories recursively");
     add_common(metadata_cmd);
 
+    // --- gui ---
+    // The local web UI. Registered UNCONDITIONALLY (even on GUI-free builds)
+    // so `wmr gui` there can print the GUI-free message + exit 2 at dispatch
+    // instead of failing at parse time; the flags only exist when built.
+    auto* gui_cmd = app.add_subcommand("gui", "Launch the local web UI (graphical mode)");
+#ifdef WMR_BUILD_GUI
+    int gui_port = 0;
+    bool gui_no_browser = false;
+    gui_cmd->add_option("--gui-port", gui_port,
+                        "Port to listen on (default: an ephemeral free port)");
+    gui_cmd->add_flag("--no-browser", gui_no_browser,
+                      "Print the URL instead of opening a browser");
+#endif
+
     // Default subcommand: if no subcommand given, treat as positional for backward compat
     app.require_subcommand(0, 1);
 
@@ -874,6 +900,19 @@ int run_cli(int argc, char* argv[]) {
             return 1;
         }
         return app.exit(e);
+    }
+
+    // GUI dispatch (Task 6): an EARLY return, before the mode determination
+    // and the WMR_UPDATE_CHECK tail (no fetch at shutdown). On a GUI-free
+    // build the subcommand still parses, so it can say so and exit 2.
+    if (app.got_subcommand(gui_cmd)) {
+#ifdef WMR_BUILD_GUI
+        return wmr::gui::run_gui(gui_port, gui_no_browser);
+#else
+        std::cerr << "wmr gui: this build is GUI-free (WMR_BUILD_GUI off). "
+                     "Rebuild with WMR_BUILD_GUI=1.\n";
+        return 2;
+#endif
     }
 
     if (opts.verbose) {

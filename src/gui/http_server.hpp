@@ -9,6 +9,10 @@ namespace wmr::gui {
 struct GuiServerConfig {
     int port = 0;             // 0 = ephemeral port (bind_to_any_port)
     bool open_browser = true; // false for --no-browser and tests
+    // Extra banner lines printed under "Listening on ..." (launch's Ctrl-C
+    // hint + CLI pointer; only run() prints after the bind, so the tail
+    // rides along). Empty = nothing extra.
+    std::string banner_tail;
 };
 
 // Token-secured 127.0.0.1 server. run() installs the security stack

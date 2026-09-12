@@ -73,6 +73,9 @@ int GuiServer::run(const GuiServerConfig& cfg, const RouteRegistrar& reg) {
 
     std::printf("wmr %s GUI\n", APP_VERSION);
     std::printf("Listening on %s\n", url().c_str());
+    if (!cfg.banner_tail.empty()) {
+        std::printf("%s\n", cfg.banner_tail.c_str());
+    }
     std::fflush(stdout);
 
     if (cfg.open_browser) {
