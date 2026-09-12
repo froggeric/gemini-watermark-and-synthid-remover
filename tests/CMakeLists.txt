@@ -178,8 +178,11 @@ if(WMR_BUILD_GUI)
         ${CMAKE_SOURCE_DIR}/src/gui/http_server.cpp
         ${CMAKE_SOURCE_DIR}/src/gui/browser.cpp
         ${CMAKE_SOURCE_DIR}/src/gui/image_sniff.cpp
+        ${CMAKE_SOURCE_DIR}/src/gui/run_dir.cpp
+        ${CMAKE_SOURCE_DIR}/src/gui/jobs.cpp
         unit/gui_security_test.cpp
         unit/gui_sniff_test.cpp
+        unit/gui_jobs_test.cpp
     )
     if(WIN32)
         # shell32 for browser.cpp (no auto-link pragma); ws2_32 is NOT needed:
