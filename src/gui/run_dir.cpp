@@ -1,9 +1,9 @@
 #include "gui/run_dir.hpp"
 
 #include <chrono>
-#include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 
@@ -72,16 +72,35 @@ fs::path create_run_dir(const fs::path& root_arg) {
     const fs::path root = gui_root(root_arg);
     std::error_code ec;
     fs::create_directories(root, ec);
-    const std::string run_id = fmt::format("{:%Y%m%d%H%M%S}-{}", std::chrono::system_clock::now(),
-                                           getpid());
+    // Fail loudly: a broken cache root must not start a server whose every
+    // upload then fails with no diagnostic (and an unrecorded run dir would be
+    // invisible to dead-run cleanup).
+    std::error_code probe;
+    if (!fs::is_directory(root, probe))
+        throw std::runtime_error("wmr gui: cannot create cache root " + root.string() +
+                                 (ec ? ": " + ec.message() : std::string()));
+    // time_point_cast<seconds>: fmt renders %S with a fractional part for a
+    // sub-second duration, which would leak nanoseconds into the run id.
+    const auto now = std::chrono::time_point_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now());
+    const std::string run_id = fmt::format("{:%Y%m%d%H%M%S}-{}", now, getpid());
     const fs::path dir = root / run_id;
     fs::create_directories(dir, ec);  // same-second same-pid reuse is tolerated
+    probe.clear();
+    if (!fs::is_directory(dir, probe))
+        throw std::runtime_error("wmr gui: cannot create run dir " + dir.string() +
+                                 (ec ? ": " + ec.message() : std::string()));
     // 0700 even when the dir pre-existed with looser bits (cache hygiene:
     // uploads land here before any auth beyond the token).
     fs::permissions(dir, fs::perms::owner_all, fs::perm_options::replace, ec);
+    if (ec)
+        throw std::runtime_error("wmr gui: cannot chmod 0700 " + dir.string() + ": " + ec.message());
     {
         std::ofstream out(dir / "pid", std::ios::trunc);
         out << getpid();
+        out.flush();
+        if (!out.good())
+            throw std::runtime_error("wmr gui: cannot write pid sidecar in " + dir.string());
     }
     return dir;
 }

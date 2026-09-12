@@ -39,6 +39,7 @@ std::string read_file(const fs::path& p) {
 bool write_file(const fs::path& p, const std::string& bytes) {
     std::ofstream out(p, std::ios::binary | std::ios::trunc);
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    out.flush();   // surface a flush/close-time failure (e.g. disk full) now
     return out.good();
 }
 

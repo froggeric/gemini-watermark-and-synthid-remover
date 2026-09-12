@@ -10,6 +10,10 @@
 
 namespace wmr::gui {
 
+// Returns the new run dir. Throws std::runtime_error (path + OS message) when
+// the root or run dir cannot be created, chmod'd 0700, or the pid sidecar
+// cannot be written: startup fails loudly rather than serving with a broken
+// cache whose every upload would fail with no diagnostic.
 std::filesystem::path create_run_dir(const std::filesystem::path& root = {});
 void cleanup_dead_runs(const std::filesystem::path& root = {});   // once at startup, before serving
 void remove_run_dir(const std::filesystem::path&);                // graceful shutdown only

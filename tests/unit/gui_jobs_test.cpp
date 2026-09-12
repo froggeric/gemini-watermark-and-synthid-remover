@@ -19,6 +19,8 @@
 #include <vector>
 
 #include <opencv2/imgcodecs.hpp>
+#include <fmt/chrono.h>
+#include <fmt/format.h>
 
 #ifdef _WIN32
 #include <process.h>
@@ -159,6 +161,31 @@ TEST_CASE("run dir: create + dead-pid cleanup keeps live siblings", "[gui][gui-j
 
     remove_run_dir(run);
     REQUIRE_FALSE(fs::exists(run));
+}
+
+TEST_CASE("create_run_dir fails loudly on an unusable root", "[gui][gui-jobs]") {
+    TempDir tmp;
+    // Root whose parent is a regular file: create_directories cannot succeed.
+    const fs::path blocker = tmp.p / "blocker";
+    write_text(blocker, "i am a file");
+    REQUIRE_THROWS_AS(create_run_dir(blocker / "gui"), std::runtime_error);
+    // The root itself is a regular file.
+    REQUIRE_THROWS_AS(create_run_dir(blocker), std::runtime_error);
+
+    // Sidecar failure: pre-create the run dirs this call could pick (the
+    // current second and the next, same pid) with `pid` occupied by a real
+    // directory, so the sidecar ofstream cannot open. Whichever second the
+    // call lands in, it must throw instead of returning an unrecorded run dir.
+    const fs::path root = tmp.p / "runs";
+    const auto now = std::chrono::time_point_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now());
+    for (const auto t : {now, now + std::chrono::seconds(1)}) {
+        fs::create_directories(root / fmt::format("{:%Y%m%d%H%M%S}-{}", t, getpid()) / "pid");
+    }
+    REQUIRE_THROWS_AS(create_run_dir(root), std::runtime_error);
+
+    // The healthy path still works after the loud-failure cases.
+    REQUIRE(fs::is_directory(create_run_dir(tmp.p / "ok")));
 }
 
 TEST_CASE("create_job persists origs and appends sniff-rejected rows", "[gui][gui-jobs]") {
