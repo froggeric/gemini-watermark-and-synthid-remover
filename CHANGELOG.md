@@ -6,7 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- _Nothing yet._
+### Added
+
+- Graphical mode: run `wmr` with no arguments (or `wmr gui`) to launch an
+  embedded local web UI (127.0.0.1, per-run token, zero external requests).
+  Still-image removal with batch drop, per-file results, before/after
+  comparison, and downloads. `WMR_BUILD_GUI` (default ON) gates it.
+
+### Changed
+
+- **`wmr` with no arguments now launches the graphical mode instead of
+  printing help.** Set `WMR_NO_GUI=1` (or `CI`) to keep the old behavior;
+  `wmr --help` is unchanged.
+- Batch mode now exits 1 (was 0) when `--rect` is malformed. The batch still
+  stops before processing anything; the exit code now reflects the failure.
 
 ## [1.16.12] - 2026-09-12
 

@@ -20,6 +20,7 @@
   - [Residual cleanup (optional)](#residual-cleanup-optional)
   - [cache subcommand](#cache-subcommand)
   - [Provenance metadata](#provenance-metadata)
+- [Graphical mode](#graphical-mode)
 - [How it works (for researchers)](#how-it-works-for-researchers)
   - [Visible-mark pipeline](#visible-mark-pipeline)
   - [SynthID reality](#synthid-reality)
@@ -249,6 +250,26 @@ wmr metadata image.png --strip-all -o clean.png   # also drop non-AI metadata
 `wmr remove` and `wmr synthid` also strip provenance metadata from the output by default. Opt out with `--keep-provenance`. Honest note: on today's OpenCV output this strip is a no-op scan. `cv::imwrite` already drops all container metadata on write and injects nothing, so the post-write scan finds nothing to strip and leaves the file untouched. The pass exists so the output stays provenance-free independent of the encoder. The active, load-bearing path is the standalone `wmr metadata`, which losslessly strips input files that do carry metadata.
 
 v1 scope: PNG and JPEG. WebP, AVIF, HEIF, JPEG-XL, and MP4/MOV are sniffed and reported as unsupported (bytes copied unchanged); they are later phases. On `video`, `--keep-provenance` is accepted for CLI symmetry and is a documented no-op (the FFmpeg re-encode already produces a fresh container with no carried-over input boxes).
+
+## Graphical mode
+
+Run `wmr` with no arguments (or `wmr gui`) to start the built-in graphical
+mode: a small local server on 127.0.0.1 plus your default browser. No
+installation, no separate app; the interface ships inside the binary.
+
+- Drag and drop images (PNG, JPEG, WebP); they are processed in order and each
+  result can be compared side by side and downloaded.
+- The page talks only to the local server; it makes zero external requests.
+- Session files live under `~/.cache/wmr/gui` (permissions 0700) and are
+  removed the next time wmr starts.
+- `--gui-port N` pins a port (default: an ephemeral free port);
+  `--no-browser` prints the URL instead of opening one.
+- Running `wmr` with no arguments now starts this mode. Scripts that expect
+  the help text: set `WMR_NO_GUI=1` (or `CI`), or run `wmr --help`.
+- v1 covers still images only; video and SynthID regen remain CLI-only.
+- Builds compiled without the GUI (`WMR_BUILD_GUI=OFF`) have no graphical
+  mode: `wmr gui` prints a notice and exits 2, and no-args prints the help
+  text.
 
 ## How it works (for researchers)
 
