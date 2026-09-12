@@ -75,6 +75,7 @@ json file_json(const GuiFile& f) {
     j["index"] = f.index;
     j["name"] = f.name;
     j["outcome"] = outcome_str(f.outcome);
+    j["forced"] = f.forced;  // the UI's "removed (forced)" badge (spec outcome table)
     if (f.bbox)
         j["bbox"] = json::array({f.bbox->x, f.bbox->y, f.bbox->width, f.bbox->height});
     else

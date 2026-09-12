@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wmr</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>wmr</h1><span id="version" class="muted"></span></header>
+<div id="offline" hidden>
+  <p>wmr has stopped or was restarted; this page can no longer reach it and
+  previous results are gone. Restart wmr and open the new URL it prints.</p>
+</div>
+<main>
+  <section id="drop" tabindex="0">
+    <p>Drop images here, or <button id="browse">Browse</button></p>
+    <p class="muted">PNG, JPEG, or WebP. Multiple files are processed in order.</p>
+    <input id="file" type="file" multiple accept=".png,.jpg,.jpeg,.webp" hidden>
+  </section>
+  <details id="advanced">
+    <summary>Advanced</summary>
+    <label><input type="checkbox" id="legacy"> Legacy (V1) profile</label>
+    <label><input type="checkbox" id="force"> Force removal at the model position</label>
+    <label>Geo preset <select id="preset"><option value="">(auto)</option></select></label>
+    <fieldset id="rectbox"><legend>Manual rect (x, y, w, h)</legend>
+      <input id="rx" type="number" min="0" placeholder="x">
+      <input id="ry" type="number" min="0" placeholder="y">
+      <input id="rw" type="number" min="8" placeholder="w">
+      <input id="rh" type="number" min="8" placeholder="h">
+    </fieldset>
+    <label>Residual cleanup <select id="denoise">
+      <option value="off">off (exact reversal)</option>
+      <option value="soft">soft</option><option value="ns">ns</option>
+      <option value="telea">telea</option><option value="ai" hidden>ai</option>
+    </select></label>
+    <label><input type="checkbox" id="keepprov"> Keep provenance metadata</label>
+  </details>
+  <div id="jobs"></div>
+</main>
+<dialog id="compare">
+  <div class="cmp"><img id="cmpA" alt="original"><div id="cmpBwrap"><img id="cmpB" alt="cleaned">
+    <canvas id="cmpBox"></canvas></div></div>
+  <input id="cmpSlider" type="range" min="0" max="100" value="50">
+  <button id="cmpClose">Close</button>
+</dialog>
+<script src="app.js"></script>
+</body>
+</html>
