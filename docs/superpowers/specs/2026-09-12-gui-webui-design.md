@@ -203,8 +203,11 @@ out of range); no string from a request ever builds a filesystem path.
 only from the server-side magic sniff, never from the client multipart
 Content-Type or filename. The HTML response carries
 `Content-Security-Policy: default-src 'none'; img-src 'self'; script-src
-'self'; style-src 'self'`, which technically enforces the zero-external-
-requests invariant. The three UI sources are served as three separate
+'self'; style-src 'self'; connect-src 'self'` (erratum, 2026-09-12: the
+original 4-directive string lacked `connect-src`, so the fetch fallback to
+`default-src 'none'` blocked every same-origin API call; `connect-src 'self'`
+preserves the zero-external-requests invariant), which technically enforces
+that invariant. The three UI sources are served as three separate
 resources (no build-time inlining into one document) precisely so this CSP
 stays enforceable. The frontend inserts all server-supplied strings
 (filenames, error text) via `textContent`, never `innerHTML`.
