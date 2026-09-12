@@ -223,8 +223,11 @@ for the single-image reality. Pure unit `src/detection/still_geometry.{hpp,cpp}`
   `{pos, alpha}`: the matched alpha is threaded as `custom_alpha` through
   `detect_watermark` and the remover, so a 48px detection removes with the 48px alpha
   (and a `--rect`/`--geo-preset` override too, not the default 36px).
-- **Calibrated preset table** `kStillPresets[]` (first entry `gemini36-portrait`,
-  896x1200 -> 48px @ margin (96,96)); `kStillPresetNames[]` drives the `--geo-preset`
+- **Calibrated preset table** `kStillPresets[]`: `gemini36-portrait` (short side
+  800-1000, 48px @ margin (96,96)), `gemini36-large` (1600-1900, 48px @ (96,96) —
+  the 2400x1792/paintings class), `gemini38-2k-portrait` (1600-1800, 96px @
+  (192,192); 48 vs 96 disambiguated at the snap by template size).
+  `kStillPresetNames[]` drives the `--geo-preset`
   IsMember validator (help lists names, unknown rejected). The model is the fallback
   for uncalibrated resolutions.
 - **Still-path fixtures:** `test-images/896x1200-test4-gemini36.png` = clear mark on
@@ -447,7 +450,20 @@ CLI11 subcommands in src/cli/: `remove` (default), `synthid`, `detect`, `video`,
   `--geo-preset gemini36-portrait` output), poster-artnight + paintings/ (noWM: zero
   removal), reference-images/gemini38-images/ (7 of 8 auto-remove). For a
   byte-identity baseline of the OLD binary: `git stash` the change, rebuild, generate
-  reference outputs, `git stash pop`, rebuild, md5-compare.
+  reference outputs, `git stash pop`, rebuild, md5-compare. For detection/mask
+  changes with FP risk, also run the full-corpus sweep: batch all of test-images/ +
+  reference-images/ into a tmp folder, pixel-diff every output vs input, and classify
+  each changed box as a known geometry or a content position (caught 18 FPs and 2
+  missed V1 marks that the anchor fixtures missed).
+- **Batch-mode verification gotchas:** passthroughs are RE-ENCODED (pixel-identical,
+  bytes differ — verify with pixel diffs, never md5/cmp), and the batch path logs no
+  "Removing at..." lines (its try_remove is silent) — classify outcomes by diffing
+  outputs against inputs, not by grepping logs.
+- **Repeating-pattern ground truth:** AI posters with repeating motifs contain clean
+  copies of the watermarked element — diff the removed region against the pattern
+  repeat (find the offset by minimizing diff on clean artwork) for true residual
+  ground truth (measured: wash 60.7/255 before removal, 7.4 after, vs a 5.2
+  tile-mismatch floor).
 - **Vision-QC regenerated masks before shipping:** dispatch a haiku subagent with an
   old-vs-new 10x side-by-side and ask for speckle/spur/pit isolation — it caught a
   1-px spur+pit patch that radial/HF statistics passed.

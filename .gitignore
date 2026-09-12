@@ -113,3 +113,4 @@ experiments/regen-model-sweep/.venv/
 experiments/regen-model-sweep/outputs/
 experiments/regen-model-sweep/*.csv
 experiments/regen-model-sweep/__pycache__/
+.claude.local.md
