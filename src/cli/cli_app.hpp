@@ -8,7 +8,7 @@
 
 #include "core/types.hpp"
 #include "core/inpaint.hpp"
-#include "detection/still_geometry.hpp"  // StillGeometryOverride
+#include "core/still_remove.hpp"  // StillRemoveOptions + the shared still policy
 
 namespace wmr {
 
@@ -106,18 +106,11 @@ struct CliOptions {
     bool no_regen_restore_detail = false;
 };
 
-// Resolve the still-image profile variant from CLI flags.
-// Returns {force_variant, try_v1_fallback}:
-//   --legacy      → {V1, false}
-//   --no-legacy   → {V2, false}
-//   (neither)     → {nullopt, true}  (default V2 with auto V2→V1 fallback)
-std::pair<std::optional<WatermarkVariant>, bool>
-resolve_still_variant(const CliOptions& opts);
-
-// Resolve the residual-cleanup InpaintConfig from CLI opts (shared by the single-
-// image and batch paths). Returns false when the user chose "--denoise off"
-// (the caller then skips cleanup, reverse-blending only).
-bool resolve_inpaint_config(const CliOptions& opts, InpaintConfig& out);
+// Map CliOptions -> StillRemoveOptions (thin glue; the policy lives in
+// core/still_remove). Shared by remove, detect, and batch. Returns false when
+// --rect was given but malformed (error logged), matching the old
+// resolve_still_geometry_override contract.
+bool build_still_remove_options(const CliOptions& opts, StillRemoveOptions& o);
 
 // The user-facing description of --synthid-attack (the honesty-lock string). Exported
 // and INLINE here so the wording test (tests/unit/synthid_attack_cli_test.cpp) can
@@ -169,14 +162,6 @@ inline std::string provenance_strip_help_text() {
         "chunk/marker (keeps only what decode needs, plus APNG structural chunks). "
         "Fail-safe: a malformed input is copied UNCHANGED, never truncated.";
 }
-
-// Parse a "x,y,w,h" rect string. Returns nullopt for an empty OR malformed string;
-// the caller distinguishes the two (empty = no flag, malformed = error).
-std::optional<cv::Rect> parse_rect(const std::string& s);
-
-// Build the still-image geometry override from CLI opts. Returns false (with a
-// logged error) when --rect was given but malformed.
-bool resolve_still_geometry_override(const CliOptions& opts, StillGeometryOverride& out);
 
 int run_cli(int argc, char* argv[]);
 

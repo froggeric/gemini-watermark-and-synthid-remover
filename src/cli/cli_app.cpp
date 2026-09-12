@@ -3,6 +3,7 @@
 #include "cli/progress.hpp"
 #include "core/watermark_engine.hpp"
 #include "core/types.hpp"
+#include "core/still_remove.hpp"
 #include "core/update_check.hpp"
 #include "metadata/provenance.hpp"
 #ifdef WMR_BUILD_REGEN
@@ -23,7 +24,6 @@
 #include <iostream>
 #include <iterator>
 #include <optional>
-#include <sstream>
 #include <vector>
 
 #ifndef APP_VERSION
@@ -49,62 +49,31 @@ void print_header(std::ostream& os) {
 
 namespace wmr {
 
-std::pair<std::optional<WatermarkVariant>, bool>
-resolve_still_variant(const CliOptions& opts) {
-    if (opts.still_legacy)    return {WatermarkVariant::V1, false};
-    if (opts.still_no_legacy) return {WatermarkVariant::V2, false};
-    return {std::nullopt, true};  // default: V2 with auto V2→V1 fallback
-}
-
-// Resolve the residual-cleanup InpaintConfig from CLI opts.
-// Returns false when the user chose "--denoise off" (skip cleanup entirely).
-// method mapping: soft→Gaussian, ns→NavierStrokes, telea→Telea, ai→AiDenoise,
-// off→(caller skips). strength is stored as percent (0-300) and divided here.
-bool resolve_inpaint_config(const CliOptions& opts, InpaintConfig& out) {
-    out.strength = opts.denoise_strength_pct / 100.0f;
-    out.radius = opts.denoise_radius;
-    out.sigma = opts.denoise_sigma;
-    out.padding = 32;
-    const std::string& m = opts.denoise_method;
-    if (m == "off")  return false;  // skip cleanup entirely (reverse-blend only)
-    if (m == "soft") { out.method = InpaintMethod::Gaussian;      return true; }
-    if (m == "ns")   { out.method = InpaintMethod::NavierStokes; return true; }
-    if (m == "telea"){ out.method = InpaintMethod::Telea;         return true; }
-#ifdef WMR_AI_DENOISE
-    if (m == "ai")   { out.method = InpaintMethod::AiDenoise;     return true; }
-#endif
-    // Unknown / unreachable (CLI11 IsMember validates choices) → Gaussian.
-    out.method = InpaintMethod::Gaussian;
-    return true;
-}
-
-// Parse a "x,y,w,h" rect string. Returns nullopt for an empty OR malformed string;
-// the caller distinguishes the two (empty = flag absent, malformed = user error).
-std::optional<cv::Rect> parse_rect(const std::string& s) {
-    if (s.empty()) return std::nullopt;
-    int x, y, w, h;
-    char sep1, sep2, sep3;
-    std::istringstream ss(s);
-    if (ss >> x >> sep1 >> y >> sep2 >> w >> sep3 >> h &&
-        sep1 == ',' && sep2 == ',' && sep3 == ',' &&
-        x >= 0 && y >= 0 && w > 0 && h > 0) {
-        return cv::Rect(x, y, w, h);
-    }
-    return std::nullopt;
-}
-
-// Build the still-image geometry override from CLI opts. Returns false (with a logged
-// error) when --rect was given but malformed.
-bool resolve_still_geometry_override(const CliOptions& opts, StillGeometryOverride& out) {
+// Map CliOptions -> StillRemoveOptions (thin glue; the policy lives in
+// core/still_remove). Shared by remove, detect, and batch. Returns false when
+// --rect is malformed (error logged), matching the old
+// resolve_still_geometry_override contract.
+bool build_still_remove_options(const CliOptions& opts, StillRemoveOptions& o) {
+    o.force = opts.force;
+    if (opts.force_small)      o.force_size = WatermarkSize::Small;
+    else if (opts.force_large) o.force_size = WatermarkSize::Large;
+    o.force_variant = opts.still_legacy   ? std::optional(WatermarkVariant::V1)
+                    : opts.still_no_legacy ? std::optional(WatermarkVariant::V2)
+                                           : std::nullopt;
+    o.try_v1_fallback = !opts.still_legacy && !opts.still_no_legacy;
     if (!opts.still_rect_str.empty()) {
-        out.rect = parse_rect(opts.still_rect_str);
-        if (!out.rect) {
+        o.geometry.rect = parse_rect(opts.still_rect_str);
+        if (!o.geometry.rect) {
             spdlog::error("Invalid --rect format. Expected: x,y,w,h (e.g. --rect 760,1063,36,36)");
             return false;
         }
     }
-    if (!opts.still_geo_preset.empty()) out.preset = opts.still_geo_preset;
-    out.no_auto_geometry = opts.still_no_auto_geometry;
+    if (!opts.still_geo_preset.empty()) o.geometry.preset = opts.still_geo_preset;
+    o.geometry.no_auto_geometry = opts.still_no_auto_geometry;
+    o.denoise_method = opts.denoise_method;
+    o.denoise_sigma = opts.denoise_sigma;
+    o.denoise_strength_pct = opts.denoise_strength_pct;
+    o.denoise_radius = opts.denoise_radius;
     return true;
 }
 
@@ -123,8 +92,9 @@ static int process_detect(const CliOptions& opts) {
         WatermarkEngine engine;
         const WatermarkSize sz = get_watermark_size(image.cols, image.rows);
 
-        StillGeometryOverride gov;
-        if (!resolve_still_geometry_override(opts, gov)) return 1;
+        StillRemoveOptions sro;
+        if (!build_still_remove_options(opts, sro)) return 1;
+        const StillGeometryOverride& gov = sro.geometry;
         // Resolve the hybrid auto-geometry ONCE for the V2 profile (the search only
         // runs for V2 small). The V1 report uses no forced position / override alpha.
         WatermarkEngine::StillResolveResult resolved;
@@ -193,119 +163,17 @@ static int process_single_image(const CliOptions& opts) {
     // Visible watermark removal
     if (opts.mode == CliMode::AutoRemove) {
         WatermarkEngine engine;
-        std::optional<WatermarkSize> force_size;
-        if (opts.force_small) force_size = WatermarkSize::Small;
-        else if (opts.force_large) force_size = WatermarkSize::Large;
-
-        auto [force_variant, try_fallback] = resolve_still_variant(opts);
-
-        // Resolve the still geometry overrides + hybrid auto-search ONCE, for the V2
-        // profile (the search only runs for V2 small). The V2 primary attempt uses the
-        // resolved position + the matched-size alpha (36 or 48); the V1 fallback uses
-        // neither. --force skips detection entirely, so it is excluded here.
-        WatermarkEngine::StillResolveResult resolved;
-        if (!opts.force) {
-            StillGeometryOverride gov;
-            if (!resolve_still_geometry_override(opts, gov)) return 1;
-            const WatermarkSize sz =
-                force_size.value_or(get_watermark_size(image.cols, image.rows));
-            resolved = engine.resolve_still_geometry(
-                image, WatermarkVariant::V2, sz, gov);
-        }
-
-        // An explicit --rect/--geo-preset means "remove at this position" even when
-        // the detector's confidence is too low to confirm (a faint mark the search
-        // localized but could not pass the gate). A TRUSTED auto-geometry hit
-        // (snapped preset or high-confidence raw, from the saturated-content-
-        // suppressed search) gets the same treatment: content colliding with the
-        // mark (e.g. white poster text under the white diamond) suppresses the
-        // fusion scores below the gate while the geometry search still localizes
-        // the mark decisively. Without either, require a real detection.
-        const bool explicit_override =
-            !opts.still_rect_str.empty() || !opts.still_geo_preset.empty();
-
-        // Detect→remove for one variant; true if a watermark was found and removed.
-        auto try_remove = [&](WatermarkVariant v,
-                              std::optional<WatermarkPosition> force_pos,
-                              const cv::Mat* alpha_override) -> bool {
-            // An explicit --rect/--geo-preset forces removal at exactly that position;
-            // do not let the snap refinement override it. Auto-geometry (and the
-            // V2-small default) still snaps to refine its approximate position.
-            const bool snap = !explicit_override && (
-                force_pos.has_value() ||
-                (v == WatermarkVariant::V2 &&
-                 force_size.value_or(get_watermark_size(image.cols, image.rows))
-                     == WatermarkSize::Small));
-            auto detection = engine.detect_watermark(image, force_size, force_pos,
-                                                     alpha_override, v, snap);
-            if (!detection.detected) {
-                // Proceed only when the geometry layer vouches for the position
-                // AND the fusion does not contradict it. A NEGATIVE spatial NCC
-                // at the resolved position means the bright-diamond alpha
-                // anti-correlates there — the polarity-invariant search latched
-                // onto a dark content shape (the documented inverted-mark case);
-                // fall back, do not remove. Explicit --rect/--geo-preset stays
-                // unconditional (the user forced the position).
-                const bool vouched = force_pos.has_value() &&
-                    (explicit_override ||
-                     (resolved.trusted && detection.spatial_score >= 0.0f));
-                if (!vouched) return false;
-                if (explicit_override) {
-                    spdlog::info("Removing at overridden position "
-                                 "(confidence {:.1f}% below the detection gate)",
-                                 detection.confidence * 100.0f);
-                } else {
-                    spdlog::info("Removing at auto-detected position "
-                                 "(fusion confidence {:.1f}% below the gate; "
-                                 "geometry search: {}, NCC {:.2f})",
-                                 detection.confidence * 100.0f,
-                                 resolved.source, resolved.score);
-                }
-            } else {
-                // S2: surface auto-geometry's decision (position + matched size)
-                // so the user can see what was resolved.
-                spdlog::info("Visible watermark detected ({:.1f}%, {}) at ({},{}) size={}, removing...",
-                             detection.confidence * 100.0f,
-                             v == WatermarkVariant::V1 ? "V1" : "V2",
-                             detection.region.x, detection.region.y, detection.region.width);
-            }
-            const cv::Mat& alpha = alpha_override ? *alpha_override
-                                                  : engine.get_still_alpha(detection.size, v);
-            InpaintConfig icfg;
-            bool do_cleanup = resolve_inpaint_config(opts, icfg);
-            if (do_cleanup) {
-                engine.remove_watermark_detected(image, detection, icfg, &alpha);
-            } else {
-                // --denoise off: reverse-blend only, no residual cleanup.
-                engine.remove_watermark_alpha_only(image, detection, &alpha);
-            }
-            return true;
-        };
-
-        if (opts.force) {
-            WatermarkVariant active = force_variant.value_or(WatermarkVariant::V2);
-            spdlog::info("Force mode: removing visible watermark ({})",
-                         active == WatermarkVariant::V1 ? "V1" : "V2");
-            engine.remove_watermark(image, force_size, force_variant);
+        StillRemoveOptions sro;
+        if (!build_still_remove_options(opts, sro)) return 1;
+        StillRemoveOutcome ro = remove_still(engine, image, sro);
+        if (ro.outcome == StillOutcome::Removed) {
             did_work = true;
-        } else {
-            WatermarkVariant primary = force_variant.value_or(WatermarkVariant::V2);
-            const bool is_v2 = (primary == WatermarkVariant::V2);
-            bool removed = try_remove(primary, is_v2 ? resolved.pos : std::nullopt,
-                                      is_v2 ? resolved.alpha : nullptr);
-            if (!removed && try_fallback && primary == WatermarkVariant::V2) {
-                spdlog::info("V2 profile not detected — retrying with legacy V1");
-                removed = try_remove(WatermarkVariant::V1, std::nullopt, nullptr);
-            }
-            if (removed) {
-                did_work = true;
-            } else if (opts.mode == CliMode::AutoRemove) {
-                spdlog::debug("No visible watermark detected");
-            } else {
-                spdlog::warn("No visible watermark detected. Use --force to remove anyway.");
-                return 2;
-            }
+        } else if (ro.outcome == StillOutcome::Failed) {
+            spdlog::error("Removal failed: {}", ro.error);
+            return 1;
         }
+        // NoWatermark: did_work stays false -> "No watermarks found or removed", rc 0,
+        // no output written (single-image parity with the old flow).
     }
 
     // SynthID scrub. The spectral detector + suppressor was removed in 1.16.0
@@ -413,32 +281,9 @@ static int process_single_image(const CliOptions& opts) {
     }
     std::string output = opts.output_path;
     std::filesystem::path out_path(output);
-    if (!out_path.parent_path().empty() && !std::filesystem::exists(out_path.parent_path())) {
-        std::filesystem::create_directories(out_path.parent_path());
-    }
-
-    std::vector<int> params;
-    std::string ext = out_path.extension().string();
-    if (ext == ".jpg" || ext == ".jpeg") {
-        params = {cv::IMWRITE_JPEG_QUALITY, 100};
-    } else if (ext == ".png") {
-        params = {cv::IMWRITE_PNG_COMPRESSION, 6};
-    } else if (ext == ".webp") {
-        params = {cv::IMWRITE_WEBP_QUALITY, 101};
-    }
-
-    if (!cv::imwrite(output, image, params)) {
+    if (!write_still_output(out_path, image, opts.keep_provenance)) {
         spdlog::error("Failed to save: {}", output);
         return 1;
-    }
-
-    // Guaranteed provenance-free output (DECISION A). Defensive on today's OpenCV
-    // output (which already strips all metadata on write): the scan finds nothing
-    // and the file is not rewritten. The guarantee holds if the encoder changes.
-    if (!opts.keep_provenance) {
-        auto pr = wmr::provenance::post_write_provenance_strip(output, /*keep_standard=*/true);
-        if (pr.rewritten && pr.items_removed > 0)
-            spdlog::info("Stripped {} provenance item(s) from output", pr.items_removed);
     }
 
     spdlog::info("Saved: {}", output);

@@ -19,6 +19,7 @@ set(SOURCES
     src/core/blend_modes.cpp
     src/core/watermark_engine.cpp
     src/core/inpaint.cpp
+    src/core/still_remove.cpp
     src/detection/ncc_detector.cpp
     src/cli/cli_app.cpp
     src/cli/batch_processor.cpp

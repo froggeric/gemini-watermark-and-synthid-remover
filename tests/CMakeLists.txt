@@ -14,6 +14,7 @@ set(TEST_SOURCES
     unit/provenance_test.cpp
     unit/png_chunks_test.cpp
     unit/jpeg_markers_test.cpp
+    unit/still_remove_test.cpp
     integration/visible_pipeline_test.cpp
 )
 
@@ -22,6 +23,7 @@ set(LIB_SOURCES
     ${CMAKE_SOURCE_DIR}/src/core/blend_modes.cpp
     ${CMAKE_SOURCE_DIR}/src/core/watermark_engine.cpp
     ${CMAKE_SOURCE_DIR}/src/core/inpaint.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/still_remove.cpp  # ungated; the shared still detect->remove policy
     ${CMAKE_SOURCE_DIR}/src/detection/ncc_detector.cpp
     ${CMAKE_SOURCE_DIR}/src/video/notebooklm_gates.cpp  # VideoReader-free (pure OpenCV); safe for the test link
     ${CMAKE_SOURCE_DIR}/src/video/geometry_detector.cpp  # VideoReader-free (pure OpenCV); safe for the test link
