@@ -473,6 +473,23 @@ if(WMR_UPDATE_CHECK)
     target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_UPDATE_CHECK=1)
 endif()
 
+# Embedded local web UI (wmr gui / no-args). Runs BEFORE add_subdirectory(tests)
+# so the tests mirror block below sees the cached option. Header-only vendored
+# deps: no vcpkg.json change, seconds of compile per leg.
+option(WMR_BUILD_GUI "Embedded local web UI (graphical mode)" ON)
+if(WMR_BUILD_GUI)
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        ${CMAKE_SOURCE_DIR}/external/httplib
+        ${CMAKE_SOURCE_DIR}/external/json
+    )
+    target_sources(${PROJECT_NAME} PRIVATE src/gui/gui_build.cpp)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_BUILD_GUI=1)
+    if(WIN32)
+        # ShellExecuteW (browser launch) + BCryptGenRandom (CSPRNG; no auto-link pragma)
+        target_link_libraries(${PROJECT_NAME} PRIVATE shell32 bcrypt)
+    endif()
+endif()
+
 # Tests
 option(WMR_BUILD_TESTS "Build test suite" ON)
 if(WMR_BUILD_TESTS)

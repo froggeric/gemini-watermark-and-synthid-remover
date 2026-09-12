@@ -162,3 +162,20 @@ if(WMR_UPDATE_CHECK)
     target_link_libraries(wmr_tests PRIVATE CURL::libcurl)
     target_compile_definitions(wmr_tests PRIVATE WMR_UPDATE_CHECK=1 APP_VERSION="0.0.0")
 endif()
+
+# Embedded local web UI — mirrors the main CMakeLists block. GUI TUs link into
+# the test exe WITHOUT cli_app.cpp/FFmpeg (src/gui must include only engine +
+# vendored headers; the still-image-only GUI needs no FFmpeg).
+if(WMR_BUILD_GUI)
+    target_include_directories(wmr_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/external/httplib
+        ${CMAKE_SOURCE_DIR}/external/json
+    )
+    target_compile_definitions(wmr_tests PRIVATE WMR_BUILD_GUI=1 APP_VERSION="0.0.0")
+    if(WIN32)
+        # shell32 for browser.cpp (no auto-link pragma); ws2_32 is NOT needed:
+        # the vendored httplib.h carries `#pragma comment(lib, "ws2_32.lib")`
+        # under MSVC and the Windows build is MSVC-only.
+        target_link_libraries(wmr_tests PRIVATE shell32 bcrypt)
+    endif()
+endif()
