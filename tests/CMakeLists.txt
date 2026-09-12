@@ -188,6 +188,7 @@ if(WMR_BUILD_GUI)
         unit/gui_jobs_test.cpp
         unit/gui_options_test.cpp
         unit/gui_assets_test.cpp
+        integration/gui_server_test.cpp
     )
     if(WIN32)
         # shell32 for browser.cpp (no auto-link pragma); ws2_32 is NOT needed:
