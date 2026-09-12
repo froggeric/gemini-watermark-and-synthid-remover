@@ -482,7 +482,13 @@ if(WMR_BUILD_GUI)
         ${CMAKE_SOURCE_DIR}/external/httplib
         ${CMAKE_SOURCE_DIR}/external/json
     )
-    target_sources(${PROJECT_NAME} PRIVATE src/gui/gui_build.cpp)
+    target_sources(${PROJECT_NAME} PRIVATE
+        src/gui/gui_build.cpp
+        src/gui/security.cpp
+        src/gui/http_server.cpp
+        src/gui/browser.cpp
+        src/gui/image_sniff.cpp
+    )
     target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_BUILD_GUI=1)
     if(WIN32)
         # ShellExecuteW (browser launch) + BCryptGenRandom (CSPRNG; no auto-link pragma)

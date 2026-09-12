@@ -172,6 +172,15 @@ if(WMR_BUILD_GUI)
         ${CMAKE_SOURCE_DIR}/external/json
     )
     target_compile_definitions(wmr_tests PRIVATE WMR_BUILD_GUI=1 APP_VERSION="0.0.0")
+    target_sources(wmr_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/gui/gui_build.cpp
+        ${CMAKE_SOURCE_DIR}/src/gui/security.cpp
+        ${CMAKE_SOURCE_DIR}/src/gui/http_server.cpp
+        ${CMAKE_SOURCE_DIR}/src/gui/browser.cpp
+        ${CMAKE_SOURCE_DIR}/src/gui/image_sniff.cpp
+        unit/gui_security_test.cpp
+        unit/gui_sniff_test.cpp
+    )
     if(WIN32)
         # shell32 for browser.cpp (no auto-link pragma); ws2_32 is NOT needed:
         # the vendored httplib.h carries `#pragma comment(lib, "ws2_32.lib")`
