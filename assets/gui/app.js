@@ -70,13 +70,17 @@ async function init() {
   });
 
   // Clicking OUTSIDE THE DIALOG BOX (the backdrop) closes it; clicks inside
-  // the dialog, including its padding around the image, do not. Esc and the
-  // Close/Cancel buttons also close.
+  // the dialog, including its padding around the image, do not. Two guards:
+  // the geometric test (padding is inside the rect) AND target === dialog
+  // (keyboard-synthesized clicks carry clientX/Y = 0 and target the focused
+  // inner element, so they are filtered by both). Esc and the Close/Cancel
+  // buttons also close.
   [$("compare"), $("manual")].forEach(d =>
     d.addEventListener("click", (e) => {
       const r = d.getBoundingClientRect();
-      if (e.clientX < r.left || e.clientX > r.right ||
-          e.clientY < r.top || e.clientY > r.bottom) d.close();
+      if (e.target === d &&
+          (e.clientX < r.left || e.clientX > r.right ||
+           e.clientY < r.top || e.clientY > r.bottom)) d.close();
     }));
 }
 
@@ -263,8 +267,11 @@ function openManual(jobId, fileIndex, fileName) {
   $("mGo").onclick = async () => {
     if (!rect && !$("mPreset").value) return;
     let blob;
-    try { blob = await (await jfetch(origUrl)).blob(); }
-    catch (e) { return; }
+    try {
+      const r = await jfetch(origUrl);
+      if (!r.ok) return;                       // e.g. the orig vanished; the row shows it
+      blob = await r.blob();
+    } catch (e) { return; }
     const o = { denoise: $("denoise").value };      // inherit the cleanup choice only
     if ($("mPreset").value) o.geoPreset = $("mPreset").value;
     else o.rect = [rect.x, rect.y, rect.w, rect.h];

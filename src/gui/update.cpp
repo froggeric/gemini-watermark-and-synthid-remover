@@ -23,6 +23,14 @@ struct UpdateState {
     std::mutex mu;
     UpdateInfo info;
     std::thread worker;   // moved out + joined by stop_update_check()
+
+    // Defensive: an exception escaping run_gui after start (e.g. the JobManager
+    // ctor throwing) reaches static destruction with a joinable worker, which
+    // would std::terminate and turn a clean error exit into a crash. The
+    // worker is bounded (~3 s by its own timeouts), so joining here is safe.
+    ~UpdateState() {
+        if (worker.joinable()) worker.join();
+    }
 };
 UpdateState& state() { static UpdateState s; return s; }
 
