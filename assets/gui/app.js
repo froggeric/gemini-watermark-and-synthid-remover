@@ -186,10 +186,13 @@ function openCompare(j, i, f) {
 // pick a preset; Remove re-submits just this file as a new job.
 function openManual(jobId, fileIndex, fileName) {
   const img = $("mImg"), sel = $("mSel"), wrap = $("mSelWrap"), dims = $("mDims");
-  let start = null, rect = null, blob = null, url = null;
+  let start = null, rect = null, blob = null, url = null, closed = false;
   jfetch(api(`/api/jobs/${jobId}/files/${fileIndex}/image?kind=original`))
     .then(r => r.blob())
-    .then(b => { blob = b; url = URL.createObjectURL(b); img.src = url; });
+    .then(b => {
+      if (closed) return;                           // dialog closed mid-fetch
+      blob = b; url = URL.createObjectURL(b); img.src = url;
+    });
 
   const clamp = (e) => {
     const b = wrap.getBoundingClientRect();
@@ -201,6 +204,11 @@ function openManual(jobId, fileIndex, fileName) {
     sel.style.width = w + "px"; sel.style.height = h + "px";
     sel.hidden = false;
   };
+  const showDims = (x, y, w, h) => {                // display px -> natural px
+    const s = img.clientWidth / img.naturalWidth;
+    dims.textContent = `rect ${Math.round(x / s)}, ${Math.round(y / s)}, ` +
+                       `${Math.round(w / s)}x${Math.round(h / s)} px`;
+  };
   wrap.onpointerdown = (e) => {
     if ($("mPreset").value) return;                 // preset chosen: no drawing
     start = clamp(e); rect = null; setSel(start.x, start.y, 0, 0);
@@ -209,8 +217,10 @@ function openManual(jobId, fileIndex, fileName) {
   wrap.onpointermove = (e) => {
     if (!start) return;
     const p = clamp(e);
-    setSel(Math.min(start.x, p.x), Math.min(start.y, p.y),
-           Math.abs(p.x - start.x), Math.abs(p.y - start.y));
+    const x = Math.min(start.x, p.x), y = Math.min(start.y, p.y);
+    const w = Math.abs(p.x - start.x), h = Math.abs(p.y - start.y);
+    setSel(x, y, w, h);
+    showDims(x, y, w, h);                           // live readout while dragging
   };
   wrap.onpointerup = (e) => {
     if (!start) return;
@@ -219,6 +229,7 @@ function openManual(jobId, fileIndex, fileName) {
              y: Math.round(Math.min(start.y, p.y) / s),
              w: Math.round(Math.abs(p.x - start.x) / s),
              h: Math.round(Math.abs(p.y - start.y) / s) };
+    if (rect.w < 1 || rect.h < 1) rect = null;      // click without a drag
     start = null; updateGo();
   };
   function updateGo() {
@@ -245,7 +256,7 @@ function openManual(jobId, fileIndex, fileName) {
     await refreshJobs(); startPolling();
   };
   $("mCancel").onclick = () => $("manual").close();
-  $("manual").onclose = () => { if (url) URL.revokeObjectURL(url); };
+  $("manual").onclose = () => { closed = true; if (url) URL.revokeObjectURL(url); };
   rect = null; sel.hidden = true; $("mPreset").value = "";
   $("manualTitle").textContent = fileName;
   updateGo();

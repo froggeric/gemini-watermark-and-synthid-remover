@@ -122,7 +122,10 @@ dialog {
   color: CanvasText;
 }
 dialog::backdrop { background: rgba(0, 0, 0, .55); }
-.cmp { position: relative; line-height: 0; }
+/* fit-content keeps the box/clip layers exactly the image's width, so the
+   percent-positioned overlay cannot drift when the original is narrower
+   than the dialog's other chrome. */
+.cmp { position: relative; line-height: 0; width: fit-content; }
 .cmp img { display: block; max-width: 100%; height: auto; }
 #cmpBwrap { position: absolute; inset: 0; }
 #cmpBox {
