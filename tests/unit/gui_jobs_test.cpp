@@ -447,7 +447,10 @@ TEST_CASE("the 4 GiB aggregate gate rejects a job over stored bytes", "[gui][gui
     REQUIRE(wait_terminal(mgr, id) == JobStatus::Done);
 
 #ifndef _WIN32
-    // A 5 GiB sparse file: logical size counts, no disk is consumed.
+    // A 5 GiB sparse file: logical size counts, no disk is consumed. It
+    // appears AFTER this manager was constructed, so this manager's seeded
+    // counter does not see it (monotonic by design); the NEXT manager over
+    // the same root seeds from the walk and rejects.
     const fs::path sparse = root.p / "huge.bin";
     const int fd = ::open(sparse.c_str(), O_WRONLY | O_CREAT, 0600);
     REQUIRE(fd >= 0);
@@ -456,10 +459,17 @@ TEST_CASE("the 4 GiB aggregate gate rejects a job over stored bytes", "[gui][gui
     REQUIRE(stored_bytes_under(root.p) > std::uintmax_t(4LL << 30));
 
     std::string id2;
-    auto err = mgr.create_job({{"a.png", "png", png_bytes(30, 30)}}, {}, JobOptions{}, 100,
-                              1LL << 30, id2);
+    REQUIRE_FALSE(mgr.create_job({{"a.png", "png", png_bytes(30, 30)}}, {}, JobOptions{}, 100,
+                                 1LL << 30, id2));  // this instance: untracked growth
+    REQUIRE(wait_terminal(mgr, id2) == JobStatus::Done);
+
+    JobManager mgr2(root.p / "run2");               // next start: seeds from the walk
+    mgr2.set_processor_for_tests(instant_removed);
+    std::string id3;
+    auto err = mgr2.create_job({{"a.png", "png", png_bytes(30, 30)}}, {}, JobOptions{}, 100,
+                               1LL << 30, id3);
     REQUIRE(err == std::optional<std::string>("payload_too_large"));
-    REQUIRE(id2.empty());
+    REQUIRE(id3.empty());
 #endif
 }
 

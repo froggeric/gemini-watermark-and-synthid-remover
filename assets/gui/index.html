@@ -21,6 +21,8 @@
   <section id="drop" tabindex="0">
     <p>Drop images here, or <button id="browse">Browse</button></p>
     <p class="muted">PNG, JPEG, or WebP. Multiple files are processed in order.</p>
+    <p id="dropStatus" class="muted" hidden></p>
+    <p id="dropMsg" class="err" hidden></p>
     <input id="file" type="file" multiple accept=".png,.jpg,.jpeg,.webp" hidden>
   </section>
   <details id="advanced">
@@ -57,23 +59,29 @@
       <option value="soft">soft</option><option value="ns">ns</option>
       <option value="telea">telea</option><option value="ai" hidden>ai</option>
     </select></label>
+    <p id="denoiseHint" class="muted hint"></p>
     <label><input type="checkbox" id="keepprov"> Keep provenance metadata</label>
   </details>
   <div id="jobs"></div>
+  <button id="showHidden" hidden>Show hidden</button>
 </main>
 <footer class="muted">
-  <div>Files are stored under ~/.cache/wmr/gui (permissions 0700) while
-  wmr runs, and deleted when wmr stops (Ctrl-C or the Quit button) or at
-  its next start.</div>
+  <div title="~/.cache/wmr/gui (permissions 0700)">Files are kept temporarily on this
+  computer while wmr runs, and deleted when wmr stops (Ctrl-C or the Quit
+  button) or at its next start.</div>
   <div id="about">Copyright 2026 Frédéric Guigand ·
   <a href="https://github.com/froggeric/gemini-watermark-and-synthid-remover"
      target="_blank" rel="noreferrer">source &amp; releases</a></div>
 </footer>
+<div id="announcer" class="sr-only" aria-live="polite"></div>
 <dialog id="compare">
   <div class="cmp"><img id="cmpA" alt="original"><div id="cmpBox" hidden></div>
-    <div id="cmpBwrap"><img id="cmpB" alt="cleaned"></div></div>
-  <input id="cmpSlider" type="range" min="0" max="100" value="50">
+    <div id="cmpBwrap"><img id="cmpB" alt="cleaned"><span class="chip">Cleaned</span></div>
+    <span class="chip orig">Original</span></div>
+  <input id="cmpSlider" type="range" min="0" max="100" value="50"
+         aria-label="Reveal cleaned versus original">
   <label><input type="checkbox" id="cmpShowBox" checked> Show mark region</label>
+  <label><input type="checkbox" id="cmpZoom"> Zoom to mark</label>
   <button id="cmpClose">Close</button>
 </dialog>
 <dialog id="manual">

@@ -57,6 +57,8 @@ footer a { color: #2f6fdb; color: light-dark(#0550ae, #58a6ff); }
 #drop p { margin: .4rem 0; }
 #drop:focus-visible { outline: 2px solid AccentColor; outline-offset: 3px; }
 #drop.disabled { opacity: .45; pointer-events: none; }
+#drop.dragging { border-color: AccentColor; background: rgba(120, 120, 220, .08); }
+#dropStatus, #dropMsg { margin: .4rem 0 0; }
 
 /* Advanced disclosure. */
 details { margin: 1rem 0; }
@@ -91,17 +93,17 @@ summary { cursor: pointer; margin-bottom: .5rem; }
 .markopt .glyph { vertical-align: middle; margin-left: .45rem; }
 .markopt .glyph path { fill: none; stroke: currentColor; stroke-width: 1.5; opacity: .55; }
 .adv-divider { border: none; border-top: 1px solid; opacity: .3; margin: 1rem 0; }
+#advanced .hint { font-size: .85rem; margin: .2rem 0 .5rem; }
 
 select { font: inherit; padding: .2rem .3rem; }
 
 /* Job cards and per-file rows (filename + badge + actions, no thumbnails). */
 #jobs { display: grid; gap: 1rem; margin-top: 1.5rem; }
 .job { border: 1px solid; border-radius: 12px; padding: .9rem 1.1rem; }
-.job h2 {
-  font-size: 1rem;
-  margin: 0 0 .6rem;
-  text-transform: capitalize;
-}
+.jobhead { display: flex; align-items: baseline; gap: .6rem; margin-bottom: .6rem; }
+.jobhead h2 { flex: 1; }
+.jobhead .hide { font-size: .78rem; opacity: .7; }
+#showHidden { margin-top: .8rem; font-size: .8rem; }
 .job ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .45rem; }
 .job li { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
 .job li > span:first-child { flex: 1; min-width: 8rem; overflow-wrap: anywhere; }
@@ -164,8 +166,29 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
   pointer-events: none;
 }
 #cmpSlider { width: 100%; margin: .8rem 0 0; }
-#cmpShowBox { margin: .6rem .2rem 0; display: inline-block; }
+#cmpShowBox, #cmpZoom { margin: .6rem .2rem 0; display: inline-block; }
 #cmpClose { margin-top: .7rem; }
+/* Zoom-to-mark: the dialog scrolls; the stack gets an explicit width so the
+   percent-positioned layers/clip/box all scale together. */
+dialog#compare.zoomed { max-height: 88vh; overflow: auto; }
+dialog#compare.zoomed .cmp img { max-width: none; width: 100%; }
+/* Half captions: "Cleaned" reveals with the cleaned layer (top-left, inside
+   the clipped wrap), "Original" sits top-right on the base layer (visible
+   where the cleaned layer is clipped away). */
+.chip {
+  position: absolute;
+  top: 6px; left: 6px;
+  font-size: .72rem;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: .05rem .5rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+}
+.chip.orig { left: auto; right: 6px; }
+#cmpBwrap .chip { display: none; }
+#cmpBwrap:not([style*="inset(0 100%"]) .chip { display: block; }
 
 /* Manual retry (no-watermark files): the original with the chosen diamond
    previewed at its standard position, plus the same mark-mode question. */

@@ -571,3 +571,37 @@ token grammar contradicted the endpoint table (now one exact rule); the
 draft would have imported the CLI's silent `--legacy --rect` no-op into the
 API (now 400); and the extraction as originally scoped could not link in
 `wmr_tests` (the four option helpers now move with the policy).
+
+## Errata (2026-09-13, accumulated through the user-tested iteration rounds)
+
+The shipped GUI evolved past this spec's v2 text in five places; the
+implementation is authoritative for them:
+
+1. **Update notice (round 3).** The server runs the CLI's once-per-24h check
+   (shared cache, env opt-outs WMR_NO_UPDATE_CHECK / CI / DO_NOT_TRACK,
+   absent on WMR_UPDATE_CHECK=OFF builds) on a fourth background thread at
+   startup; `/api/version` carries an `update` object and the page shows a
+   notice. The zero-payload invariant carries over from the CLI check; the
+   earlier "the GUI does not surface update notices" text is superseded, as
+   is "three thread roles" (there are four).
+2. **`POST /api/shutdown` (round 2).** Added to the endpoint table: answers
+   200 `{"stopping":true}` then runs the SIGINT-equivalent graceful path.
+   It accepts any Content-Type (an exemption from the 415 rule; the Quit
+   button posts an empty body).
+3. **Frontend (rounds 4-5).** The Advanced section is a single mark-mode
+   radio group ("Which watermark are you removing?": automatic / usual spot /
+   small diamond / large diamond / older watermark) with per-option help and
+   true-scale SVG glyphs, replacing the legacy/force/preset controls and the
+   rect fields; the `rect` option remains API-only. The retry dialog reuses
+   the group minus "automatic", previews the chosen diamond at its standard
+   position on the original (the engine's position model mirrored
+   client-side), and the result rows report `Watermark removed · {which
+   mark} ({W} x {H} px) · {how the spot was chosen}` with a glance note only
+   where no verifying search ran.
+4. **File JSON.** The files array carries three additive keys beyond the
+   pinned shape: `forced` (bool), `has_orig` (bool), and `mark_size` (int or
+   null; forced rows only, the px size the engine's size rule erased).
+5. **Aggregate gate.** The 4 GiB check is a monotonic bytes counter seeded
+   by one walk at startup (plus orig/output writes), not a per-POST walk;
+   growth outside this instance after startup is covered by the next
+   instance's seed walk.

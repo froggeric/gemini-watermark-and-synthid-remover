@@ -6,6 +6,7 @@
 //
 // Engine-level TU (the still_remove precedent): no httplib, no CLI11. Task 5's
 // REST layer consumes exactly these signatures; the signatures are the contract.
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -53,6 +54,7 @@ struct GuiFile {
     bool has_clean = false;           // out/<i>_clean.<ext> exists
     bool forced = false;              // removal ran because force was set
     bool has_orig = true;             // false for sniff-rejected entries (no orig/<i>.<ext>)
+    int mark_size = 0;                // forced rows only: the px size the size rule erased (0 = n/a)
 };
 
 struct PendingUpload { std::string name; std::string ext; std::string bytes; };
@@ -114,6 +116,11 @@ private:
     std::string new_job_id_locked() const;
 
     std::filesystem::path run_dir_;
+    // Aggregate-cap accounting: monotonic bytes-stored counter (orig uploads
+    // + cleaned outputs; nothing is evicted mid-run), seeded by ONE walk of
+    // the gui root at construction. Atomic: the worker adds output sizes
+    // without the mutex; create_job compares under it.
+    std::atomic<std::uintmax_t> stored_bytes_{0};
     Processor processor_;
     std::unique_ptr<WatermarkEngine> engine_;   // built in the worker thread, REUSED across all files/jobs
     std::thread worker_;

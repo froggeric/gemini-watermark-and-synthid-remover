@@ -90,6 +90,10 @@ json file_json(const GuiFile& f) {
     // no bbox, so the client synthesizes the size from the original image's
     // dimensions.
     j["has_orig"] = f.has_orig;
+    // Forced rows only: the px size the engine's size rule erased (the UI
+    // reports it and positions its preview overlay from this, instead of
+    // hot-loading the original to measure it).
+    j["mark_size"] = f.mark_size > 0 ? json(f.mark_size) : json(nullptr);
     return j;
 }
 
@@ -329,7 +333,11 @@ void register_routes(httplib::Server& svr, const std::string& token,
                               + std::to_string(s.height) + ")");
                 continue;
             }
-            if (s.format == SniffFormat::Unsupported) {  // includes 0-byte entries
+            if (s.empty) {                             // the sniff's own 0-byte flag: one source
+                failed.emplace_back(name, "empty file: " + name);
+                continue;
+            }
+            if (s.format == SniffFormat::Unsupported) {
                 failed.emplace_back(name,
                                     "unsupported format: " + name + " (use PNG, JPEG, or WebP)");
                 continue;

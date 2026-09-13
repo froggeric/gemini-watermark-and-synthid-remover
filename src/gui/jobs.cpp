@@ -1,5 +1,6 @@
 #include "gui/jobs.hpp"
 
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -60,6 +61,9 @@ struct JobManager::Job {
 };
 
 JobManager::JobManager(fs::path run_dir) : run_dir_(std::move(run_dir)) {
+    // Seed the aggregate-cap counter with one walk (covers this root's
+    // existing bytes, incl. sibling runs alive at startup).
+    stored_bytes_ = stored_bytes_under(run_dir_.parent_path());
     // The default processor is this member lambda over the reused engine (it
     // captures `this`, which owns engine_); tests replace it wholesale before
     // their first create_job.
@@ -85,8 +89,11 @@ GuiFile JobManager::process_file(GuiFile& f, const JobOptions& o, const fs::path
     cv::Mat img = cv::imdecode(cv::Mat(1, (int)bytes.size(), CV_8UC1, (void*)bytes.data()),
                                cv::IMREAD_COLOR);
     if (img.empty()) { f.outcome = FileOutcome::Failed; f.error = "decode failed"; return f; }
+    // 64-bit arithmetic: the validator caps each rect field at INT32_MAX, so
+    // int x+w can overflow (wrapping negative) and slip past this guard.
     if (o.rect && (o.rect->x < 0 || o.rect->y < 0 ||
-                   o.rect->x + o.rect->width > img.cols || o.rect->y + o.rect->height > img.rows)) {
+                   (long long)o.rect->x + o.rect->width > img.cols ||
+                   (long long)o.rect->y + o.rect->height > img.rows)) {
         f.outcome = FileOutcome::Failed;
         f.error = fmt::format("rect {}x{} at ({},{}) exceeds image {}x{}",
                               o.rect->width, o.rect->height, o.rect->x, o.rect->y,
@@ -107,10 +114,20 @@ GuiFile JobManager::process_file(GuiFile& f, const JobOptions& o, const fs::path
     if (!write_still_output(out, img, o.keep_provenance)) {
         f.outcome = FileOutcome::Failed; f.error = "write failed"; return f;
     }
+    std::error_code sec;
+    const auto out_bytes = fs::file_size(out, sec);
+    if (!sec) stored_bytes_ += out_bytes;        // aggregate-cap accounting
     f.outcome = FileOutcome::Removed;
     f.bbox = r.bbox; f.score = r.score;
     // NB: geometry_source reflects the V2 geometry search even when the V1 fallback performed the removal.
     f.geometry_source = r.geometry_source; f.variant = r.variant; f.forced = r.forced;
+    // Forced rows carry no bbox (no search ran), so record the mark size the
+    // engine's own size rule erased; the UI reports it (and positions its
+    // preview overlay) without hot-loading the original.
+    if (r.forced) {
+        const bool large = img.cols > 1024 && img.rows > 1024;
+        f.mark_size = (r.variant == "V1") ? (large ? 96 : 48) : (large ? 96 : 36);
+    }
     f.has_clean = true;
     return f;
 }
@@ -133,11 +150,12 @@ std::optional<std::string> JobManager::create_job(
     if (static_cast<int>(files.size()) > max_files || incoming > max_bytes)
         return "payload_too_large";
 
-    // Aggregate gate: bytes stored under the gui root (run_dir_'s parent)
-    // across ALL live runs plus this upload must stay under 4 GiB. The whole
-    // check runs under the mutex so two concurrent POSTs cannot both pass it.
-    if (stored_bytes_under(run_dir_.parent_path()) + static_cast<std::uintmax_t>(incoming) >
-        kAggregateCapBytes)
+    // Aggregate gate: bytes stored under the gui root plus this upload must
+    // stay under 4 GiB. Tracked as a monotonic counter seeded by ONE walk at
+    // startup (the per-POST recursive walk stalled every poll behind the
+    // mutex as the tree grew). The counter covers this instance exactly;
+    // a sibling instance started later is covered by its own seed walk.
+    if (stored_bytes_.load() + static_cast<std::uintmax_t>(incoming) > kAggregateCapBytes)
         return "payload_too_large";
 
     auto job = std::make_shared<Job>();
@@ -175,6 +193,7 @@ std::optional<std::string> JobManager::create_job(
 
     jobs_.push_back(job);
     queue_.push_back(job);
+    stored_bytes_ += static_cast<std::uintmax_t>(incoming);
     wake_cv_.notify_all();
     job_id_out = job->id;
     return std::nullopt;
@@ -273,8 +292,16 @@ void JobManager::cancel_all_and_join(std::chrono::seconds bound) {
 void JobManager::worker_loop() {
     // One engine for the whole process, built here on the worker thread and
     // REUSED across files and jobs (per-instance alpha decode is cheap but
-    // pointless to repeat).
-    engine_ = std::make_unique<WatermarkEngine>();
+    // pointless to repeat). The ctor can throw (cv::imdecode of the embedded
+    // alpha PNGs, e.g. on OOM) and sits OUTSIDE the per-file/job catch pairs
+    // below - an escape here would std::terminate the process through the
+    // thread, so fail loudly instead.
+    try {
+        engine_ = std::make_unique<WatermarkEngine>();
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "wmr gui: watermark engine failed to initialize: %s\n", e.what());
+        std::_Exit(1);
+    }
     std::unique_lock<std::mutex> lk(mtx_);
     for (;;) {
         wake_cv_.wait(lk, [this] { return shutting_down_ || !queue_.empty(); });

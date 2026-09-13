@@ -12,6 +12,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   embedded local web UI (127.0.0.1, per-run token, zero external requests).
   Still-image removal with batch drop, per-file results, before/after
   comparison, and downloads. `WMR_BUILD_GUI` (default ON) gates it.
+- GUI polish round: zoom-to-mark and Cleaned/Original captions in the
+  compare view; upload-in-flight state with no silent chunk loss; per-file
+  batch progress ("file 7 of 100", queue position, "Cancelling...");
+  whole-page drop catching with drag highlight and keyboard activation; an
+  idle liveness heartbeat that notices a stopped server; stable list
+  rendering (no more 500ms full rebuilds); non-default choices surfaced in
+  the closed Advanced summary; plain-language cleanup hints and footer;
+  hideable finished cards; spoken and tab-title completion signals; and a
+  server-side forced-mark size (no client-side image probing).
   The advanced controls are one plain-language question ("Which watermark are
   you removing?" with per-option help and true-scale diamond glyphs) instead
   of the legacy/force/preset trio; each removed file reports the mark's size

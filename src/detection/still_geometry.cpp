@@ -16,9 +16,13 @@ std::optional<StillPreset> find_preset(const std::string& name) {
 }
 
 WatermarkPosition rect_to_still_position(const cv::Rect& rect, int W, int H, int logo_size) {
-    return {W - (rect.x + rect.width),
-            H - (rect.y + rect.height),
-            logo_size};
+    // 64-bit margins: rect fields are individually capped at INT32_MAX, so
+    // int arithmetic on x+w can overflow (wrapping negative) before the
+    // subtraction. Callers above the image bounds are rejected upstream; the
+    // clamp keeps a hostile rect from producing absurd margins downstream.
+    const auto margin_r = std::clamp<long long>((long long)W - rect.x - rect.width, 0, W);
+    const auto margin_b = std::clamp<long long>((long long)H - rect.y - rect.height, 0, H);
+    return {static_cast<int>(margin_r), static_cast<int>(margin_b), logo_size};
 }
 
 std::optional<StillPreset> snap_still_to_known(const cv::Rect& detected, int W, int H,
