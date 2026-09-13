@@ -258,12 +258,48 @@ function openCompare(j, i, f) {
   $("compare").showModal();
 }
 
-// Retry for a no-watermark file: the same mark-mode question minus the
-// automatic option (already tried), pre-selecting the usual spot (the most
-// common cause is a visible mark the search keeps missing).
+// The engine's own position model (core/types.hpp get_watermark_config),
+// mirrored client-side so the retry preview shows exactly where each choice
+// erases: {logo_size, margin} per mode for a WxH image.
+function markConfigFor(mode, W, H) {
+  const large = W > 1024 && H > 1024;
+  if (mode === "older") return large ? { n: 96, m: 64 } : { n: 48, m: 32 };   // V1
+  if (mode === "small") return { n: 48, m: 96 };                              // preset
+  if (mode === "large") return { n: 96, m: 192 };                             // preset
+  // usual (V2 model): large -> 96 @192; small -> 36 @ scaled margin
+  // (v2_small_config_from_dims: 192 * long/side, side by short-side band)
+  if (large) return { n: 96, m: 192 };
+  const long_s = Math.max(W, H), short_s = Math.min(W, H);
+  const src = short_s >= 566 ? 2752 : short_s >= 550 ? 2816 : 2848;
+  return { n: 36, m: Math.round(192 * long_s / src) };
+}
+// Position the dashed preview diamond over the original.
+function placeRetryOverlay() {
+  const img = $("rImg"), ovl = $("rOvl");
+  const mode = document.querySelector('input[name="rmarkmode"]:checked').value;
+  if (!img.naturalWidth) { ovl.hidden = true; return; }
+  const W = img.naturalWidth, H = img.naturalHeight;
+  const { n, m } = markConfigFor(mode, W, H);
+  const x = W - m - n, y = H - m - n;   // margin is from the right/bottom edges
+  ovl.style.left = (x / W * 100) + "%";
+  ovl.style.top = (y / H * 100) + "%";
+  ovl.style.width = (n / W * 100) + "%";
+  ovl.style.height = (n / H * 100) + "%";
+  ovl.hidden = false;
+}
+
+// Retry for a no-watermark file: the original image with the chosen diamond
+// previewed at its standard position, plus the same mark-mode question minus
+// the automatic option (already tried), pre-selecting the usual spot (the
+// most common cause is a visible mark the search keeps missing).
 function openRetry(jobId, fileIndex, fileName) {
   $("manualTitle").textContent = fileName;
   document.querySelector('input[name="rmarkmode"][value="usual"]').checked = true;
+  const img = $("rImg");
+  img.onload = placeRetryOverlay;
+  img.src = api(`/api/jobs/${jobId}/files/${fileIndex}/image?kind=original`);
+  document.querySelectorAll('input[name="rmarkmode"]').forEach(r =>
+    r.onchange = placeRetryOverlay);   // property rebinding: no listener pile-up across opens
   $("mGo").onclick = async () => {
     let blob;
     try {

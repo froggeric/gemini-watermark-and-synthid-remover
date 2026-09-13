@@ -167,9 +167,20 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
 #cmpShowBox { margin: .6rem .2rem 0; display: inline-block; }
 #cmpClose { margin-top: .7rem; }
 
-/* Manual retry (no-watermark files): the same mark-mode question. */
+/* Manual retry (no-watermark files): the original with the chosen diamond
+   previewed at its standard position, plus the same mark-mode question. */
 #manual h2 { font-size: 1rem; margin: 0 0 .4rem; overflow-wrap: anywhere; }
 #manual p { margin: .4rem 0; }
+#rImgWrap { position: relative; display: inline-block; line-height: 0; max-width: 100%; }
+#rImgWrap img { display: block; max-width: 100%; height: auto; }
+#rOvl { position: absolute; }
+#rOvl path {
+  fill: none;
+  stroke: #ff4d4d;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;   /* 2 CSS px at any displayed size */
+}
 #manual button { margin-top: .8rem; }
 
 /* Visually hidden but announced (fieldset legends for assistive tech). */

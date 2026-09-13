@@ -79,8 +79,11 @@
 <dialog id="manual">
   <h2 id="manualTitle"></h2>
   <p class="muted">No watermark was found in this file. If you can spot a diamond-shaped
-  mark in the bottom-right corner, say which it looks like and we will try again.</p>
+  mark in the bottom-right corner, say which it looks like and we will try again.
+  The dashed outline shows where your choice will erase.</p>
   <p class="muted">Automatic search was already tried.</p>
+  <div id="rImgWrap"><img id="rImg" alt="original"><svg id="rOvl" viewBox="0 0 100 100"
+    preserveAspectRatio="none" role="img" aria-label="where the chosen mark will be erased" hidden><path d="M50 3 L97 50 L50 97 L3 50 Z"/></svg></div>
   <fieldset id="rmarkmode">
       <legend class="sr-only">Which mark does it look like?</legend>
       <label class="markopt"><input type="radio" name="rmarkmode" value="usual" checked>

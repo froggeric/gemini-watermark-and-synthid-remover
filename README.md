@@ -260,7 +260,8 @@ installation, no separate app; the interface ships inside the binary.
 - Drag and drop images (PNG, JPEG, WebP); they are processed in order and each
   result can be compared side by side and downloaded, with the mark's size and
   how its spot was chosen reported per file. When no watermark is found,
-  "Retry with a hint" asks which mark it looks like and tries again.
+  "Retry with a hint" shows the original with the chosen diamond previewed at
+  its standard position, then tries again.
 
 - The page talks only to the local server; it makes zero external requests.
 - Like the CLI, wmr itself checks GitHub once per 24 hours for a newer

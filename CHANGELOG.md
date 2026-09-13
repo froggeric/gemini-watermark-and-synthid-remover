@@ -16,8 +16,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   you removing?" with per-option help and true-scale diamond glyphs) instead
   of the legacy/force/preset trio; each removed file reports the mark's size
   in pixels and how its spot was chosen, with a glance note when no verifying
-  search ran; files with no detected watermark get a guided retry; the page
-  has a Quit button that stops wmr gracefully. The CLI's --legacy/--force/
+  search ran; files with no detected watermark get a guided retry that previews the chosen
+  diamond at its standard position on the original; the page has a Quit
+  button that stops wmr gracefully. The CLI's --legacy/--force/
   --geo-preset help text uses the same vocabulary. The page shows the copyright and a repo link, and surfaces the
   CLI's once-per-24h update check as a notice when a newer release exists.
 
