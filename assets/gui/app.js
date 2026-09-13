@@ -452,7 +452,7 @@ function applyZoom(b) {
   const bw = (b && b[2]) || 48;
   const dlgW = $("compare").clientWidth || 800;
   const fitted = Math.min(a.naturalWidth || dlgW, dlgW);
-  const s = Math.min(Math.max((0.38 * dlgW) / bw, 1), 40);   // zoom in only
+  const s = Math.min(Math.max((0.38 * dlgW * (a.naturalWidth || 1)) / (bw * fitted), 1), 40);
   $("compare").classList.add("zoomed");
   document.querySelector(".cmp").style.width = Math.round(fitted * s) + "px";
   $("cmpBox").scrollIntoView({ block: "center", inline: "center" });
