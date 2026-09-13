@@ -67,7 +67,7 @@ async function init() {
   });
 
   // Clicking OUTSIDE THE DIALOG BOX (the backdrop) closes it; clicks inside
-  // the dialog, including its padding around the image, do not. Two guards:
+  // the dialog box, including its padding, do not. Two guards:
   // the geometric test (padding is inside the rect) AND target === dialog
   // (keyboard-synthesized clicks carry clientX/Y = 0 and target the focused
   // inner element, so they are filtered by both). Esc and the Close/Cancel
@@ -92,7 +92,11 @@ function checkUpdate(u) {
 function options() {
   const o = { denoise: $("denoise").value, legacy: $("legacy").checked,
               forceRemove: $("force").checked, keepProvenance: $("keepprov").checked };
-  const p = $("preset").value; if (p) o.geoPreset = p;
+  // A disabled select keeps its value: guard on the checkbox state, not the
+  // disabled flag, or preset+legacy/force slips through as a server 400 that
+  // rejects the whole upload (same guard as the manual-retry dialog).
+  const p = $("preset").value;
+  if (p && !$("legacy").checked && !$("force").checked) o.geoPreset = p;
   return o;
 }
 const JOB_CAP_BYTES = 1073741824, JOB_CAP_FILES = 100;
