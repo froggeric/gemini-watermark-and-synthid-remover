@@ -445,6 +445,9 @@ TEST_CASE("version endpoint lists the calibrated presets and build features", "[
     for (std::size_t i = 0; i < std::size(kStillPresetNames); ++i)
         REQUIRE(j["presets"][i].get<std::string>() == kStillPresetNames[i]);
     REQUIRE(j["features"]["denoise_ai"].get<bool>() == build_api_features().denoise_ai);
+    // The update field appears only when run_gui started the background
+    // update check; the fixture never does, so tests touch no network.
+    REQUIRE_FALSE(j.contains("update"));
 }
 
 TEST_CASE("security gates: un-prefixed paths, bad tokens, hostile Host, cross-site fetches",

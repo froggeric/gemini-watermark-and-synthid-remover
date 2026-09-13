@@ -9,6 +9,10 @@
 <body>
 <header><h1>wmr</h1><span id="version" class="muted"></span>
   <button id="quit" title="Stop the wmr process">Quit wmr</button></header>
+<div id="updateNotice" hidden>
+  <p>wmr <span id="updateLatest"></span> is available.
+  <a id="updateLink" target="_blank" rel="noreferrer">Release page</a></p>
+</div>
 <div id="offline" hidden>
   <p id="offlineText">wmr has stopped or was restarted; this page can no longer reach it and
   previous results are gone. Restart wmr and open the new URL it prints.</p>
@@ -39,8 +43,14 @@
   </details>
   <div id="jobs"></div>
 </main>
-<footer class="muted">Files are stored under ~/.cache/wmr/gui (permissions 0700) while
-wmr runs, and deleted when wmr stops (Ctrl-C or the Quit button) or at its next start.</footer>
+<footer class="muted">
+  <div>Files are stored under ~/.cache/wmr/gui (permissions 0700) while
+  wmr runs, and deleted when wmr stops (Ctrl-C or the Quit button) or at
+  its next start.</div>
+  <div id="about">wmr <span id="fversion"></span> · Copyright 2026 Frédéric Guigand ·
+  <a href="https://github.com/froggeric/gemini-watermark-and-synthid-remover"
+     target="_blank" rel="noreferrer">source &amp; releases</a></div>
+</footer>
 <dialog id="compare">
   <div class="cmp"><img id="cmpA" alt="original"><div id="cmpBox" hidden></div>
     <div id="cmpBwrap"><img id="cmpB" alt="cleaned"></div></div>

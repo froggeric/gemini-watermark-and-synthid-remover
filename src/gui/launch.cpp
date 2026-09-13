@@ -18,6 +18,7 @@
 #include "gui/jobs.hpp"
 #include "gui/options.hpp"
 #include "gui/run_dir.hpp"
+#include "gui/update.hpp"
 
 namespace wmr::gui {
 namespace {
@@ -57,6 +58,10 @@ int run_gui(int port, bool no_browser) {
         return 1;
     }
 
+    // The page's update notice: the CLI's once-per-24h check (shared cache,
+    // env opt-outs) in the background; a fresh cache costs no network.
+    start_update_check_async();
+
     // Declared BEFORE the server: the route closures borrow the manager, so
     // it must outlive the server (and its request threads).
     JobManager jobs(run_dir);
@@ -93,6 +98,7 @@ int run_gui(int port, bool no_browser) {
     // dead-run cleanup), so only the clean-join path reaches the removal. A
     // second Ctrl-C during the window exits in the handler above.
     jobs.cancel_all_and_join(std::chrono::seconds(5));
+    stop_update_check();  // join the background update check (3 s bound by its own timeouts)
     remove_run_dir(run_dir);
 
     // Back to the default disposition for whatever teardown remains.

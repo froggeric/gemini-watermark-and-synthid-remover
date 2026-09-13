@@ -25,6 +25,7 @@ async function init() {
   try {
     const v = await (await jfetch(api("/api/version"))).json();
     $("version").textContent = "v" + v.version;
+    $("fversion").textContent = "v" + v.version;
     v.presets.forEach(p => {
       for (const sel of [$("preset"), $("mPreset")]) {
         const o = document.createElement("option"); o.textContent = p; o.value = p;
@@ -33,6 +34,11 @@ async function init() {
     });
     if (v.features && v.features.denoise_ai)
       document.querySelector('#denoise option[value=ai]').hidden = false;
+    checkUpdate(v.update);                       // fresh-cache result is already here
+    setTimeout(async () => {                     // the background fetch resolves later
+      try { checkUpdate((await (await jfetch(api("/api/version"))).json()).update); }
+      catch (e) { /* offline banner already up */ }
+    }, 4000);
   } catch (e) { /* offline banner already up */ }
   await refreshJobs(); startPolling();       // reload recovery: re-attach AND resume polling
                                              // (startPolling is idempotent; refreshJobs clears it when idle)
@@ -63,10 +69,24 @@ async function init() {
     } catch (e) { /* jfetch already showed the offline banner */ }
   });
 
-  // Clicking the backdrop (outside the content) closes a dialog; Esc and the
-  // Close/Cancel buttons already worked.
+  // Clicking OUTSIDE THE DIALOG BOX (the backdrop) closes it; clicks inside
+  // the dialog, including its padding around the image, do not. Esc and the
+  // Close/Cancel buttons also close.
   [$("compare"), $("manual")].forEach(d =>
-    d.addEventListener("click", (e) => { if (e.target === d) d.close(); }));
+    d.addEventListener("click", (e) => {
+      const r = d.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right ||
+          e.clientY < r.top || e.clientY > r.bottom) d.close();
+    }));
+}
+
+// Show the update notice when the server reports a known-newer release
+// (absent on WMR_UPDATE_CHECK=OFF builds or when opted out).
+function checkUpdate(u) {
+  if (!(u && u.known && u.newer)) return;
+  $("updateLatest").textContent = u.latest;
+  $("updateLink").href = u.url;
+  $("updateNotice").hidden = false;
 }
 function options() {
   const o = { denoise: $("denoise").value, legacy: $("legacy").checked,
@@ -186,13 +206,13 @@ function openCompare(j, i, f) {
 // pick a preset; Remove re-submits just this file as a new job.
 function openManual(jobId, fileIndex, fileName) {
   const img = $("mImg"), sel = $("mSel"), wrap = $("mSelWrap"), dims = $("mDims");
-  let start = null, rect = null, blob = null, url = null, closed = false;
-  jfetch(api(`/api/jobs/${jobId}/files/${fileIndex}/image?kind=original`))
-    .then(r => r.blob())
-    .then(b => {
-      if (closed) return;                           // dialog closed mid-fetch
-      blob = b; url = URL.createObjectURL(b); img.src = url;
-    });
+  let start = null, rect = null;
+  // Display via the plain same-origin URL (like the compare view): a blob:
+  // object URL would be blocked by our own CSP (img-src 'self' does not
+  // cover blob: in any major engine). The bytes are fetched again at Remove
+  // time for the re-POST, where fetch/FormData are unaffected by img-src.
+  const origUrl = api(`/api/jobs/${jobId}/files/${fileIndex}/image?kind=original`);
+  img.src = origUrl;
 
   const clamp = (e) => {
     const b = wrap.getBoundingClientRect();
@@ -241,7 +261,10 @@ function openManual(jobId, fileIndex, fileName) {
   }
   $("mPreset").onchange = () => { rect = null; sel.hidden = true; updateGo(); };
   $("mGo").onclick = async () => {
-    if (!blob) return;
+    if (!rect && !$("mPreset").value) return;
+    let blob;
+    try { blob = await (await jfetch(origUrl)).blob(); }
+    catch (e) { return; }
     const o = { denoise: $("denoise").value };      // inherit the cleanup choice only
     if ($("mPreset").value) o.geoPreset = $("mPreset").value;
     else o.rect = [rect.x, rect.y, rect.w, rect.h];
@@ -256,7 +279,6 @@ function openManual(jobId, fileIndex, fileName) {
     await refreshJobs(); startPolling();
   };
   $("mCancel").onclick = () => $("manual").close();
-  $("manual").onclose = () => { closed = true; if (url) URL.revokeObjectURL(url); };
   rect = null; sel.hidden = true; $("mPreset").value = "";
   $("manualTitle").textContent = fileName;
   updateGo();

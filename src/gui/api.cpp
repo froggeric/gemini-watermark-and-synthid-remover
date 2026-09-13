@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "detection/still_geometry.hpp"  // kStillPresetNames
+#include "gui/update.hpp"                // update_info (page's update notice)
 #include "gui/image_sniff.hpp"
 
 #ifndef APP_VERSION
@@ -243,6 +244,17 @@ void register_routes(httplib::Server& svr, const std::string& token,
                 j["presets"] = json::array();
                 for (const char* name : kStillPresetNames)  // single source
                     j["presets"].push_back(name);
+                // Update notice data (only when the check is compiled in,
+                // not opted out, and was started by run_gui; the test
+                // fixture never starts it, so tests see no update key and
+                // touch no network).
+                if (const UpdateInfo u = update_info(); u.enabled) {
+                    j["update"] = json{{"known", u.known},
+                                       {"newer", u.newer},
+                                       {"current", u.current},
+                                       {"latest", u.latest},
+                                       {"url", UpdateInfo::url}};
+                }
                 res.set_content(j.dump(), "application/json");
             });
 

@@ -182,6 +182,7 @@ if(WMR_BUILD_GUI)
         ${CMAKE_SOURCE_DIR}/src/gui/jobs.cpp
         ${CMAKE_SOURCE_DIR}/src/gui/options.cpp
         ${CMAKE_SOURCE_DIR}/src/gui/api.cpp
+        ${CMAKE_SOURCE_DIR}/src/gui/update.cpp
         ${CMAKE_SOURCE_DIR}/src/gui/embedded_ui.cpp
         unit/gui_security_test.cpp
         unit/gui_sniff_test.cpp

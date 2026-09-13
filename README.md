@@ -262,6 +262,9 @@ installation, no separate app; the interface ships inside the binary.
   found, "Mark manually" lets you drag the mark region on the original (or
   pick a geo preset) and retry that file.
 - The page talks only to the local server; it makes zero external requests.
+- Like the CLI, wmr itself checks GitHub once per 24 hours for a newer
+  release and shows a small notice in the page when one exists. Opt out with
+  `WMR_NO_UPDATE_CHECK=1` (or `CI` / `DO_NOT_TRACK=1`), the same as the CLI.
 - Session files live under `~/.cache/wmr/gui` (permissions 0700) while wmr
   runs, and are deleted when wmr stops (Ctrl-C or the page's Quit button) or
   at its next start.

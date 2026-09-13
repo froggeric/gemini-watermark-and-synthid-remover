@@ -494,6 +494,7 @@ if(WMR_BUILD_GUI)
         src/gui/api.cpp
         src/gui/embedded_ui.cpp
         src/gui/launch.cpp
+        src/gui/update.cpp
     )
     target_compile_definitions(${PROJECT_NAME} PRIVATE WMR_BUILD_GUI=1)
     if(WIN32)
