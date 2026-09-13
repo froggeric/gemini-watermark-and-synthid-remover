@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Nothing yet.
+
+## [1.17.0] - 2026-09-13
+
+### Added
+
 - Graphical mode: run `wmr` with no arguments (or `wmr gui`) to launch an
   embedded local web UI (127.0.0.1, per-run token, zero external requests).
   Still-image removal with batch drop, per-file results, before/after

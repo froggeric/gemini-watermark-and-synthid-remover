@@ -257,6 +257,12 @@ Run `wmr` with no arguments (or `wmr gui`) to start the built-in graphical
 mode: a small local server on 127.0.0.1 plus your default browser. No
 installation, no separate app; the interface ships inside the binary.
 
+| Results | Compare |
+|---|---|
+| ![Results view](docs/screenshots/gui-results.png) | ![Before and after](docs/screenshots/gui-compare.png) |
+
+![Choosing which watermark to remove](docs/screenshots/gui-advanced.png)
+
 - Drag and drop images (PNG, JPEG, WebP); they are processed in order and each
   result can be compared side by side and downloaded, with the mark's size and
   how its spot was chosen reported per file. When no watermark is found,

@@ -408,6 +408,57 @@ After SynthID regen produces R, `wmr::restore_detail(O, R, cfg)` (`src/core/rege
 
 `src/cli/progress.{hpp,cpp}` (always built, not feature-gated) provides `ProgressReporter` (discrete: tiles/frames/batch), `ByteProgress` (downloads, curl-xferinfo-driven), `Stage` (the `[k/N]` frame), `RateEstimator` (EWMA; ETA hidden until >=3 samples + >=5% done; single point estimate, no range). Progress writes to **stderr** (spdlog info stays stdout). TTY-detected (`isatty` + `NO_COLOR`/`CI`/`TERM` gates): refreshing `\r` bar on terminal; append-only milestone lines when piped. `--no-progress` suppresses. TTY intra-unit refresh thread (~800ms) moves the bar + ETA within a tile/frame. Used by regen (`regenerator.cpp`), video (`video_processor.cpp`, where `av_log_set_level(AV_LOG_QUIET)` silences FFmpeg/x264 noise), batch (`batch_processor.cpp`). Design: `docs/research/cli-progress-ux-design.md`. Manual TTY verification: `script -q /tmp/cap.raw bash -c 'stty cols 50; ...'` gives a pty (kill the run with `pkill -x wmr`; `pkill -f` matches the bash -c wrapper's own cmdline and kills the session).
 
+### Graphical mode (embedded local web UI, 1.17.0+)
+
+`wmr` with no arguments (or `wmr gui`) starts an embedded web UI: a
+cpp-httplib v0.56 server (vendored `external/httplib/httplib.h`) on
+127.0.0.1 with a per-run 128-bit token in the URL path, serving a vanilla
+HTML/CSS/JS page (committed at `assets/gui/`, embedded as byte arrays in
+`assets/embedded_gui_assets.hpp`; a `[gui-assets]` drift-guard test fails
+if `assets/gui/*` changes without re-running `scripts/embed_gui_assets.py`).
+`WMR_BUILD_GUI` (default ON) gates it; OFF build = CLI-identical, `wmr gui`
+exits 2. `WMR_NO_GUI=1` or `CI` restores help-printing on no-args.
+
+- Layout: `src/gui/` (security, http_server, browser, image_sniff, run_dir,
+  jobs, options, api, embedded_ui, launch, update). One serialized worker
+  thread runs `remove_still` (src/core/still_remove, the ONE copy of the
+  detect-to-remove policy shared with the CLI/batch) per file. v1 scope:
+  still images only.
+- Security: pre-routing guard (token-in-path with empty 404s, Host
+  allowlist, Sec-Fetch-Site, declared-Content-Length 413 fast path) runs
+  BEFORE cpp-httplib buffers any body; `set_payload_max_length(1 GiB)` is
+  the hard per-received-byte bound; sniff+dimension gate (120 MP / 16384 px
+  side) before decode; storage names are server-generated
+  (`orig/<i>.<ext>`, `out/<i>_clean.<ext>`); client filenames are sanitized
+  metadata only; `X-Content-Type-Options: nosniff` + a strict CSP
+  (default-src 'none' + img/script/style/connect-src 'self') on every
+  response; session dirs `~/.cache/wmr/gui/<run_id>/` are 0700 with
+  pid-sidecar dead-run cleanup (concurrent instances coexist; the shared
+  root is never wiped).
+- API: `/api/version` (presets from `kStillPresetNames` + update info),
+  `/api/jobs` (list/new), `/api/jobs/{id}` (detail/cancel),
+  `/api/jobs/{id}/files/{i}/image`, `/api/shutdown` (the Quit button, the
+  SIGINT-equivalent graceful path). One JSON error envelope
+  (`invalid_option`, `invalid_combination`, `payload_too_large`,
+  `too_many_pending`, `unknown_job`, `job_already_finished`; legacy/force x
+  rect/preset combinations are 400s the CLI silently ignores).
+- Frontend: single mark-mode radio group ("Which watermark are you
+  removing?": automatic / usual spot / small diamond / large diamond /
+  older watermark) with per-option help and true-scale SVG glyphs; the
+  retry dialog previews the chosen diamond at its standard position
+  (engine's `get_watermark_config` mirrored client-side in `markConfigFor`);
+  result rows report `Watermark removed · {mark} ({W} × {H} px) · {how}`;
+  `scripts/make_icon.py` renders the app icon (favicon + header mark) from
+  the REAL 96px V2 mask with the shaped S-curve dissolve; regenerate it
+  after touching the mask.
+- Update notice: the CLI's once-per-24h check (shared cache, same env
+  opt-outs) on a background thread; `/api/version` carries the result.
+  Tests never start it (no network in the test binary).
+- Testing: unit (`[gui]`, `[gui-jobs]`, `[gui-options]`, `[gui-assets]`)
+  + live-server integration (`[gui-server]`, httplib client, 17 cases).
+  GUI TUs must not include `cli_app.hpp` (keeps the test link FFmpeg-free);
+  launch.cpp is wmr-binary-only.
+
 ### CoreML cache management (macOS, 1.16.7+)
 
 `src/core/coreml_cache.{hpp,cpp}` (`#if WMR_BUILD_AI_COREML_SD && __APPLE__`) auto-manages the CoreML e5rt execution cache (`~/Library/Caches/wmr/com.apple.e5rt.e5bundlecache`, NOT `~/.cache/wmr/`): clears on staleness (wmr version / model pin / macOS version changed, via a sidecar `<e5bundlecache>.wmr_meta`) or bloat (> 6 GB, early-exit walk). Called from `regenerator.cpp` CoreML init. `wmr cache --clear-coreml` clears on demand. Only the app-scoped cache; never `~/Library/Caches/CoreML` (shared).

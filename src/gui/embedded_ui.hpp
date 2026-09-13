@@ -10,9 +10,9 @@ struct EmbeddedUi {
     std::string_view html;  // assets/gui/index.html
     std::string_view js;    // assets/gui/app.js
     std::string_view css;   // assets/gui/style.css
-    std::string_view favicon_svg;  // assets/gui/favicon.svg (small-size variant)
-    std::string_view favicon_png;  // assets/gui/favicon-32.png (Safari-class fallbacks)
-    std::string_view touch_png;    // assets/gui/apple-touch-icon.png (180px)
+    std::string_view favicon32;   // assets/gui/favicon-32.png
+    std::string_view favicon96;   // assets/gui/favicon-96.png (HiDPI tabs)
+    std::string_view touch_png;   // assets/gui/apple-touch-icon.png (180px)
 
     // Default construction fills the views over the generated header's
     // inline constexpr arrays (defined in embedded_ui.cpp, the only TU that
@@ -24,7 +24,6 @@ struct EmbeddedUi {
     static constexpr std::string_view html_mime = "text/html; charset=utf-8";
     static constexpr std::string_view js_mime = "application/javascript; charset=utf-8";
     static constexpr std::string_view css_mime = "text/css; charset=utf-8";
-    static constexpr std::string_view svg_mime = "image/svg+xml";
     static constexpr std::string_view png_mime = "image/png";
 };
 

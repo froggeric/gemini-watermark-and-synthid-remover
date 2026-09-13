@@ -21,8 +21,8 @@ EmbeddedUi::EmbeddedUi()
     : html(view_of(index_data, index_data_size)),
       js(view_of(app_data, app_data_size)),
       css(view_of(style_data, style_data_size)),
-      favicon_svg(view_of(favicon_svg_data, favicon_svg_data_size)),
-      favicon_png(view_of(favicon_32_data, favicon_32_data_size)),
+      favicon32(view_of(favicon_32_data, favicon_32_data_size)),
+      favicon96(view_of(favicon_96_data, favicon_96_data_size)),
       touch_png(view_of(apple_touch_data, apple_touch_data_size)) {}
 
 }  // namespace wmr::gui

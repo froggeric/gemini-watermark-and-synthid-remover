@@ -50,10 +50,10 @@ TEST_CASE("embedded GUI css matches assets/gui/style.css", "[gui][gui-assets]") 
 }
 
 TEST_CASE("embedded GUI icons match assets/gui", "[gui][gui-assets]") {
-    require_same("assets/gui/favicon.svg", wmr::gui::favicon_svg_data,
-                 wmr::gui::favicon_svg_data_size);
     require_same("assets/gui/favicon-32.png", wmr::gui::favicon_32_data,
                  wmr::gui::favicon_32_data_size);
+    require_same("assets/gui/favicon-96.png", wmr::gui::favicon_96_data,
+                 wmr::gui::favicon_96_data_size);
     require_same("assets/gui/apple-touch-icon.png", wmr::gui::apple_touch_data,
                  wmr::gui::apple_touch_data_size);
 }

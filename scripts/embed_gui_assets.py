@@ -8,8 +8,8 @@ files = {  # fixed order: deterministic. Map: filename -> C++ symbol stem
     "index.html": "index",
     "app.js": "app",
     "style.css": "style",
-    "favicon.svg": "favicon_svg",
     "favicon-32.png": "favicon_32",
+    "favicon-96.png": "favicon_96",
     "apple-touch-icon.png": "apple_touch",
 }
 with out.open("w") as f:
