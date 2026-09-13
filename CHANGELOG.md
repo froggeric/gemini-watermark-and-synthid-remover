@@ -12,9 +12,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   embedded local web UI (127.0.0.1, per-run token, zero external requests).
   Still-image removal with batch drop, per-file results, before/after
   comparison, and downloads. `WMR_BUILD_GUI` (default ON) gates it.
-- App icon "The Clean Corner" (teal tile, corner-sliced photo card, the
-  watermark diamond lifted free): browser favicon (SVG + 32px PNG + touch
-  icon, token-path routes, no CSP change) and page header mark. A
+- App icon: a replica of the real calibrated watermark mask in amber on a
+  teal tile, dissolving away along the down-right diagonal in a shaped
+  S-curve. Browser favicon
+  (32/96px PNG + touch icon, token-path routes, no CSP change) and page
+  header mark, rendered from the mask by scripts/make_icon.py. A
   cross-platform desktop-app wrapper was investigated and declined.
 - GUI polish round: zoom-to-mark and Cleaned/Original captions in the
   compare view; upload-in-flight state with no silent chunk loss; per-file

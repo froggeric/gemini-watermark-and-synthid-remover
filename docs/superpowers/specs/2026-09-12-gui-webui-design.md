@@ -612,9 +612,15 @@ implementation is authoritative for them:
    CI-leg reduction, and the browser UI serves the audience. The
    spawn-not-embed architecture (tokenized URL read from the child's
    stdout; POST /api/shutdown lifecycle) is documented in the investigation
-   for any future revisit. What shipped instead: the app icon ("The Clean
-   Corner" - teal tile, white photo card with the corner sliced off at the
-   mark's own 45 degrees, the amber diamond floating free beyond the cut)
-   as the browser favicon (SVG + 32px PNG + 180px touch icon, served at
-   /<token>/favicon* with relative hrefs, no CSP change) and the header
-   mark. assets/gui/appicon.svg is the master for any future .iconset.
+   for any future revisit. What shipped instead: the app icon - a literal
+   replica of the real calibrated 96px V2 watermark mask
+   (assets/watermark-masks/), rendered in amber on the teal tile, centered,
+   dissolving from a quarter of the way in along the down-right diagonal
+   with a shaped S-curve until only the top-left quarter and the north/west
+   points remain (the removal story). A first concept ("The Clean Corner":
+   white photo card, corner sliced) was replaced on owner review. PNG set (32/96/touch + 512 master)
+   rendered by scripts/make_icon.py with true-transparent rounded corners,
+   served at /<token>/favicon-32.png, /favicon-96.png,
+   /apple-touch-icon.png with relative hrefs, no CSP change, plus the
+   header mark. assets/gui/icon-512.png is the master for a future
+   .iconset.
