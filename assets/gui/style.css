@@ -187,8 +187,12 @@ dialog#compare.zoomed .cmp img { max-width: none; width: 100%; }
   color: #fff;
 }
 .chip.orig { left: auto; right: 6px; }
+/* Caption visibility is class-driven (set alongside the clip in setCmpClip):
+   "Cleaned" hides when no cleaned pixels show (slider 0); "Original" hides
+   when everything shown is cleaned (slider 100). */
 #cmpBwrap .chip { display: none; }
-#cmpBwrap:not([style*="inset(0 100%"]) .chip { display: block; }
+#cmpBwrap:not(.none-visible) .chip { display: block; }
+.cmp:has(#cmpBwrap.all-visible) .chip.orig { display: none; }
 
 /* Manual retry (no-watermark files): the original with the chosen diamond
    previewed at its standard position, plus the same mark-mode question. */

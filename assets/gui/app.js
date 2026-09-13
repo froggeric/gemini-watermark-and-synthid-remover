@@ -159,6 +159,7 @@ function options() {
 const JOB_CAP_BYTES = 1073741824, JOB_CAP_FILES = 100;
 async function submit(files) {
   if (offline || !files.length || submitting) return;
+  $("dropMsg").hidden = true; $("dropMsg").textContent = "";   // stale failure notice goes
   // No client-side extension filter: the server's sniff classifies every file,
   // and unsupported ones come back as visible per-file "unsupported format"
   // rows (the spec's upload contract). The split below enforces the job caps.
@@ -184,7 +185,13 @@ async function submit(files) {
     try {
       const r = await jfetch(api("/api/jobs"), { method: "POST", body: fd });
       if (!r.ok) { failedChunks.push(...chunks[c].map(f => f.name)); continue; }
-    } catch (e) { failedChunks.push(...chunks[c].map(f => f.name)); break; }
+    } catch (e) {
+      // Network error (the offline banner is up): this chunk AND every chunk
+      // not yet attempted are reported, never silently abandoned.
+      for (let k = c; k < chunks.length; k++)
+        failedChunks.push(...chunks[k].map(f => f.name));
+      break;
+    }
   }
   submitting = false;
   $("dropStatus").hidden = true; $("dropStatus").textContent = "";
@@ -228,7 +235,11 @@ async function doRefresh() {
   const visible = jobs.filter(j => !hiddenJobs.has(j.job_id));
   let anyRunning = false;
   const seen = new Set();
-  for (const j of visible) {
+  // The list is newest-first; iterate OLDEST-first and prepend each new card,
+  // so the newest lands on top and reload order matches live order (prepend
+  // in list order would invert the whole board).
+  for (let vi = visible.length - 1; vi >= 0; vi--) {
+    const j = visible[vi];
     let full;
     try { full = await (await jfetch(api("/api/jobs/" + j.job_id))).json(); }
     catch (e) { return; }
@@ -244,7 +255,13 @@ async function doRefresh() {
     announceTransitions(full);
   }
   for (const [id, { el }] of cardEls) {
-    if (!seen.has(id)) { el.remove(); cardEls.delete(id); }
+    if (!seen.has(id)) {
+      el.remove(); cardEls.delete(id);
+      for (let k = 0; ; k++) {                           // prune the announcer's map too
+        const key = `${id}:${k}`, had = prevOutcomes.delete(key);
+        if (!had) break;
+      }
+    }
   }
   const anyHidden = hiddenJobs.size > 0;
   $("showHidden").hidden = !anyHidden;
@@ -377,6 +394,9 @@ function markConfigFor(mode, W, H) {
 let cmpMarkBBox = null;   // the compare dialog's current mark box (zoom target)
 function openCompare(j, i, f) {
   const a = $("cmpA"), box = $("cmpBox");
+  cmpMarkBBox = null;                                   // never the previous file's
+  $("cmpZoom").checked = false;                         // start un-zoomed every open
+  $("cmpZoom").disabled = true;                         // until a mark box is known
   $("cmpB").src = api(`/api/jobs/${j.job_id}/files/${i}/image?kind=cleaned`);
   a.onload = () => {
     // The mark region is drawn on the ORIGINAL layer only (a plain bordered
@@ -407,24 +427,34 @@ function openCompare(j, i, f) {
   };
   // First frame must match the knob: clip the cleaned layer to the slider
   // position before the dialog opens (it was showing 100% cleaned before).
-  $("cmpBwrap").style.clipPath = `inset(0 ${100 - $("cmpSlider").value}% 0 0)`;
-  $("cmpSlider").oninput = (e) =>
-    $("cmpBwrap").style.clipPath = `inset(0 ${100 - e.target.value}% 0 0)`;
+  // The same helper toggles the half-caption classes (no brittle style-string
+  // matching in CSS).
+  const setCmpClip = (v) => {
+    $("cmpBwrap").style.clipPath = `inset(0 ${100 - v}% 0 0)`;
+    $("cmpBwrap").classList.toggle("none-visible", v <= 0);
+    $("cmpBwrap").classList.toggle("all-visible", v >= 100);
+  };
+  setCmpClip(Number($("cmpSlider").value));
+  $("cmpSlider").oninput = (e) => setCmpClip(Number(e.target.value));
   $("cmpClose").onclick = () => $("compare").close();
   $("compare").onclose = resetZoom;
   resetZoom();
   $("compare").showModal();
 }
-// Zoom-to-mark: scale the stack so the mark spans roughly 40% of the dialog
-// width, then center it. Both layers, the clip, and the box are
-// percent-positioned on the same geometry, so they follow the scale for free.
+// Zoom-to-mark: scale the stack so the MARK lands at ~38% of the dialog's
+// visible width. The mark's fraction of the image is invariant under uniform
+// scaling, so this must be a multiple of the FITTED display size, never a
+// function of the mark's own pixel size (2.5*bw px would zoom OUT for every
+// real mark: 36-96px marks -> a 90-240px image).
 function applyZoom(b) {
   if (!$("cmpZoom").checked) { resetZoom(); return; }
+  const a = $("cmpA");
   const bw = (b && b[2]) || 48;
-  const target = Math.min(Math.max(bw * 2.5, 300), 4000);
+  const dlgW = $("compare").clientWidth || 800;
+  const fitted = Math.min(a.naturalWidth || dlgW, dlgW);
+  const s = Math.min(Math.max((0.38 * dlgW) / bw, 1), 40);   // zoom in only
   $("compare").classList.add("zoomed");
-  const stack = document.querySelector(".cmp");
-  stack.style.width = target + "px";
+  document.querySelector(".cmp").style.width = Math.round(fitted * s) + "px";
   $("cmpBox").scrollIntoView({ block: "center", inline: "center" });
 }
 function resetZoom() {
@@ -453,6 +483,7 @@ function placeRetryOverlay() {
 // most common cause is a visible mark the search keeps missing).
 function openRetry(jobId, fileIndex, fileName) {
   $("manualTitle").textContent = fileName;
+  $("mGo").disabled = false; $("mGo").textContent = "Try again";  // never a bricked button
   document.querySelector('input[name="rmarkmode"][value="usual"]').checked = true;
   const img = $("rImg");
   img.onload = placeRetryOverlay;
