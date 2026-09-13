@@ -148,24 +148,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
 #cmpShowBox { margin: .6rem .2rem 0; display: inline-block; }
 #cmpClose { margin-top: .7rem; }
 
-/* Manual retry (no-watermark files): the stored original with a
-   drag-to-draw selection box. */
+/* Manual retry (no-watermark files): explicit type or position. */
 #manual h2 { font-size: 1rem; margin: 0 0 .4rem; overflow-wrap: anywhere; }
-#mSelWrap {
-  position: relative;
-  display: inline-block;
-  line-height: 0;
-  max-width: 100%;
-  touch-action: none;
-  user-select: none;
-  cursor: crosshair;
-}
-#mSelWrap img { display: block; max-width: 100%; height: auto; }
-#mSel {
-  position: absolute;
-  border: 2px dashed #ff4d4d;
-  background: rgba(255, 77, 77, .12);
-  pointer-events: none;
-}
-#mDims { margin: .5rem 0; }
-#mPreset { margin: .3rem 0 .8rem; }
+#manual label { display: block; margin: .5rem 0; }
+#manual button { margin-top: .8rem; }

@@ -259,8 +259,8 @@ installation, no separate app; the interface ships inside the binary.
 
 - Drag and drop images (PNG, JPEG, WebP); they are processed in order and each
   result can be compared side by side and downloaded. When no watermark is
-  found, "Mark manually" lets you drag the mark region on the original (or
-  pick a geo preset) and retry that file.
+  found, "Mark manually" retries that file with an explicit type or position
+  (a geo preset, the legacy V1 profile, or force at the model position).
 - The page talks only to the local server; it makes zero external requests.
 - Like the CLI, wmr itself checks GitHub once per 24 hours for a newer
   release and shows a small notice in the page when one exists. Opt out with

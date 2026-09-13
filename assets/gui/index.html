@@ -28,12 +28,6 @@
     <label><input type="checkbox" id="legacy"> Legacy (V1) profile</label>
     <label><input type="checkbox" id="force"> Force removal at the model position</label>
     <label>Geo preset <select id="preset"><option value="">(auto)</option></select></label>
-    <fieldset id="rectbox"><legend>Manual rect (x, y, w, h)</legend>
-      <input id="rx" type="number" min="0" placeholder="x">
-      <input id="ry" type="number" min="0" placeholder="y">
-      <input id="rw" type="number" min="8" placeholder="w">
-      <input id="rh" type="number" min="8" placeholder="h">
-    </fieldset>
     <label>Residual cleanup <select id="denoise">
       <option value="off">off (exact reversal)</option>
       <option value="soft">soft</option><option value="ns">ns</option>
@@ -47,7 +41,7 @@
   <div>Files are stored under ~/.cache/wmr/gui (permissions 0700) while
   wmr runs, and deleted when wmr stops (Ctrl-C or the Quit button) or at
   its next start.</div>
-  <div id="about">wmr <span id="fversion"></span> · Copyright 2026 Frédéric Guigand ·
+  <div id="about">Copyright 2026 Frédéric Guigand ·
   <a href="https://github.com/froggeric/gemini-watermark-and-synthid-remover"
      target="_blank" rel="noreferrer">source &amp; releases</a></div>
 </footer>
@@ -60,12 +54,11 @@
 </dialog>
 <dialog id="manual">
   <h2 id="manualTitle"></h2>
-  <p class="muted">Drag a box over the watermark on the original image, or pick a
-  geo preset instead. Remove then re-runs just this file.</p>
-  <div id="mSelWrap"><img id="mImg" alt="original"><div id="mSel" hidden></div></div>
-  <p id="mDims" class="muted">drag a box over the watermark</p>
-  <label>Geo preset <select id="mPreset"><option value="">(draw a box instead)</option></select></label>
-  <button id="mGo" disabled>Remove</button>
+  <p class="muted">Retry this file with an explicit watermark type or position.</p>
+  <label>Geo preset <select id="mPreset"><option value="">(none)</option></select></label>
+  <label><input type="checkbox" id="mLegacy"> Legacy (V1) profile</label>
+  <label><input type="checkbox" id="mForce"> Force removal at the model position</label>
+  <button id="mGo">Remove</button>
   <button id="mCancel">Cancel</button>
 </dialog>
 <script src="app.js"></script>
