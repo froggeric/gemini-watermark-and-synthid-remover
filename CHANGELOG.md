@@ -12,11 +12,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   embedded local web UI (127.0.0.1, per-run token, zero external requests).
   Still-image removal with batch drop, per-file results, before/after
   comparison, and downloads. `WMR_BUILD_GUI` (default ON) gates it.
-  The mark region can be toggled in the compare view and the detected type
-  (profile + how the position was resolved) is shown per file; files with no
-  detected watermark can be retried with a geo preset, the legacy profile, or
-  force at the model position; the page has a Quit button that stops wmr
-  gracefully. The page shows the copyright and a repo link, and surfaces the
+  The advanced controls are one plain-language question ("Which watermark are
+  you removing?" with per-option help and true-scale diamond glyphs) instead
+  of the legacy/force/preset trio; each removed file reports the mark's size
+  in pixels and how its spot was chosen, with a glance note when no verifying
+  search ran; files with no detected watermark get a guided retry; the page
+  has a Quit button that stops wmr gracefully. The CLI's --legacy/--force/
+  --geo-preset help text uses the same vocabulary. The page shows the copyright and a repo link, and surfaces the
   CLI's once-per-24h update check as a notice when a newer release exists.
 
 ### Changed

@@ -2,7 +2,7 @@
 const $ = (id) => document.getElementById(id);
 const TOKEN = location.pathname.split("/")[1];        // URL: /<token>/...
 const api = (p) => `/${TOKEN}${p}`;
-let offline = false, pollTimer = null;
+let offline = false, pollTimer = null, servedPresets = [];
 
 async function jfetch(url, opts) {
   try {
@@ -21,14 +21,32 @@ function showOffline(msg) {
   if (pollTimer) clearInterval(pollTimer);
 }
 
+// Map a mark-mode radio value to the server options it sends. One mutually
+// exclusive choice replaces the old legacy/force/preset trio, so the two
+// combinations the server rejects (preset with legacy or force) cannot be
+// expressed at all.
+function modeOptions(group) {
+  const mode = document.querySelector(`input[name="${group}"]:checked`).value;
+  const o = {};
+  if (mode === "usual") o.forceRemove = true;
+  if (mode === "older") { o.legacy = true; o.forceRemove = true; }  // --force --legacy
+  const el = document.querySelector(`input[name="${group}"]:checked`);
+  if (el.dataset.preset && (mode === "small" || mode === "large")) o.geoPreset = el.dataset.preset;
+  return o;
+}
+
 async function init() {
   try {
     const v = await (await jfetch(api("/api/version"))).json();
     $("version").textContent = "v" + v.version;
-    v.presets.forEach(p => {
-      for (const sel of [$("preset"), $("mPreset")]) {
-        const o = document.createElement("option"); o.textContent = p; o.value = p;
-        sel.appendChild(o);
+    servedPresets = v.presets || [];
+    // A preset the server does not know (renamed upstream) degrades to
+    // disabled-with-a-reason instead of a 400 on every upload.
+    document.querySelectorAll("input[data-preset]").forEach(r => {
+      if (!servedPresets.includes(r.dataset.preset)) {
+        r.disabled = true;
+        r.closest("label").title = "Not available in this build of wmr";
+        r.closest("label").classList.add("muted");
       }
     });
     if (v.features && v.features.denoise_ai)
@@ -48,11 +66,6 @@ async function init() {
   // re-selects the SAME files, which would silently ignore a re-run of the
   // same image with different options (the classic file-input gotcha).
   $("file").addEventListener("change", (e) => { submit([...e.target.files]); e.target.value = ""; });
-  const combo = () => {                       // legacy/force disable the preset (400 combos)
-    $("preset").disabled = $("legacy").checked || $("force").checked;
-  };
-  $("legacy").addEventListener("change", combo);
-  $("force").addEventListener("change", combo);
 
   // Quit button: the server's graceful path (same as Ctrl-C). After the POST
   // the page cannot reach it anymore; the banner explains.
@@ -89,16 +102,14 @@ function checkUpdate(u) {
   $("updateLink").href = u.url;
   $("updateNotice").hidden = false;
 }
+
 function options() {
-  const o = { denoise: $("denoise").value, legacy: $("legacy").checked,
-              forceRemove: $("force").checked, keepProvenance: $("keepprov").checked };
-  // A disabled select keeps its value: guard on the checkbox state, not the
-  // disabled flag, or preset+legacy/force slips through as a server 400 that
-  // rejects the whole upload (same guard as the manual-retry dialog).
-  const p = $("preset").value;
-  if (p && !$("legacy").checked && !$("force").checked) o.geoPreset = p;
-  return o;
+  return Object.assign(modeOptions("markmode"), {
+    denoise: $("denoise").value,
+    keepProvenance: $("keepprov").checked,
+  });
 }
+
 const JOB_CAP_BYTES = 1073741824, JOB_CAP_FILES = 100;
 async function submit(files) {
   if (offline || !files.length) return;
@@ -157,21 +168,18 @@ function renderJob(j) {
     const li = document.createElement("li");
     const name = document.createElement("span"); name.textContent = f.name; li.appendChild(name);
     const badge = document.createElement("span"); badge.className = "badge " + (f.outcome || "pending");
-    badge.textContent = f.outcome === "removed" && f.forced ? "removed (forced)" : BADGE[f.outcome || "pending"];
+    badge.textContent = BADGE[f.outcome || "pending"];   // the "forced" nuance lives in the detail line
     li.appendChild(badge);
     if (f.outcome === "removed") {
       const a = document.createElement("a"); a.href = api(`/api/jobs/${j.job_id}/files/${i}/image?kind=cleaned`);
       a.download = ""; a.textContent = "Download"; li.appendChild(a);
       const cmp = document.createElement("button"); cmp.textContent = "Compare";
       cmp.addEventListener("click", () => openCompare(j, i, f)); li.appendChild(cmp);
-      // The detected type: variant profile + how the position was resolved.
-      const type = [f.variant, f.geometry_source].filter(Boolean).join(" · ");
-      if (type) { const t = document.createElement("span"); t.className = "muted";
-                  t.textContent = type; li.appendChild(t); }
+      renderTypeDetail(li, j, i, f);
     }
     if (f.outcome === "no-watermark") {
-      const m = document.createElement("button"); m.textContent = "Mark manually";
-      m.addEventListener("click", () => openManual(j.job_id, i, f.name)); li.appendChild(m);
+      const m = document.createElement("button"); m.textContent = "Retry with a hint";
+      m.addEventListener("click", () => openRetry(j.job_id, i, f.name)); li.appendChild(m);
     }
     if (f.error) { const e = document.createElement("span"); e.className = "err"; e.textContent = f.error; li.appendChild(e); }
     list.appendChild(li);
@@ -179,6 +187,53 @@ function renderJob(j) {
   card.appendChild(list);
   return card;
 }
+
+// The per-file detail line: "Watermark removed · {which mark} ({W} × {H} px)
+// · {how the spot was chosen}", plus the glance note on rows where no
+// verifying search ran. The px figure is the footprint actually erased.
+// Forced rows carry no bbox from the server, so their size is synthesized
+// from the original image's dimensions with the engine's own size rule.
+const forcedSizeCache = new Map();   // "jobId:index" -> px (resolved lazily)
+function renderTypeDetail(li, j, i, f) {
+  const size = f.bbox ? f.bbox[2]                       // what the search found
+             : (f.forced ? forcedSizeCache.get(`${j.job_id}:${i}`) : undefined);
+  const which = f.variant === "V1" ? "older watermark"
+              : size >= 96 ? "large diamond" : "small diamond";
+  const sizeSeg = size ? ` (${size} × ${size} px)` : "";
+  const how = (f.forced || f.geometry_source === "model") ? "at its usual spot"
+            : (f.geometry_source === "preset" || f.geometry_source === "rect") ? "at a known spot"
+            : "found automatically";
+  const line = document.createElement("span"); line.className = "muted";
+  line.textContent = `Watermark removed · ${which}${sizeSeg} · ${how}`;
+  li.appendChild(line);
+  // The glance note fires ONLY where no verifying search ran (forced, or an
+  // explicitly pinned spot). geometry_source "model" on a non-forced row
+  // means the detector DID search and confirmed the mark there.
+  if (f.forced || f.geometry_source === "preset" || f.geometry_source === "rect") {
+    const note = document.createElement("span"); note.className = "muted glance";
+    note.textContent = "Spot set without a search · worth a quick glance at the corner";
+    li.appendChild(note);
+  }
+  if (f.forced && !size) synthesizeForcedSize(j, i, f);
+}
+function synthesizeForcedSize(j, i, f) {
+  const key = `${j.job_id}:${i}`;
+  if (forcedSizeCache.has(key) || !f.has_orig) return;
+  forcedSizeCache.set(key, null);                       // in flight; re-renders show no size yet
+  const img = new Image();
+  img.onload = () => {
+    // The engine's rule (get_watermark_size): the large mark only when BOTH
+    // dimensions exceed 1024; else 48 px for the older (V1) mark, 36 for the
+    // current small one.
+    const big = img.naturalWidth > 1024 && img.naturalHeight > 1024;
+    const px = big ? 96 : (f.variant === "V1" ? 48 : 36);
+    forcedSizeCache.set(key, px);
+    if (!pollTimer) refreshJobs();                      // idle: render the filled-in size once
+  };
+  img.onerror = () => forcedSizeCache.delete(key);      // retry on a later render
+  img.src = api(`/api/jobs/${j.job_id}/files/${i}/image?kind=original`);
+}
+
 function openCompare(j, i, f) {
   const a = $("cmpA"), box = $("cmpBox");
   $("cmpB").src = api(`/api/jobs/${j.job_id}/files/${i}/image?kind=cleaned`);
@@ -203,21 +258,12 @@ function openCompare(j, i, f) {
   $("compare").showModal();
 }
 
-// Manual retry for a no-watermark file: an explicit type or position instead
-// of the failed auto-detection. The server rejects preset combined with
-// legacy or force (its 400 rules), so the preset disables while either
-// checkbox is checked; legacy+force is the documented --force --legacy
-// escape. Remove re-submits just this file as a new job.
-function openManual(jobId, fileIndex, fileName) {
+// Retry for a no-watermark file: the same mark-mode question minus the
+// automatic option (already tried), pre-selecting the usual spot (the most
+// common cause is a visible mark the search keeps missing).
+function openRetry(jobId, fileIndex, fileName) {
   $("manualTitle").textContent = fileName;
-  $("mPreset").value = "";
-  $("mLegacy").checked = false;
-  $("mForce").checked = false;
-  const combo = () => { $("mPreset").disabled = $("mLegacy").checked || $("mForce").checked; };
-  $("mLegacy").onchange = combo;
-  $("mForce").onchange = combo;
-  combo();
-
+  document.querySelector('input[name="rmarkmode"][value="usual"]').checked = true;
   $("mGo").onclick = async () => {
     let blob;
     try {
@@ -225,11 +271,7 @@ function openManual(jobId, fileIndex, fileName) {
       if (!r.ok) return;                       // e.g. the orig vanished; the row shows it
       blob = await r.blob();
     } catch (e) { return; }
-    const o = { denoise: $("denoise").value };      // inherit the cleanup choice only
-    if (!$("mLegacy").checked && !$("mForce").checked && $("mPreset").value)
-      o.geoPreset = $("mPreset").value;
-    o.legacy = $("mLegacy").checked;
-    o.forceRemove = $("mForce").checked;
+    const o = Object.assign(modeOptions("rmarkmode"), { denoise: $("denoise").value });
     const fd = new FormData();
     fd.append("files", blob, fileName);
     fd.append("options", JSON.stringify(o));

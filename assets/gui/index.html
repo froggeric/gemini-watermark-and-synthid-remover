@@ -25,9 +25,33 @@
   </section>
   <details id="advanced">
     <summary>Advanced</summary>
-    <label><input type="checkbox" id="legacy"> Legacy (V1) profile</label>
-    <label><input type="checkbox" id="force"> Force removal at the model position</label>
-    <label>Geo preset <select id="preset"><option value="">(auto)</option></select></label>
+    <fieldset id="markmode">
+      <legend>Which watermark are you removing?</legend>
+      <p class="muted hint">Change this only if a watermark was not found or was not fully removed.</p>
+      <label class="markopt"><input type="radio" name="markmode" value="auto" checked>
+        <strong>Find it automatically</strong> <span class="pill">Recommended</span>
+        <span class="help">Searches each image and erases the mark it finds. Works for nearly all images.</span>
+      </label>
+      <label class="markopt"><input type="radio" name="markmode" value="usual">
+        <strong>The usual spot (skip the search)</strong>
+        <span class="help">Skips the search and erases the current watermark where Gemini normally places it for an image this size. Try this when you can see a mark that keeps being missed.</span>
+      </label>
+      <label class="markopt"><input type="radio" name="markmode" value="small" data-preset="gemini36-portrait">
+        <strong>Small diamond, close to the corner</strong>
+        <svg class="glyph" width="48" height="48" viewBox="0 0 48 48" aria-label="48 pixel diamond"><path d="M24 2 L46 24 L24 46 L2 24 Z"/></svg>
+        <span class="help">For current Gemini images where searching struggles: erases a small diamond about 96 pixels from the bottom-right corner.</span>
+      </label>
+      <label class="markopt"><input type="radio" name="markmode" value="large" data-preset="gemini38-2k-portrait">
+        <strong>Large diamond, further from the corner</strong>
+        <svg class="glyph" width="96" height="96" viewBox="0 0 96 96" aria-label="96 pixel diamond"><path d="M48 4 L92 48 L48 92 L4 48 Z"/></svg>
+        <span class="help">For high-resolution Gemini 3.8 images: erases a large diamond about 192 pixels from the bottom-right corner.</span>
+      </label>
+      <label class="markopt"><input type="radio" name="markmode" value="older">
+        <strong>Older watermark (before Gemini 3.5)</strong>
+        <span class="help">For images made with older Gemini versions, which use a different mark in a fixed spot near the corner.</span>
+      </label>
+    </fieldset>
+    <hr class="adv-divider">
     <label>Residual cleanup <select id="denoise">
       <option value="off">off (exact reversal)</option>
       <option value="soft">soft</option><option value="ns">ns</option>
@@ -54,12 +78,32 @@
 </dialog>
 <dialog id="manual">
   <h2 id="manualTitle"></h2>
-  <p class="muted">Retry this file with an explicit watermark type or position.</p>
-  <label>Geo preset <select id="mPreset"><option value="">(none)</option></select></label>
-  <label><input type="checkbox" id="mLegacy"> Legacy (V1) profile</label>
-  <label><input type="checkbox" id="mForce"> Force removal at the model position</label>
-  <button id="mGo">Remove</button>
-  <button id="mCancel">Cancel</button>
+  <p class="muted">No watermark was found in this file. If you can spot a diamond-shaped
+  mark in the bottom-right corner, say which it looks like and we will try again.</p>
+  <p class="muted">Automatic search was already tried.</p>
+  <fieldset id="rmarkmode">
+      <label class="markopt"><input type="radio" name="rmarkmode" value="usual" checked>
+        <strong>The usual spot (skip the search)</strong>
+        <span class="help">Skips the search and erases the current watermark where Gemini normally places it for an image this size.</span>
+      </label>
+      <label class="markopt"><input type="radio" name="rmarkmode" value="small" data-preset="gemini36-portrait">
+        <strong>Small diamond, close to the corner</strong>
+        <svg class="glyph" width="48" height="48" viewBox="0 0 48 48" aria-label="48 pixel diamond"><path d="M24 2 L46 24 L24 46 L2 24 Z"/></svg>
+        <span class="help">Erases a small diamond about 96 pixels from the bottom-right corner.</span>
+      </label>
+      <label class="markopt"><input type="radio" name="rmarkmode" value="large" data-preset="gemini38-2k-portrait">
+        <strong>Large diamond, further from the corner</strong>
+        <svg class="glyph" width="96" height="96" viewBox="0 0 96 96" aria-label="96 pixel diamond"><path d="M48 4 L92 48 L48 92 L4 48 Z"/></svg>
+        <span class="help">For high-resolution Gemini 3.8 images: erases a large diamond about 192 pixels from the bottom-right corner.</span>
+      </label>
+      <label class="markopt"><input type="radio" name="rmarkmode" value="older">
+        <strong>Older watermark (before Gemini 3.5)</strong>
+        <span class="help">For images made with older Gemini versions, which use a different mark in a fixed spot near the corner.</span>
+      </label>
+  </fieldset>
+  <p class="muted">If the image truly has no watermark, just close this.</p>
+  <button id="mGo">Try again</button>
+  <button id="mCancel">Not now</button>
 </dialog>
 <script src="app.js"></script>
 </body>

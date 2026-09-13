@@ -643,7 +643,10 @@ int run_cli(int argc, char* argv[]) {
         cmd->add_option("--rect", opts.still_rect_str,
                         "Manual watermark rect x,y,w,h (overrides auto-detect)");
         cmd->add_option("--geo-preset", opts.still_geo_preset,
-                        "Named geometry preset (calibrated Gemini 3.6 sizes)")
+                        "Pin the mark to a known spot instead of searching: "
+                        "gemini36-portrait or gemini36-large = small diamond, 48 px, "
+                        "96 px from the bottom-right corner; gemini38-2k-portrait = "
+                        "large diamond, 96 px, 192 px from the corner")
             ->check(CLI::IsMember(preset_names));
         cmd->add_flag("--no-auto-geometry", opts.still_no_auto_geometry,
                       "Disable the content-based geometry search; use the model position");
@@ -734,11 +737,13 @@ int run_cli(int argc, char* argv[]) {
     remove_cmd->add_option("input", opts.input_path, "Input image or directory")
         ->required()
         ->check(CLI::ExistingPath);
-    remove_cmd->add_flag("-f,--force", opts.force, "Skip detection");
+    remove_cmd->add_flag("-f,--force", opts.force,
+                         "Skip detection and erase at the usual spot for the image size; "
+                         "pair with --legacy to erase the older watermark at its fixed spot");
     remove_cmd->add_flag("--force-small", opts.force_small, "Force 48x48 watermark");
     remove_cmd->add_flag("--force-large", opts.force_large, "Force 96x96 watermark");
     remove_cmd->add_flag("--legacy", opts.still_legacy,
-                         "Use legacy Gemini (pre-3.5) V1 watermark profile");
+                         "Treat images as carrying the older watermark (Gemini before 3.5)");
     remove_cmd->add_flag("--no-legacy", opts.still_no_legacy,
                          "Pin current (Gemini 3.5+) V2 profile; disable auto fallback");
     remove_cmd->add_option("--inpaint-strength", opts.inpaint_strength,
@@ -763,7 +768,7 @@ int run_cli(int argc, char* argv[]) {
         ->required()
         ->check(CLI::ExistingFile);
     detect_cmd->add_flag("--legacy", opts.still_legacy,
-                         "Report only the legacy Gemini (pre-3.5) V1 profile");
+                         "Report only the older watermark (Gemini before 3.5)");
     detect_cmd->add_flag("--no-legacy", opts.still_no_legacy,
                          "Report only the current (Gemini 3.5+) V2 profile");
     add_still_geometry(detect_cmd);
