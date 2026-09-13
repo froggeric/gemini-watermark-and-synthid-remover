@@ -38,12 +38,12 @@
       </label>
       <label class="markopt"><input type="radio" name="markmode" value="small" data-preset="gemini36-portrait">
         <strong>Small diamond, close to the corner</strong>
-        <svg class="glyph" width="48" height="48" viewBox="0 0 48 48" aria-label="48 pixel diamond"><path d="M24 2 L46 24 L24 46 L2 24 Z"/></svg>
+        <svg class="glyph" role="img" width="48" height="48" viewBox="0 0 48 48" aria-label="48 pixel diamond"><path d="M24 2 L46 24 L24 46 L2 24 Z"/></svg>
         <span class="help">For current Gemini images where searching struggles: erases a small diamond about 96 pixels from the bottom-right corner.</span>
       </label>
       <label class="markopt"><input type="radio" name="markmode" value="large" data-preset="gemini38-2k-portrait">
         <strong>Large diamond, further from the corner</strong>
-        <svg class="glyph" width="96" height="96" viewBox="0 0 96 96" aria-label="96 pixel diamond"><path d="M48 4 L92 48 L48 92 L4 48 Z"/></svg>
+        <svg class="glyph" role="img" width="96" height="96" viewBox="0 0 96 96" aria-label="96 pixel diamond"><path d="M48 4 L92 48 L48 92 L4 48 Z"/></svg>
         <span class="help">For high-resolution Gemini 3.8 images: erases a large diamond about 192 pixels from the bottom-right corner.</span>
       </label>
       <label class="markopt"><input type="radio" name="markmode" value="older">
@@ -82,18 +82,19 @@
   mark in the bottom-right corner, say which it looks like and we will try again.</p>
   <p class="muted">Automatic search was already tried.</p>
   <fieldset id="rmarkmode">
+      <legend class="sr-only">Which mark does it look like?</legend>
       <label class="markopt"><input type="radio" name="rmarkmode" value="usual" checked>
         <strong>The usual spot (skip the search)</strong>
         <span class="help">Skips the search and erases the current watermark where Gemini normally places it for an image this size.</span>
       </label>
       <label class="markopt"><input type="radio" name="rmarkmode" value="small" data-preset="gemini36-portrait">
         <strong>Small diamond, close to the corner</strong>
-        <svg class="glyph" width="48" height="48" viewBox="0 0 48 48" aria-label="48 pixel diamond"><path d="M24 2 L46 24 L24 46 L2 24 Z"/></svg>
+        <svg class="glyph" role="img" width="48" height="48" viewBox="0 0 48 48" aria-label="48 pixel diamond"><path d="M24 2 L46 24 L24 46 L2 24 Z"/></svg>
         <span class="help">Erases a small diamond about 96 pixels from the bottom-right corner.</span>
       </label>
       <label class="markopt"><input type="radio" name="rmarkmode" value="large" data-preset="gemini38-2k-portrait">
         <strong>Large diamond, further from the corner</strong>
-        <svg class="glyph" width="96" height="96" viewBox="0 0 96 96" aria-label="96 pixel diamond"><path d="M48 4 L92 48 L48 92 L4 48 Z"/></svg>
+        <svg class="glyph" role="img" width="96" height="96" viewBox="0 0 96 96" aria-label="96 pixel diamond"><path d="M48 4 L92 48 L48 92 L4 48 Z"/></svg>
         <span class="help">For high-resolution Gemini 3.8 images: erases a large diamond about 192 pixels from the bottom-right corner.</span>
       </label>
       <label class="markopt"><input type="radio" name="rmarkmode" value="older">

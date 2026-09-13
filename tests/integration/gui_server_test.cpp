@@ -625,6 +625,9 @@ TEST_CASE("happy path: upload a marked image, poll to done, download the cleaned
     REQUIRE(job["status"].get<std::string>() == "done");
     REQUIRE(job["files"].size() == 1);
     REQUIRE(job["files"][0]["outcome"].get<std::string>() == "removed");
+    // has_orig gates the UI's forced-row size synthesis (and kind=original);
+    // its absence once made that synthesis dead code.
+    REQUIRE(job["files"][0]["has_orig"].get<bool>() == true);
 
     auto dl = http_get(ctx.port(),
                        "/" + ctx.token() + "/api/jobs/" + id + "/files/0/image?kind=cleaned");

@@ -171,3 +171,13 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
 #manual h2 { font-size: 1rem; margin: 0 0 .4rem; overflow-wrap: anywhere; }
 #manual p { margin: .4rem 0; }
 #manual button { margin-top: .8rem; }
+
+/* Visually hidden but announced (fieldset legends for assistive tech). */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  clip: rect(0 0 0 0);
+  overflow: hidden;
+  white-space: nowrap;
+}

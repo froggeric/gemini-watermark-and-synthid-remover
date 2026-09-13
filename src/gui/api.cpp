@@ -85,6 +85,11 @@ json file_json(const GuiFile& f) {
     j["geometry_source"] = f.geometry_source.empty() ? json(nullptr) : json(f.geometry_source);
     j["variant"] = f.variant.empty() ? json(nullptr) : json(f.variant);
     j["error"] = f.error.empty() ? json(nullptr) : json(f.error);
+    // Whether the original bytes are downloadable (kind=original 404s without
+    // it). The UI's forced-row size synthesis keys on this: forced rows carry
+    // no bbox, so the client synthesizes the size from the original image's
+    // dimensions.
+    j["has_orig"] = f.has_orig;
     return j;
 }
 

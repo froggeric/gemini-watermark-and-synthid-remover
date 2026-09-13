@@ -262,20 +262,6 @@ installation, no separate app; the interface ships inside the binary.
   how its spot was chosen reported per file. When no watermark is found,
   "Retry with a hint" asks which mark it looks like and tries again.
 
-wmr recognizes two watermark styles: the **current watermark** (internally
-V2), the diamond Gemini has placed on images since 3.5, and the **older
-watermark** (internally V1) used before 3.5. Positioning is one choice, not a
-stack: search, the usual spot, or a known spot. Pick one.
-
-| Which watermark do my images have? | What you see | Size |
-|---|---|---|
-| Gemini 3.5 | small diamond, close to the corner | 36 x 36 px |
-| Gemini 3.6 / 3.8 | small diamond, close to the corner | 48 x 48 px |
-| Gemini 3.8 at 2K | large diamond, further from the corner | 96 x 96 px |
-| before 3.5 | older mark, fixed spot | 48 or 96 px |
-
-Example result line: "Watermark removed · small diamond (48 x 48 px) · found
-automatically".
 - The page talks only to the local server; it makes zero external requests.
 - Like the CLI, wmr itself checks GitHub once per 24 hours for a newer
   release and shows a small notice in the page when one exists. Opt out with
@@ -292,6 +278,21 @@ automatically".
 - Builds compiled without the GUI (`WMR_BUILD_GUI=OFF`) have no graphical
   mode: `wmr gui` prints a notice and exits 2, and no-args prints the help
   text.
+
+wmr recognizes two watermark styles: the **current watermark** (internally
+V2), the diamond Gemini has placed on images since 3.5, and the **older
+watermark** (internally V1) used before 3.5. Positioning is one choice, not a
+stack: search, the usual spot, or a known spot. Pick one.
+
+| Which watermark do my images have? | What you see | Size |
+|---|---|---|
+| Gemini 3.5 | small diamond, close to the corner | 36 x 36 px |
+| Gemini 3.6 / 3.8 | small diamond, close to the corner | 48 × 48 px |
+| Gemini 3.8 at 2K | large diamond, further from the corner | 96 x 96 px |
+| before 3.5 | older mark, fixed spot | 48 or 96 px |
+
+Example result line: "Watermark removed · small diamond (48 × 48 px) · found
+automatically".
 
 ## How it works (for researchers)
 

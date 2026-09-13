@@ -26,11 +26,11 @@ function showOffline(msg) {
 // combinations the server rejects (preset with legacy or force) cannot be
 // expressed at all.
 function modeOptions(group) {
-  const mode = document.querySelector(`input[name="${group}"]:checked`).value;
+  const el = document.querySelector(`input[name="${group}"]:checked`);
+  const mode = el.value;
   const o = {};
   if (mode === "usual") o.forceRemove = true;
   if (mode === "older") { o.legacy = true; o.forceRemove = true; }  // --force --legacy
-  const el = document.querySelector(`input[name="${group}"]:checked`);
   if (el.dataset.preset && (mode === "small" || mode === "large")) o.geoPreset = el.dataset.preset;
   return o;
 }
