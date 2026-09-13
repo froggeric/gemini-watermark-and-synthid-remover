@@ -77,9 +77,15 @@ int run_gui(int port, bool no_browser) {
         "wmr --help for CLI usage";
 
     // Blocks in listen_after_bind until stop(); 1 on bind failure.
-    const int rc = server.run(cfg, [features, ui, &jobs](httplib::Server& svr,
-                                                         const std::string& token) {
-        register_routes(svr, token, jobs, features, ui);
+    const int rc = server.run(cfg, [features, ui, &jobs, &server](httplib::Server& svr,
+                                                                  const std::string& token) {
+        // The page's Quit button runs the same graceful path as Ctrl-C: set
+        // the flag (so a later real signal is treated as the "second" one and
+        // _Exit's) and close the accept socket; the tail below does the rest.
+        register_routes(svr, token, jobs, features, ui, [&server] {
+            g_shutdown = 1;
+            server.stop();
+        });
     });
 
     // Graceful tail. Bounded: on expiry the manager _Exit(0)s itself (static

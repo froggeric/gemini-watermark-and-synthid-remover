@@ -217,7 +217,8 @@ std::string mime_for(const std::string& ext) {
 
 void register_routes(httplib::Server& svr, const std::string& token,
                      JobManager& jobs, const ApiFeatures& features,
-                     const EmbeddedUi& ui) {
+                     const EmbeddedUi& ui,
+                     const std::function<void()>& request_shutdown) {
     const std::string p = "/" + token;
 
     // --- UI: three separate resources; 404 until Task 7 embeds them ---
@@ -373,6 +374,22 @@ void register_routes(httplib::Server& svr, const std::string& token,
                  send_error(res, 409, "job_already_finished",
                             std::string("job already finished (status: ")
                                 + (current ? status_str(*current) : "unknown") + ")");
+             });
+
+    // The page's Quit button: answer first, then run the Ctrl-C-equivalent
+    // graceful path (the callback stops the accept loop; the run-loop caller
+    // owns the bounded cancel/join + session-dir cleanup tail). The response
+    // is written on this request's own connection, which stop() does not
+    // touch (it only closes the listen socket).
+    svr.Post(p + "/api/shutdown",
+             [request_shutdown](const httplib::Request&, httplib::Response& res) {
+                 if (!request_shutdown) {
+                     send_error(res, 503, "shutdown_unavailable",
+                                "this server was not started with a shutdown hook");
+                     return;
+                 }
+                 res.set_content(R"({"stopping":true})", "application/json");
+                 request_shutdown();
              });
 
     svr.Get(p + "/api/jobs/(\\w+)/files/(\\d+)/image",

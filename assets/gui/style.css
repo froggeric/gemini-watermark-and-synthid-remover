@@ -19,6 +19,8 @@ body {
 
 header { display: flex; align-items: baseline; gap: .6rem; margin-bottom: 1.25rem; }
 header h1 { font-size: 1.25rem; margin: 0; }
+header #quit { margin-left: auto; }
+footer { margin-top: 2.5rem; font-size: .8rem; }
 
 /* Persistent offline banner (the offline rule: never auto-clears). */
 #offline {
@@ -108,7 +110,9 @@ button:disabled { opacity: .5; cursor: default; }
 }
 
 /* Before/after compare: the cleaned image stacks exactly over the original
-   and the slider clips it with inset(); the canvas draws the bbox overlay. */
+   and the slider clips it with inset(). The mark region is a bordered div on
+   the ORIGINAL layer (below the cleaned one), so it never covers cleaned
+   pixels; a CSS border stays a constant 2px at any displayed size. */
 dialog {
   border: none;
   border-radius: 12px;
@@ -123,10 +127,31 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
 #cmpBwrap { position: absolute; inset: 0; }
 #cmpBox {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  border: 2px solid #ff4d4d;
   pointer-events: none;
 }
 #cmpSlider { width: 100%; margin: .8rem 0 0; }
+#cmpShowBox { margin: .6rem .2rem 0; display: inline-block; }
 #cmpClose { margin-top: .7rem; }
+
+/* Manual retry (no-watermark files): the stored original with a
+   drag-to-draw selection box. */
+#manual h2 { font-size: 1rem; margin: 0 0 .4rem; overflow-wrap: anywhere; }
+#mSelWrap {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  max-width: 100%;
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+}
+#mSelWrap img { display: block; max-width: 100%; height: auto; }
+#mSel {
+  position: absolute;
+  border: 2px dashed #ff4d4d;
+  background: rgba(255, 77, 77, .12);
+  pointer-events: none;
+}
+#mDims { margin: .5rem 0; }
+#mPreset { margin: .3rem 0 .8rem; }

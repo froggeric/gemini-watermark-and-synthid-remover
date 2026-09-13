@@ -231,9 +231,11 @@ public:
                 GuiServerConfig{0, false, ""},
                 [this](httplib::Server& svr, const std::string& t) {
                     token_ = t;
-                    register_routes(svr, t, *mgr_, build_api_features(), EmbeddedUi{});
+                    register_routes(svr, t, *mgr_, build_api_features(), EmbeddedUi{},
+                                    [this] { shutdown_called_.store(true); server_.stop(); });
                     token_ready_.store(true);  // release: publishes the token_ write
                 });
+            srv_done_.store(true);
         });
         if (!wait_ready()) {
             // Teardown BEFORE throwing: a joinable thread member terminating
@@ -263,6 +265,8 @@ public:
     int port() const { return port_; }
     const std::string& token() const { return token_; }
     int run_rc() const { return run_rc_; }
+    bool shutdown_called() const { return shutdown_called_.load(); }
+    bool srv_done() const { return srv_done_.load(); }
 
 private:
     bool wait_ready() {
@@ -292,6 +296,8 @@ private:
     std::thread srv_thread_;
     std::string token_;                // written by the server thread, published via token_ready_
     std::atomic<bool> token_ready_{false};
+    std::atomic<bool> shutdown_called_{false};
+    std::atomic<bool> srv_done_{false};
     int port_ = 0;
     int run_rc_ = -1;
     bool shut_ = false;
@@ -904,4 +910,23 @@ TEST_CASE("a pinned port already in use fails the run with rc 1", "[gui][gui-ser
     const int rc = srv.run(GuiServerConfig{port, false, ""},
                            [](httplib::Server&, const std::string&) {});
     REQUIRE(rc == 1);  // stderr "port in use" path; no banner, no listen
+}
+
+TEST_CASE("POST /api/shutdown answers 200 and ends the run loop cleanly", "[gui][gui-server]") {
+    // The page's Quit button: 200 {"stopping":true}, the graceful-stop hook
+    // fires, the accept loop exits (srv_done_), and the run returns 0. The
+    // ctx dtor then joins; the fixture hook is the Ctrl-C-equivalent path.
+    ServerCtx ctx;
+    auto res = http_post(ctx.port(), "/" + ctx.token() + "/api/shutdown");
+    REQUIRE(res);
+    REQUIRE(res->status == 200);
+    REQUIRE(res->body == R"({"stopping":true})");
+    REQUIRE(ctx.shutdown_called());
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!ctx.srv_done() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    REQUIRE(ctx.srv_done());
+    ctx.shutdown();
+    REQUIRE(ctx.run_rc() == 0);
 }

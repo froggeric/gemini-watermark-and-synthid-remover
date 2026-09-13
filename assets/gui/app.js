@@ -11,8 +11,9 @@ async function jfetch(url, opts) {
     return r;
   } catch (e) { showOffline(); throw e; }
 }
-function showOffline() {
+function showOffline(msg) {
   if (offline) return; offline = true;
+  if (msg) $("offlineText").textContent = msg;
   $("offline").hidden = false; $("drop").classList.add("disabled");
   document.querySelectorAll("button").forEach(b => b.disabled = true);
   // Download is an <a>, not a button; the offline rule pins it disabled too.
@@ -25,8 +26,10 @@ async function init() {
     const v = await (await jfetch(api("/api/version"))).json();
     $("version").textContent = "v" + v.version;
     v.presets.forEach(p => {
-      const o = document.createElement("option"); o.textContent = p; o.value = p;
-      $("preset").appendChild(o);
+      for (const sel of [$("preset"), $("mPreset")]) {
+        const o = document.createElement("option"); o.textContent = p; o.value = p;
+        sel.appendChild(o);
+      }
     });
     if (v.features && v.features.denoise_ai)
       document.querySelector('#denoise option[value=ai]').hidden = false;
@@ -47,6 +50,23 @@ async function init() {
   };
   $("legacy").addEventListener("change", combo);
   $("force").addEventListener("change", combo);
+
+  // Quit button: the server's graceful path (same as Ctrl-C). After the POST
+  // the page cannot reach it anymore; the banner explains.
+  $("quit").addEventListener("click", async () => {
+    if (!confirm("Stop wmr? Running jobs will be cancelled and session files " +
+                 "deleted. The page will go offline.")) return;
+    $("quit").disabled = true;
+    try {
+      await jfetch(api("/api/shutdown"), { method: "POST" });
+      showOffline("wmr was stopped from this page. Restart wmr and open the new URL it prints.");
+    } catch (e) { /* jfetch already showed the offline banner */ }
+  });
+
+  // Clicking the backdrop (outside the content) closes a dialog; Esc and the
+  // Close/Cancel buttons already worked.
+  [$("compare"), $("manual")].forEach(d =>
+    d.addEventListener("click", (e) => { if (e.target === d) d.close(); }));
 }
 function options() {
   const o = { denoise: $("denoise").value, legacy: $("legacy").checked,
@@ -127,6 +147,10 @@ function renderJob(j) {
       const cmp = document.createElement("button"); cmp.textContent = "Compare";
       cmp.addEventListener("click", () => openCompare(j, i, f)); li.appendChild(cmp);
     }
+    if (f.outcome === "no-watermark") {
+      const m = document.createElement("button"); m.textContent = "Mark manually";
+      m.addEventListener("click", () => openManual(j.job_id, i, f.name)); li.appendChild(m);
+    }
     if (f.error) { const e = document.createElement("span"); e.className = "err"; e.textContent = f.error; li.appendChild(e); }
     list.appendChild(li);
   });
@@ -134,19 +158,97 @@ function renderJob(j) {
   return card;
 }
 function openCompare(j, i, f) {
-  $("cmpA").src = api(`/api/jobs/${j.job_id}/files/${i}/image?kind=original`);
+  const a = $("cmpA"), box = $("cmpBox");
   $("cmpB").src = api(`/api/jobs/${j.job_id}/files/${i}/image?kind=cleaned`);
-  $("cmpB").onload = () => {                       // bbox overlay once the cleaned image has its size
-    const img = $("cmpB"), c = $("cmpBox");
-    if (!f.bbox) { c.width = 0; return; }
-    c.width = img.clientWidth; c.height = img.clientHeight;
-    const s = c.width / img.naturalWidth, g = c.getContext("2d");
-    g.strokeStyle = "#ff4d4d"; g.lineWidth = 2;
-    g.strokeRect(f.bbox[0]*s, f.bbox[1]*s, f.bbox[2]*s, f.bbox[3]*s);
+  a.onload = () => {
+    // The mark region is drawn on the ORIGINAL layer only (a plain bordered
+    // div positioned in percent: crisp and constant thickness at any size,
+    // unlike the canvas stroke it replaces). The cleaned layer stacks above,
+    // so the box never covers cleaned pixels to begin with.
+    if (!f.bbox) { box.hidden = true; return; }
+    const [x, y, w, h] = f.bbox;
+    box.style.left = (x / a.naturalWidth * 100) + "%";
+    box.style.top = (y / a.naturalHeight * 100) + "%";
+    box.style.width = (w / a.naturalWidth * 100) + "%";
+    box.style.height = (h / a.naturalHeight * 100) + "%";
+    box.hidden = !$("cmpShowBox").checked;
   };
+  a.src = api(`/api/jobs/${j.job_id}/files/${i}/image?kind=original`);
+  $("cmpShowBox").onchange = (e) => { box.hidden = !e.target.checked; };
   $("cmpSlider").oninput = (e) =>
     $("cmpBwrap").style.clipPath = `inset(0 ${100 - e.target.value}% 0 0)`;
   $("cmpClose").onclick = () => $("compare").close();
   $("compare").showModal();
+}
+
+// Manual retry for a no-watermark file: show the stored original, let the
+// user drag the mark box (natural-pixel coords via the display scale), or
+// pick a preset; Remove re-submits just this file as a new job.
+function openManual(jobId, fileIndex, fileName) {
+  const img = $("mImg"), sel = $("mSel"), wrap = $("mSelWrap"), dims = $("mDims");
+  let start = null, rect = null, blob = null, url = null;
+  jfetch(api(`/api/jobs/${jobId}/files/${fileIndex}/image?kind=original`))
+    .then(r => r.blob())
+    .then(b => { blob = b; url = URL.createObjectURL(b); img.src = url; });
+
+  const clamp = (e) => {
+    const b = wrap.getBoundingClientRect();
+    return { x: Math.max(0, Math.min(img.clientWidth, e.clientX - b.left)),
+             y: Math.max(0, Math.min(img.clientHeight, e.clientY - b.top)) };
+  };
+  const setSel = (x, y, w, h) => {
+    sel.style.left = x + "px"; sel.style.top = y + "px";
+    sel.style.width = w + "px"; sel.style.height = h + "px";
+    sel.hidden = false;
+  };
+  wrap.onpointerdown = (e) => {
+    if ($("mPreset").value) return;                 // preset chosen: no drawing
+    start = clamp(e); rect = null; setSel(start.x, start.y, 0, 0);
+    wrap.setPointerCapture(e.pointerId);
+  };
+  wrap.onpointermove = (e) => {
+    if (!start) return;
+    const p = clamp(e);
+    setSel(Math.min(start.x, p.x), Math.min(start.y, p.y),
+           Math.abs(p.x - start.x), Math.abs(p.y - start.y));
+  };
+  wrap.onpointerup = (e) => {
+    if (!start) return;
+    const p = clamp(e), s = img.clientWidth / img.naturalWidth;
+    rect = { x: Math.round(Math.min(start.x, p.x) / s),
+             y: Math.round(Math.min(start.y, p.y) / s),
+             w: Math.round(Math.abs(p.x - start.x) / s),
+             h: Math.round(Math.abs(p.y - start.y) / s) };
+    start = null; updateGo();
+  };
+  function updateGo() {
+    const preset = $("mPreset").value;
+    $("mGo").disabled = !(preset || (rect && rect.w >= 8 && rect.h >= 8));
+    dims.textContent = preset ? `preset ${preset}`
+      : rect ? `rect ${rect.x}, ${rect.y}, ${rect.w}x${rect.h} px`
+             : "drag a box over the watermark";
+  }
+  $("mPreset").onchange = () => { rect = null; sel.hidden = true; updateGo(); };
+  $("mGo").onclick = async () => {
+    if (!blob) return;
+    const o = { denoise: $("denoise").value };      // inherit the cleanup choice only
+    if ($("mPreset").value) o.geoPreset = $("mPreset").value;
+    else o.rect = [rect.x, rect.y, rect.w, rect.h];
+    const fd = new FormData();
+    fd.append("files", blob, fileName);
+    fd.append("options", JSON.stringify(o));
+    try {
+      const r = await jfetch(api("/api/jobs"), { method: "POST", body: fd });
+      if (!r.ok) { alert(((await r.json()).error || {}).message || "upload rejected"); return; }
+    } catch (e) { return; }
+    $("manual").close();
+    await refreshJobs(); startPolling();
+  };
+  $("mCancel").onclick = () => $("manual").close();
+  $("manual").onclose = () => { if (url) URL.revokeObjectURL(url); };
+  rect = null; sel.hidden = true; $("mPreset").value = "";
+  $("manualTitle").textContent = fileName;
+  updateGo();
+  $("manual").showModal();
 }
 init();

@@ -258,10 +258,13 @@ mode: a small local server on 127.0.0.1 plus your default browser. No
 installation, no separate app; the interface ships inside the binary.
 
 - Drag and drop images (PNG, JPEG, WebP); they are processed in order and each
-  result can be compared side by side and downloaded.
+  result can be compared side by side and downloaded. When no watermark is
+  found, "Mark manually" lets you drag the mark region on the original (or
+  pick a geo preset) and retry that file.
 - The page talks only to the local server; it makes zero external requests.
-- Session files live under `~/.cache/wmr/gui` (permissions 0700) and are
-  removed the next time wmr starts.
+- Session files live under `~/.cache/wmr/gui` (permissions 0700) while wmr
+  runs, and are deleted when wmr stops (Ctrl-C or the page's Quit button) or
+  at its next start.
 - `--gui-port N` pins a port (default: an ephemeral free port);
   `--no-browser` prints the URL instead of opening one.
 - Running `wmr` with no arguments now starts this mode. Scripts that expect

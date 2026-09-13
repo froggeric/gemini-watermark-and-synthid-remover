@@ -12,6 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   embedded local web UI (127.0.0.1, per-run token, zero external requests).
   Still-image removal with batch drop, per-file results, before/after
   comparison, and downloads. `WMR_BUILD_GUI` (default ON) gates it.
+  The mark region can be toggled in the compare view; files with no detected
+  watermark can be retried with a manually drawn region or a geo preset; the
+  page has a Quit button that stops wmr gracefully.
 
 ### Changed
 
