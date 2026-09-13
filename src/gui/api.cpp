@@ -244,6 +244,21 @@ void register_routes(httplib::Server& svr, const std::string& token,
     svr.Get(p + "/style.css", [ui](const httplib::Request&, httplib::Response& res) {
         serve_view(res, ui.css, EmbeddedUi::css_mime, /*with_csp=*/false);
     });
+    // The app icon ("The Clean Corner"): SVG for Chromium-class browsers
+    // (crisp at every DPI), a 32px PNG so Safari-class favicon handling has
+    // a same-origin fallback (it ignores SVG and must NOT fall back to the
+    // un-tokened /favicon.ico root, which the grammar 404s by design), and
+    // the 180px touch icon. Relative hrefs in the HTML head resolve against
+    // /<token>/, so img-src 'self' holds with zero CSP changes.
+    svr.Get(p + "/favicon.svg", [ui](const httplib::Request&, httplib::Response& res) {
+        serve_view(res, ui.favicon_svg, EmbeddedUi::svg_mime, /*with_csp=*/false);
+    });
+    svr.Get(p + "/favicon-32.png", [ui](const httplib::Request&, httplib::Response& res) {
+        serve_view(res, ui.favicon_png, EmbeddedUi::png_mime, /*with_csp=*/false);
+    });
+    svr.Get(p + "/apple-touch-icon.png", [ui](const httplib::Request&, httplib::Response& res) {
+        serve_view(res, ui.touch_png, EmbeddedUi::png_mime, /*with_csp=*/false);
+    });
 
     svr.Get(p + "/api/version",
             [features](const httplib::Request&, httplib::Response& res) {

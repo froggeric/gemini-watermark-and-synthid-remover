@@ -19,6 +19,7 @@ body {
 
 header { display: flex; align-items: baseline; gap: .6rem; margin-bottom: 1.25rem; }
 header h1 { font-size: 1.25rem; margin: 0; }
+header .mark { vertical-align: -3px; }
 header #quit { margin-left: auto; }
 footer { margin-top: 2.5rem; font-size: .8rem; display: grid; gap: .25rem; }
 footer a { color: #2f6fdb; color: light-dark(#0550ae, #58a6ff); }

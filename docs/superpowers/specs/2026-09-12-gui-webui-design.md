@@ -605,3 +605,16 @@ implementation is authoritative for them:
    by one walk at startup (plus orig/output writes), not a per-POST walk;
    growth outside this instance after startup is covered by the next
    instance's seed walk.
+
+6. **Desktop-app wrapper: investigated and DECLINED (2026-09-13).** A
+   cross-platform shell (macOS WKWebView ~5-10d, Windows WebView2 ~3-5d,
+   Linux webkitgtk) was scoped and rejected: solo-maintainer cost with no
+   CI-leg reduction, and the browser UI serves the audience. The
+   spawn-not-embed architecture (tokenized URL read from the child's
+   stdout; POST /api/shutdown lifecycle) is documented in the investigation
+   for any future revisit. What shipped instead: the app icon ("The Clean
+   Corner" - teal tile, white photo card with the corner sliced off at the
+   mark's own 45 degrees, the amber diamond floating free beyond the cut)
+   as the browser favicon (SVG + 32px PNG + 180px touch icon, served at
+   /<token>/favicon* with relative hrefs, no CSP change) and the header
+   mark. assets/gui/appicon.svg is the master for any future .iconset.
