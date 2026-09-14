@@ -458,6 +458,20 @@ exits 2. `WMR_NO_GUI=1` or `CI` restores help-printing on no-args.
   + live-server integration (`[gui-server]`, httplib client, 17 cases).
   GUI TUs must not include `cli_app.hpp` (keeps the test link FFmpeg-free);
   launch.cpp is wmr-binary-only.
+- CSP gotcha: `img-src 'self'` does NOT cover `blob:` URLs in any major engine;
+  display fetched images via their plain same-origin URL (fetch bytes only at
+  submit time for re-POSTs).
+- Screenshots (README): `build/wmr gui --no-browser`, parse the tokenized URL
+  from stdout, `playwright-cli open <url>` + `run-code` with
+  `setInputFiles('#file', <fixture>)` (the hidden picker input; file-chooser
+  interception does not work here), `screenshot --filename=...`. In the compare
+  dialog, park the slider so the divide crosses the mark (~86% across on the
+  test4 fixture); a mid-position slider puts the split off-screen and the shot
+  shows nothing.
+- Windows GUI branches are never compiled on the dev Mac: keep them dead simple
+  and avoid SDK-version-dependent constants (BCryptGenRandom returns NTSTATUS;
+  compare against 0 - STATUS_SUCCESS is not declared by MSVC's headers, cost
+  the first v1.17.0 tag run).
 
 ### CoreML cache management (macOS, 1.16.7+)
 
@@ -624,3 +638,4 @@ CLI11 subcommands in src/cli/: `remove` (default), `synthid`, `detect`, `video`,
 - **macOS packages are Developer ID signed + notarized** (`scripts/sign_and_notarize_macos.sh`): every dylib + Mach-O is signed with the Developer ID Application identity + hardened runtime, the zip is notarized via an App Store Connect API key (`.p8`), best-effort stapled. Distribution is `.zip` (a `.tar.gz` would drop the notarization ticket's xattrs). Gated on the `MACOS_CERTIFICATE` secret; if absent the build ships ad-hoc zips (never fails the release). Validated: notary service `Accepted`, `codesign --verify --strict` clean, and the GPU (MoltenVK/NCNN) path runs under hardened runtime on Apple Silicon with NO entitlements (empty `scripts/wmr.entitlements`; `bundle_macos_vulkan.sh`'s ad-hoc re-sign is only an intermediate step before the real identity is applied). Secrets: `MACOS_CERTIFICATE` (base64 `.p12`), `MACOS_CERTIFICATE_PASSWORD`, `MACOS_TEAM_ID`, `APP_STORE_CONNECT_{KEY_ID,ISSUER_ID,API_KEY}` (base64 `.p8`). **Signing gotchas (each cost one CI round):** the `secrets` context is NOT valid in a step `if:` (gate on a workflow-level `env.HAS_CERT` boolean instead); `! pipe | grep` is unsafe under `set -euo pipefail` (use an explicit `if … exit 1`); `codesign -d` writes its diagnostic to **stderr** and at `-dv` omits the `Authority=` lines, so assert with `codesign -dvvvv … 2>&1 | grep "Authority=Developer ID Application"`; `stapler` cannot staple a loose-file zip (the online Gatekeeper check still clears it for connected users).
 - `gh run view --log` returns empty until the *whole run* completes (per-job logs too). To read a finished job's log fast, `gh run cancel` the run (preserves completed jobs' logs), then read, or wait for completion. **Don't monitor a run with `gh run watch --exit-status` in a piped background command**, the pipeline masks gh's exit code (always 0) and gh can drop early on an API hiccup → a false "completed". Poll `gh run view <id> --json status,conclusion` until `status=="completed"`; `conclusion` is the source of truth. (Windows is the ~2 h long pole, every release, even mac-only, waits on it.) For a long watch, schedule a recurring `CronCreate` (~every 15 min) whose prompt does the poll and `CronDelete`s itself on completion or on any job failure, instead of blocking a turn.
 - A job that already finished is readable MID-RUN (no need to cancel jobs still in flight): `gh api repos/<owner>/<repo>/actions/jobs/<job-id>/logs` returns the log as text (not a zip). Get the id and failed step with `gh run view <run> --json jobs -q '.jobs[] | select(.name|test("PATTERN")) | .databaseId'` and `… | .steps[] | select(.conclusion=="failure") | .name'`. `gh run view --job <id> --log` stays empty until the whole run completes; only the API works mid-run.
+- A leg failing with `curl error code 6` (DNS) or a 404 mid-vcpkg-download is a runner network flake, not code: re-run the job or re-tag rather than debugging. Job logs via the REST API need `--allow-escape-sequences` (gh refuses the raw terminal sequences otherwise).
