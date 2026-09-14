@@ -22,8 +22,10 @@ namespace {
 // bytes, so fill in chunks.
 bool fill_random(unsigned char* buf, size_t n) {
 #if defined(_WIN32)
+    // NTSTATUS 0 is success; STATUS_SUCCESS itself is not declared by the
+    // SDK headers MSVC sees here (C2065 on the windows leg).
     return BCryptGenRandom(nullptr, buf, (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG)
-           == STATUS_SUCCESS;
+           == 0;
 #elif defined(__linux__)
     size_t done = 0;
     while (done < n) {
