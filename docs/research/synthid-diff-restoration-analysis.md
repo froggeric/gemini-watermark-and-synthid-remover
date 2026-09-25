@@ -241,3 +241,14 @@ cross-platform, or use Accelerate/vDSP on macOS. Resolve before implementing.
 - Goonatilake & Ateniese, forensic cost of regen removal: https://arxiv.org/abs/2605.09203
 - In-repo: `synthid-carrier-characterization.md` (carrier signature), `synthid-spectral-removal-record.md`
   (why the spectral path was inert on content), `synthid-light-reconstruction-attacks.md` (regen knee).
+
+## Addendum (2026-09-25): superseded as the default by the band-split restore
+
+The Wiener + top-5% path described above shipped through 1.17.0. Since 1.17.1
+the default detail restoration is the band-split `O - blur(O - R, sigma)` at
+sigma 1.95 (0 on `--regen-restore-band-sigma` selects the path this document
+describes). The band-split recovers ~2x the SSIM on the same corpus, cleared
+the Google verifier on bright images from ~1 MP to 4.3 MP, and reconfirmed the
+luminance gate (forced dim restores detected at sigma 0.95/1.95/2.90 on one
+image, per-image variable). Full evaluation and ship decision:
+`bandsplit-restore-evaluation.md`.

@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Nothing yet.
+
+## [1.17.1] - 2026-09-25
+
+### Added
+
 - `--regen-restore-band-sigma`: band-split detail restoration for SynthID
   regen (low band from the regeneration, the entire high band transplanted
   from the original; formulation from the DeSynth / Synthid-Bypass projects,
