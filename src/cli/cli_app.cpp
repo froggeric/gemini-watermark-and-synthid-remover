@@ -220,6 +220,7 @@ static int process_single_image(const CliOptions& opts) {
             ic.regen_restore.mode = opts.regen_restore_detail   ? RestoreMode::On
                                   : opts.no_regen_restore_detail ? RestoreMode::Off
                                                                   : RestoreMode::Auto;
+            ic.regen_restore.band_sigma = opts.regen_restore_band_sigma;
             DetectionResult dr{};  // regen ignores visible-mark detection (whole-image scrub)
             dr.detected = false;
             dr.confidence = 0.0f;
@@ -721,14 +722,24 @@ int run_cli(int argc, char* argv[]) {
             ->capture_default_str()
             ->check(CLI::IsMember({"auto", "cpu", "metal", "vulkan", "coreml"}));
         cmd->add_flag("--regen-restore-detail", opts.regen_restore_detail,
-                      "regen: restore detail lost to regen (top-5% diff slice + carrier "
-                      "Wiener attenuation) to recover fidelity on bright images. FORCES "
-                      "restoration on dim content too (user accepts the risk; verify via "
-                      "Google's SynthID tool). Mutually exclusive with --no-regen-restore-detail.");
+                      "regen: restore detail lost to regen (band-split: low band from the "
+                      "regeneration, high band from the original) to recover fidelity on "
+                      "bright images. FORCES restoration on dim content too - KNOWN UNSAFE: "
+                      "forced restores on dim images have been detected by Google's "
+                      "SynthID verifier at every tested setting (verify any forced output). "
+                      "Mutually exclusive with --no-regen-restore-detail.");
         cmd->add_flag("--no-regen-restore-detail", opts.no_regen_restore_detail,
                       "regen: never restore detail; guaranteed full SynthID removal "
                       "(the safe path on dim content). Mutually exclusive with "
                       "--regen-restore-detail.");
+        cmd->add_option("--regen-restore-band-sigma", opts.regen_restore_band_sigma,
+                        "regen: Gaussian sigma of the band-split detail restore (the "
+                        "default algorithm). Lower = safer (restores LESS of the "
+                        "watermarked original; sigma -> large approaches the original "
+                        "image and its watermark). 0 selects the legacy Wiener + top-5% "
+                        "path. 1.95 is the verifier-validated default.")
+            ->capture_default_str()
+            ->check(CLI::Range(0.0f, 16.0f));
         return atk;
     };
 

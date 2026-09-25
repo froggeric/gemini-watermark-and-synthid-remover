@@ -93,6 +93,7 @@ static int process_single(const fs::path& input, const CliOptions& opts) {
             ic.regen_restore.mode   = opts.regen_restore_detail   ? RestoreMode::On
                                       : opts.no_regen_restore_detail ? RestoreMode::Off
                                                                      : RestoreMode::Auto;
+            ic.regen_restore.band_sigma = opts.regen_restore_band_sigma;
             DetectionResult dr{};  // regen ignores visible-mark detection
             bool ok = engine.remove_watermark_detected(image, dr, ic);
             if (!ok) {

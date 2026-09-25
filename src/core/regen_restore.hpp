@@ -45,6 +45,29 @@ struct RestoreConfig {
     // of the ORIGINAL D. 0.05 = top-5% (the validated knee; 10%+ was detected).
     float keep_fraction = 0.05f;
 
+    // Band-split restore (the DEFAULT since 1.17.1; formulation from the
+    // DeSynth/Synthid-Bypass external investigation, reimplemented - idea only,
+    // both repos unlicensed). When > 0, restore_detail replaces the legacy
+    // Wiener+mask path with
+    //     out = O - GaussianBlur(O - R, sigma)
+    //   == GaussianBlur(R, sigma) + (O - GaussianBlur(O, sigma))
+    // i.e. the low band comes from the regenerated image and the ENTIRE high
+    // band is transplanted from the original (per-channel; GaussianBlur is
+    // linear so BGR/RGB order is irrelevant). The Auto luminance gate applies
+    // unchanged and is MANDATORY for the default path: dim content tolerates
+    // no reliable restore (2026-09-25: forced band-split on dim images was
+    // detected at sigma 0.95/1.95/2.90 on one image and cleared at 0.95 on
+    // another - per-image, unknowable upfront). sigma is in pixels on the
+    // full-resolution image (restore runs once, post-tiling). DIRECTION:
+    // LARGER sigma restores MORE of the original (sigma -> inf is the
+    // watermarked O; sigma -> 0 is pure R), so LOWER sigma is the safe
+    // direction. Validated: sigma=1.95 and 2.90 cleared Google's verifier on
+    // the bright clearance corpus (~1 MP) and on a bright 4.3 MP image;
+    // sigma=1.95 recovers ~2x the SSIM of the legacy Wiener+top-5% path with
+    // zero observed artifacts (6/6 visual passes). 0 selects the legacy
+    // Wiener+mask path.
+    float band_sigma = 1.95f;
+
     // Attenuator B (characterized-carrier Wiener) parameters. Defaults are the
     // characterized "B3" variant (gamma=4, capped). See the design doc.
     float gamma = 4.0f;             // shrink aggressiveness; shrink = max(1 - gamma*alpha*rel, 0)

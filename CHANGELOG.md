@@ -8,7 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Nothing yet.
+- `--regen-restore-band-sigma`: band-split detail restoration for SynthID
+  regen (low band from the regeneration, the entire high band transplanted
+  from the original; formulation from the DeSynth / Synthid-Bypass projects,
+  reimplemented from scratch - both repos are unlicensed, no code copied).
+  Now the DEFAULT restore (sigma 1.95): recovers roughly twice the SSIM of
+  the previous Wiener + top-5% restore across the clearance corpus with zero
+  observed artifacts (6/6 visual A/B passes), and cleared Google's
+  "Verify with SynthID" on bright images from ~1 MP up to 4.3 MP. sigma 0
+  keeps the legacy Wiener + top-5% path; lower sigma is always the safer
+  direction (larger sigma restores more of the watermarked original). The
+  luminance gate is unchanged and mandatory: forcing restoration on dim
+  images remains detectable at every tested setting on some images.
+- `scripts/build.sh` accepts `EXTRA_CMAKE_ARGS` (e.g. to route around a
+  broken CommandLineTools SDK after a macOS update by pointing
+  `-DCMAKE_OSX_SYSROOT` at Xcode's SDK).
 
 ## [1.17.0] - 2026-09-13
 

@@ -15,9 +15,12 @@ namespace {
 // Scaled-down RestoreConfig used by the luminance-gate and keep-mask tests
 // (which exercise the gate/mask logic on tiny images, not the Wiener math; the
 // band/dc_radius are shrunk so those small images still have a non-empty band).
+// band_sigma = 0 pins these to the LEGACY Wiener path (the shipped default is
+// the band-split at 1.95; these tests predate it and assert Wiener behavior).
 RestoreConfig ref_config(RestoreMode mode) {
     RestoreConfig c;
     c.mode = mode;
+    c.band_sigma = 0.0f;
     c.gamma = 4.0f;
     c.dc_radius = 2.0f;
     c.highfreq_cutoff = 20.0f;
@@ -193,6 +196,7 @@ TEST_CASE("regen restore wiener shape", "[regen][restore]") {
     }
     RestoreConfig c;   // DEFAULTS (gamma=4, dc_radius=25, cutoff=600, calib [25,35])
     c.mode = RestoreMode::On;
+    c.band_sigma = 0.0f;      // pin to the legacy Wiener path (default is band-split)
     c.keep_fraction = 1.0f;   // restore everything so D_att is observable in Rp - R
     cv::Mat Rp = restore_detail(O, R, c);
     REQUIRE(!Rp.empty());
@@ -291,6 +295,7 @@ TEST_CASE("regen restore wiener matches independent dft", "[regen][restore]") {
     // D_att = Rp - R everywhere (no mask to undo).
     RestoreConfig c;
     c.mode = RestoreMode::On;
+    c.band_sigma = 0.0f;   // pin to the legacy Wiener path (default is band-split)
     c.keep_fraction = 1.0f;
     cv::Mat Rp = restore_detail(O, R, c);
     REQUIRE(!Rp.empty());
@@ -413,6 +418,107 @@ TEST_CASE("regen restore wiener matches independent dft", "[regen][restore]") {
     REQUIRE(max_delta < 1.50);
 }
 
+// ---------------------------------------------------------------------------
+// Band-split restore (RestoreConfig::band_sigma > 0): out = O - blur(D, sigma),
+// algebraically DeSynth's blur(R, sigma) + (O - blur(O, sigma)). Runs INSTEAD of
+// the Wiener+mask path; the Auto luminance gate applies unchanged.
+// ---------------------------------------------------------------------------
+TEST_CASE("regen restore band split", "[regen][restore]") {
+    const int H = 64, W = 64;
+    // Deterministic pair with structure in every band: a smooth gradient (low
+    // band) plus per-pixel noise (high band), different seeds for O and R.
+    auto synth = [&](unsigned int seed) {
+        cv::Mat m(H, W, CV_8UC3, cv::Scalar(150, 150, 150));
+        unsigned int rng = seed;
+        for (int i = 0; i < H; ++i)
+            for (int j = 0; j < W; ++j)
+                for (int c = 0; c < 3; ++c) {
+                    rng = rng * 1103515245u + 12345u;
+                    const int n = static_cast<int>((rng >> 16) % 21u) - 10;   // [-10, 10]
+                    m.at<cv::Vec3b>(i, j)[c] =
+                        static_cast<uchar>(std::max(0, std::min(255, 150 + (i + j) / 4 + n)));
+                }
+        return m;
+    };
+    const cv::Mat O = synth(1u);
+    const cv::Mat R = synth(2u);
+
+    SECTION("matches the reference formulation blur(R)+O-blur(O)") {
+        RestoreConfig c = ref_config(RestoreMode::On);
+        c.band_sigma = 1.95f;
+        const cv::Mat out = restore_detail(O, R, c);
+        REQUIRE(!out.empty());
+
+        cv::Mat O_f, R_f;
+        O.convertTo(O_f, CV_32FC3);
+        R.convertTo(R_f, CV_32FC3);
+        cv::Mat lowR, lowO;
+        cv::GaussianBlur(R_f, lowR, cv::Size(0, 0), 1.95, 1.95);
+        cv::GaussianBlur(O_f, lowO, cv::Size(0, 0), 1.95, 1.95);
+        cv::Mat ref;
+        cv::add(lowR, O_f - lowO, ref);
+        cv::max(ref, 0.0, ref);
+        cv::min(ref, 255.0, ref);
+        cv::Mat ref8;
+        ref.convertTo(ref8, CV_8UC3);
+
+        cv::Mat d;
+        cv::absdiff(out, ref8, d);
+        double mx = 0.0;
+        cv::minMaxLoc(d, nullptr, &mx);
+        INFO("band-split vs reference formulation: max|diff|=" << mx);
+        REQUIRE(mx <= 1.0);   // blur(D) vs blur(O)-blur(R): float round-off only
+    }
+
+    SECTION("luminance gate still skips dim images under Auto") {
+        cv::Mat dimO(H, W, CV_8UC3, cv::Scalar(40, 40, 40));   // luma 40 < 128
+        RestoreConfig c = ref_config(RestoreMode::Auto);
+        c.band_sigma = 1.95f;
+        const cv::Mat Rp = restore_detail(dimO, R, c);
+        REQUIRE(std::equal(Rp.data, Rp.data + Rp.total() * Rp.elemSize(), R.data));
+    }
+
+    SECTION("a pure-DC diff is fully discarded (returns R)") {
+        // R = O + const everywhere: D is constant, blur(D) = D, so out = O - D
+        // = R exactly. A pure low-band change never survives the split.
+        cv::Mat R2;
+        cv::add(O, cv::Scalar(12, 12, 12), R2);
+        RestoreConfig c = ref_config(RestoreMode::On);
+        c.band_sigma = 1.95f;
+        const cv::Mat Rp = restore_detail(O, R2, c);
+        cv::Mat d;
+        cv::absdiff(Rp, R2, d);
+        double mx = 0.0;
+        cv::minMaxLoc(d, nullptr, &mx);
+        INFO("pure-DC restore vs R: max|diff|=" << mx);
+        REQUIRE(mx <= 1.0);
+    }
+
+    SECTION("a pure high-frequency diff is fully restored (returns ~O)") {
+        // R = O + checkerboard(+-6): the checkerboard is high-frequency, blur(D)
+        // ~ 0, so out ~ O (the entire high band is transplanted back).
+        cv::Mat R2 = O.clone();
+        for (int i = 0; i < H; ++i)
+            for (int j = 0; j < W; ++j) {
+                const int s = ((i + j) % 2 == 0) ? 6 : -6;
+                const cv::Vec3b v = O.at<cv::Vec3b>(i, j);
+                for (int c = 0; c < 3; ++c)
+                    R2.at<cv::Vec3b>(i, j)[c] =
+                        static_cast<uchar>(std::max(0, std::min(255, int(v[c]) + s)));
+            }
+        RestoreConfig c = ref_config(RestoreMode::On);
+        c.band_sigma = 1.95f;
+        const cv::Mat Rp = restore_detail(O, R2, c);
+        cv::Mat d;
+        cv::absdiff(Rp, O, d);
+        double mx = 0.0;
+        cv::minMaxLoc(d, nullptr, &mx);
+        INFO("HF restore vs O: max|diff|=" << mx);
+        // Interior within rounding of O; REFLECT_101 borders ring slightly.
+        REQUIRE(mx <= 2.0);
+    }
+}
+
 #else  // !WMR_BUILD_REGEN
 
 TEST_CASE("regen restore types compile without regen", "[regen][restore]") {
@@ -420,7 +526,8 @@ TEST_CASE("regen restore types compile without regen", "[regen][restore]") {
     // RestoreConfig unconditionally). restore_detail is only DECLARED; its
     // symbol is absent in a regen-free build, so we never call it here.
     RestoreConfig cfg;
-    REQUIRE(cfg.mode == RestoreMode::Off);   // library default is Off
+    REQUIRE(cfg.mode == RestoreMode::Off);      // library default is Off
+    REQUIRE(cfg.band_sigma == 1.95f);           // shipped default: band-split
     cfg.mode = RestoreMode::Auto;
     REQUIRE(cfg.mode == RestoreMode::Auto);
 }

@@ -104,6 +104,11 @@ struct CliOptions {
     // mutex unlike the binary --legacy/--no-legacy pair).
     bool regen_restore_detail = false;
     bool no_regen_restore_detail = false;
+    // Band-split sigma for the post-regen detail restoration (the default
+    // algorithm since 1.17.1: low band from the regen, full high band from the
+    // original). 0 selects the legacy Wiener + top-5% path. LOWER sigma =
+    // safer (restores less of the watermarked original).
+    float regen_restore_band_sigma = 1.95f;
 };
 
 // Map CliOptions -> StillRemoveOptions (thin glue; the policy lives in

@@ -19,6 +19,9 @@
 #   WMR_AI_DENOISE=0 scripts/build.sh   # skip FDnCNN AI denoise (NCNN/Vulkan)
 #   WMR_AI_MIGAN=0 scripts/build.sh     # skip MI-GAN NotebookLM inpainter
 #   WMR_BUILD_REGEN=0 scripts/build.sh  # skip SynthID diffusion-regen (sdcpp)
+#   EXTRA_CMAKE_ARGS="-DCMAKE_OSX_SYSROOT=..." scripts/build.sh
+#     appended verbatim to the configure (e.g. to route around a broken
+#     CommandLineTools SDK after a macOS update: point it at Xcode's SDK).
 set -euo pipefail
 
 BUILD_TYPE="${BUILD_TYPE:-Release}"
@@ -114,7 +117,8 @@ cmake -S . -B "${BUILD_DIR}" -G Ninja \
   $([ "${AI_DENOISE}" = "1" ] && echo "-DWMR_BUILD_AI_DENOISE=ON") \
   $([ "${AI_MIGAN}" = "1" ] && echo "-DWMR_BUILD_AI_MIGAN=ON") \
   $([ "${REGEN}" = "1" ] && echo "-DWMR_BUILD_REGEN=ON -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)") \
-  $([ "${COREML_SD}" = "1" ] && echo "-DWMR_BUILD_AI_COREML_SD=ON")
+  $([ "${COREML_SD}" = "1" ] && echo "-DWMR_BUILD_AI_COREML_SD=ON") \
+  ${EXTRA_CMAKE_ARGS:-}
 
 # 4. Build.
 cmake --build "${BUILD_DIR}" --parallel

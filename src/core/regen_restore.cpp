@@ -1,6 +1,7 @@
 #ifdef WMR_BUILD_REGEN
 #include "core/regen_restore.hpp"
 
+#include <opencv2/imgproc.hpp>   // cv::GaussianBlur (band-split restore)
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -244,6 +245,26 @@ cv::Mat restore_detail(const cv::Mat& O, const cv::Mat& R, const RestoreConfig& 
     O.convertTo(O_f, CV_32FC3);
     R.convertTo(R_f, CV_32FC3);
     cv::subtract(O_f, R_f, D);
+
+    // Band-split variant (RestoreConfig::band_sigma > 0): out = O - blur(D, sigma),
+    // algebraically identical to DeSynth's blur(R,sigma) + (O - blur(O,sigma)).
+    // Runs INSTEAD of the Wiener+mask path below; the Auto luminance gate above
+    // has already been applied. Pure low-pass subtraction: the low-frequency
+    // component of the regen change is discarded, all finer structure is
+    // transplanted from the original.
+    if (cfg.band_sigma > 0.0f) {
+        cv::Mat D_blur;
+        cv::GaussianBlur(D, D_blur, cv::Size(0, 0), cfg.band_sigma, cfg.band_sigma);
+        cv::Mat Rp;
+        cv::subtract(O_f, D_blur, Rp);
+        cv::max(Rp, 0.0, Rp);
+        cv::min(Rp, 255.0, Rp);
+        cv::Mat out;
+        Rp.convertTo(out, CV_8UC3);
+        spdlog::info("regen: detail-restoration applied (band-split sigma={:.2f}, luminance={:.1f})",
+                     cfg.band_sigma, mean_luminance_bgr(O));
+        return out;
+    }
 
     // Keep mask: top keep_fraction of pixels by the combined L2 norm of the
     // ORIGINAL D (sqrt(dB^2 + dG^2 + dR^2)). Matches the Python:
